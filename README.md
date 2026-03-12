@@ -9,7 +9,7 @@
     d a t a g i l l
 ```
 
-**Business intelligence for engineering teams.**
+**Business intelligence for Saas companies.**
 
 ---
 
