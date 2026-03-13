@@ -396,6 +396,7 @@ Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`.
 | id | uuid | PK |
 | org_id | uuid | FK → organisations |
 | flag_key | string | Stable identifier from source |
+| environment | string | Environment name from source (e.g. `production`, `staging`). One row per flag per environment |
 | source | enum | `launchdarkly \| unleash \| flagsmith` |
 | enrichment_data | jsonb | Current state snapshot. Replaced on `full_snapshot`. On `diff`: application-level merge required — PostgreSQL's `||` operator replaces keys but does NOT handle deletions. The merge function must explicitly remove keys that appear as deleted in the diff, otherwise stale data accumulates silently. |
 | data_completeness | enum | `partial` (diffs only) \| `full` (at least one full snapshot) |
@@ -408,7 +409,7 @@ Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`.
 | pipeline_version | string | For targeted backfills |
 | created_at / updated_at | timestamp | |
 
-Indexes: `UNIQUE(org_id, flag_key, source)`. `HNSW(embedding) WHERE embedding IS NOT NULL`. `(org_id, last_event_at DESC)`. `GIN(enrichment_data)`.
+Indexes: `UNIQUE(org_id, flag_key, source, environment)`. `HNSW(embedding) WHERE embedding IS NOT NULL`. `(org_id, last_event_at DESC)`. `GIN(enrichment_data)`.
 
 **HNSW build strategy:** Do not build the HNSW index during onboarding backfill. Bulk-insert all vectors first, then build the index once in a single `CREATE INDEX` pass after backfill completes. pgvector's HNSW is not incrementally updated — building during high-insert load causes write amplification. ANN search falls back to sequential scan until the index exists, which is acceptable during backfill.
 
@@ -476,7 +477,7 @@ Do not make implementation decisions that depend on unresolved questions.
 
 | Question | Options | Needed by |
 |----------|---------|-----------|
-| Per-environment flag tracking | Single row per flag (simpler) vs one row per flag per environment (accurate, multiplies rows, changes UNIQUE key). **This changes the UNIQUE key on `feature_flags` — decide before writing the first UPSERT.** | Before writing FlagInitPhase |
+| ~~Per-environment flag tracking~~ | **Decided: one row per flag per environment.** `UNIQUE(org_id, flag_key, source, environment)`. Accurate state per environment at the cost of multiplying rows. `environment` is a required field on `feature_flags`. | — |
 | Inter-phase communication | In-process Go channels (simpler, lower latency, single instance only) vs Redis pub/sub (horizontal scale, higher latency) | Before first scale event |
 | Ollama vector dimension mismatch (768 vs 1536) | Zero-pad to 1536 (wastes storage) vs configurable column per org (schema complexity) | Before self-hosted GA |
 | Weekly digest generation | Cron in Processing Service (simpler) vs separate Digest Service (independent scaling) | Phase 2 planning |
