@@ -37,6 +37,7 @@ The system is an **ETL pipeline** with a search/query layer on top. Each new dat
 | Async workers | **Go goroutines** | Replace Node worker threads. The normalize and enrich pipeline runs as concurrent goroutines, not a separate process — simpler operationally, better performance |
 | Database | **PostgreSQL** | ACID guarantees, JSONB for raw payload flexibility, strong indexing, full-text search via pg_trgm. One DB for both raw and transformed data. |
 | Auth (platform) | **Clerk** | Handles user login, org management, and JWT issuance. Language-agnostic — Go validates Clerk JWTs via JWKS endpoint. |
+| Go HTTP framework | **Chi** | Lightweight, idiomatic, stdlib-compatible. Easy to add middleware and route groups as endpoints grow. |
 
 ### Not Decided Yet (TBD)
 
@@ -44,7 +45,6 @@ These decisions will be made when we begin low-level design. Do not implement ag
 
 | Decision | Options Being Considered | Blocking On |
 |----------|--------------------------|-------------|
-| Go HTTP framework | `net/http` stdlib, Chi, Gin | LLD session |
 | Job queue infrastructure | River (Postgres-native, no Redis), asynq (Redis-backed), in-process goroutine pool | LLD session |
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
 | Hosting / compute | Railway, Fly.io, GCP Cloud Run, self-hosted VPS | Cost analysis |
