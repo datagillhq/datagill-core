@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package ping.v1;
+
+option go_package = "github.com/datagill/datagill-website/shared/gen/ping/v1;pingv1";
+
+message PingRequest {
+  string message = 1;
+}
+
+message PingResponse {
+  string message = 1;
+  string service  = 2;
+}

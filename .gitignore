@@ -1,0 +1,11 @@
+# Compiled binaries
+ingestion
+processing
+
+# Go build output
+*.exe
+*.test
+
+# Environment
+.env
+.env.*
