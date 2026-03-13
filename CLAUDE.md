@@ -39,9 +39,12 @@ The system is an **ETL pipeline** with a semantic search and query layer on top.
 | Database | **PostgreSQL 16 + pgvector** | ACID guarantees, JSONB for raw payload flexibility, pgvector for semantic search embeddings. One DB for all services |
 | Auth (platform) | **Clerk** | Handles user login, org management, and JWT issuance. Language-agnostic — Go validates Clerk JWTs via JWKS endpoint |
 | Embedding model | **OpenAI text-embedding-3-small** (cloud) / **Ollama nomic-embed-text** (self-hosted) | Swappable via EmbedProvider interface — same interface, different implementation |
-| Queue | **AWS SQS** (cloud) / **BullMQ + Redis** (self-hosted) | Three priority tiers (HIGH / NORMAL / LOW). Swappable via QueuePublisher interface |
+| Queue | **BullMQ + Redis** (everywhere) | Single implementation for cloud and self-hosted. Cloud uses ElastiCache, self-hosted uses Docker Redis. Three priority tiers (HIGH / NORMAL / LOW) |
 | Metrics | **Prometheus + Grafana Cloud** (cloud) / **Prometheus + Grafana** (self-hosted) | Standard scrape endpoint at `/metrics` on all services |
 | Secret management | **AWS Secrets Manager** (cloud) / **env vars + Docker secrets** (self-hosted) | |
+| DB migrations | **golang-migrate** | Applied at service startup or as a separate migration job |
+| Search Service auth | **Clerk JWT** | Frontend passes Clerk JWT; Search Service validates via JWKS. No per-resource authorization yet — everyone is admin. Permissions TBD post-MVP |
+| Organisation creation | **Clerk webhook** | An `organisations` row is created on business onboarding when the Clerk org is provisioned. Clerk org ID is the primary external reference |
 | Provider auth (MVP) | **API key** | Customer generates read-only API key in their provider, pastes into DataGill. Encrypted at rest with AES-256-GCM |
 | Search backend | **PostgreSQL + pgvector** | HNSW index for ANN semantic search. Structured search via parameterized SQL |
 | Webhooks (v1) | **None — poll only** | No inbound public endpoints in v1. Customers provide an API key; we poll on a schedule |
@@ -121,6 +124,12 @@ The platform is three independent Go services connected by a priority queue and 
 | NORMAL | Standard polling events | 3 |
 | LOW | Onboarding backfill, historical imports | 1 |
 
+**Scheduler algorithm — counter-based round-robin:**
+Each round is 14 slots (10+3+1). Fill them in order: 10 from HIGH, 3 from NORMAL, 1 from LOW.
+If a queue is empty on its slot, skip it — do not steal the slot for another tier.
+Starvation guard: if LOW hasn't been drained in >1000 rounds, force one LOW poll regardless.
+This is intentionally simple and easy to swap for a token bucket if needed.
+
 ### Service Responsibilities
 
 | Service | Port | Owns | Does NOT own |
@@ -137,8 +146,11 @@ The platform is three independent Go services connected by a priority queue and 
 ```
 Step 1: EXTRACT
   └─ PollScheduler triggers per integration (fixed delay + startup jitter)
-     → AuditLogFetcher paginates audit log API since cursor
-     → DetailFetcher fetches full current state per changed resource
+     → AuditLogFetcher paginates audit log API since cursor, one page at a time
+     → CursorStore.Update(latest_timestamp_on_page) after each page — not at end of poll
+        This means a crash mid-poll resumes from the last completed page, not the beginning
+     → DetailFetcher fetches full current state — deduplicated per unique flag_key per poll cycle
+        (50 audit entries across 10 flags = 10 detail fetches, not 50)
 
 Step 2: DEDUPLICATE
   └─ DeduplicatorService checks (source + source_event_id + org_id) in DB
@@ -183,7 +195,7 @@ Step 8: SERVE
 - **Webhook handlers return immediately (future).** Never do synchronous processing inside a webhook handler. Store raw, dispatch job, return 200.
 - **All writes must be idempotent.** Reprocessing any event must be safe.
 - **Middle phases (EmbedPhase) must not touch the database.** Only Init and Finalization phases interact with DB.
-- **ops_lock must be acquired before any write to a shared entity.** Never write to `feature_flags` without holding the lock.
+- **ops_lock must be acquired before any write to a shared entity in Pipeline 1.** Pipeline 2 is append-only (`feature_flag_events`) plus a single FK update — it does not require a lock. Lock key is `resource_key text`, not a UUID, so it can be acquired before the entity row exists.
 
 ---
 
@@ -246,10 +258,18 @@ feature-flag-{priority}-queue
 
 ### Pipeline 2 — Feature Flag Audit Event
 
+Historical record only. No embedding. No ops_lock needed — this pipeline only appends to
+`feature_flag_events` and does a single FK update on `feature_flags`.
+
+To handle the ordering race with Pipeline 1 (flag entity row may not exist yet):
+`FlagEventInitPhase` does `INSERT INTO feature_flags ... ON CONFLICT DO NOTHING` before
+inserting the event row. This ensures the parent row exists without blocking on Pipeline 1.
+
 ```
 feature-flag-event-{priority}-queue
-  → FlagEventInitPhase        — INSERT feature_flag_events
-  → FlagEventFinalizationPhase — UPDATE feature_flags.last_event_id
+  → FlagEventInitPhase        — INSERT INTO feature_flags ON CONFLICT DO NOTHING (ensure parent exists)
+                                 INSERT feature_flag_events
+  → FlagEventFinalizationPhase — UPDATE feature_flags.last_event_id = this event id
 ```
 
 ### HTTP Endpoints (internal only)
@@ -361,10 +381,11 @@ Lock acquisition: `UPDATE poll_locks SET locked_by=... WHERE integration_id=$id 
 | org_id | uuid | |
 | source_event_id | string | Stable ID from source. Used for dedup |
 | audit_log_payload | jsonb | Raw audit log entry + full-state detail fetch response |
+| processing_status | enum | `pending \| queued \| processed \| failed` — `pending` on insert, `queued` after publish, `processed` after Pipeline finalization, `failed` after DLQ |
 | published_at | timestamp | Null until QueuePublisher.Publish succeeds |
 | fetched_at | timestamp | When fetched from source API |
 
-Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`. `published_at WHERE published_at IS NULL`.
+Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`. `(processing_status) WHERE processing_status IN ('pending', 'failed')` for reprocessing queries.
 
 ### Processing Service Tables
 
@@ -376,7 +397,7 @@ Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`.
 | org_id | uuid | FK → organisations |
 | flag_key | string | Stable identifier from source |
 | source | enum | `launchdarkly \| unleash \| flagsmith` |
-| enrichment_data | jsonb | Current state snapshot. Merged on diff, replaced on full snapshot |
+| enrichment_data | jsonb | Current state snapshot. Replaced on `full_snapshot`. On `diff`: application-level merge required — PostgreSQL's `||` operator replaces keys but does NOT handle deletions. The merge function must explicitly remove keys that appear as deleted in the diff, otherwise stale data accumulates silently. |
 | data_completeness | enum | `partial` (diffs only) \| `full` (at least one full snapshot) |
 | embedding | vector(1536) | Null until first embed run |
 | embedding_text | text | Text sent to embedding model. Stored for debugging |
@@ -388,6 +409,8 @@ Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`.
 | created_at / updated_at | timestamp | |
 
 Indexes: `UNIQUE(org_id, flag_key, source)`. `HNSW(embedding) WHERE embedding IS NOT NULL`. `(org_id, last_event_at DESC)`. `GIN(enrichment_data)`.
+
+**HNSW build strategy:** Do not build the HNSW index during onboarding backfill. Bulk-insert all vectors first, then build the index once in a single `CREATE INDEX` pass after backfill completes. pgvector's HNSW is not incrementally updated — building during high-insert load causes write amplification. ANN search falls back to sequential scan until the index exists, which is acceptable during backfill.
 
 **`feature_flag_events`** — Normalised audit log. Append-only. No raw payloads.
 
@@ -409,11 +432,15 @@ Indexes: `UNIQUE(org_id, source, source_event_id)`. `(org_id, flag_key, occurred
 
 **`ops_locks`** — Soft lock preventing concurrent processing of the same entity.
 
+`resource_key` is a string (not a UUID) so it can hold any stable identifier — a `flag_key`,
+a GitHub PR number, an incident ID — without needing to look up the entity's UUID first.
+The lock is acquired on the natural key before the entity row is created.
+
 | Column | Type | Notes |
 |--------|------|-------|
 | id | uuid | PK |
-| resource_type | string | `feature_flag \| code_event \| incident` |
-| resource_id | uuid | Polymorphic — type determined by resource_type |
+| resource_type | string | `feature_flag \| code_event \| incident` — extensible as new pipelines are added |
+| resource_key | text | Stable natural key of the entity being locked (e.g. flag_key, pr_number) |
 | org_id | uuid | |
 | locked_by | string | Processing service instance ID |
 | locked_at | timestamp | |
@@ -421,7 +448,7 @@ Indexes: `UNIQUE(org_id, source, source_event_id)`. `(org_id, flag_key, occurred
 | pipeline_version | string | For observability |
 | created_at | timestamp | |
 
-Indexes: `UNIQUE(resource_type, resource_id)`. `(expires_at)`.
+Indexes: `UNIQUE(resource_type, org_id, resource_key)`. `(expires_at)`.
 
 ### Shared Tables
 
@@ -449,13 +476,17 @@ Do not make implementation decisions that depend on unresolved questions.
 
 | Question | Options | Needed by |
 |----------|---------|-----------|
-| Per-environment flag tracking | Single row per flag (simpler) vs one row per flag per environment (accurate, multiplies rows, changes UNIQUE key) | Before first customer onboarding |
-| Inter-phase communication | In-process Go channels (simpler, single instance only) vs Redis pub/sub (horizontal scale, higher latency) | Before first scale event |
+| Per-environment flag tracking | Single row per flag (simpler) vs one row per flag per environment (accurate, multiplies rows, changes UNIQUE key). **This changes the UNIQUE key on `feature_flags` — decide before writing the first UPSERT.** | Before writing FlagInitPhase |
+| Inter-phase communication | In-process Go channels (simpler, lower latency, single instance only) vs Redis pub/sub (horizontal scale, higher latency) | Before first scale event |
 | Ollama vector dimension mismatch (768 vs 1536) | Zero-pad to 1536 (wastes storage) vs configurable column per org (schema complexity) | Before self-hosted GA |
-| Search Service auth model | Shared secret header (simple, v1 sufficient) vs mTLS (stronger, more ops overhead) | Before any external exposure |
 | Weekly digest generation | Cron in Processing Service (simpler) vs separate Digest Service (independent scaling) | Phase 2 planning |
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
 | Hosting / compute | Railway, Fly.io, GCP Cloud Run, self-hosted VPS | Cost analysis |
+
+### Known Optimizations (not blocking, but tracked)
+
+- **DetailFetcher deduplication:** Within a single poll cycle, deduplicate detail fetches by `flag_key`. 50 audit entries across 10 flags should produce 10 detail fetches, not 50. Implement as a `map[flag_key]→detail` cache scoped to the poll cycle.
+- **Circuit breaker on source API calls:** Add circuit breaker (closed → open → half-open) on `AuditLogFetcher` and `DetailFetcher` to prevent hammering a degraded upstream. Not blocking for MVP.
 
 ---
 
@@ -520,4 +551,4 @@ Each service is an independently deployable Go binary with its own `go.mod`. The
 ---
 
 *Last updated: 2026-03-13*
-*Status: v0.1 Draft — services scaffolded, implementation pending LLD session*
+*Status: v0.1 — services scaffolded, design reviewed, implementation pending LLD session*
