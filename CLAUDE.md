@@ -388,7 +388,7 @@ These are planned future integrations and capabilities — they are on the roadm
 ## 10. Monorepo Structure (Tentative)
 
 ```
-datagill-website/
+datagill-core/
 ├── frontend/          # Next.js app
 │   └── ...
 ├── backend/           # Go — single binary: API + worker + scheduler
