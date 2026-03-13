@@ -31,15 +31,9 @@ func main() {
 		port = defaultPort
 	}
 
-	r := chi.NewRouter()
-	r.Use(middleware.Recoverer)
-
-	r.Get("/healthz", healthzHandler)
-	r.Post("/ping", pingHandler(logger))
-
 	srv := &http.Server{
 		Addr:         ":" + port,
-		Handler:      r,
+		Handler:      newRouter(logger),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -64,6 +58,16 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error("shutdown error", "err", err)
 	}
+}
+
+func newRouter(logger *slog.Logger) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+
+	r.Get("/healthz", healthzHandler)
+	r.Post("/ping", pingHandler(logger))
+
+	return r
 }
 
 func pingHandler(logger *slog.Logger) http.HandlerFunc {
