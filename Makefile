@@ -5,9 +5,9 @@ proto:
 	buf generate
 
 build:
-	go build github.com/datagill/datagill-website/services/ingestion
-	go build github.com/datagill/datagill-website/services/processing
-	go build github.com/datagill/datagill-website/services/search
+	go build github.com/datagill/datagill-core/services/ingestion
+	go build github.com/datagill/datagill-core/services/processing
+	go build github.com/datagill/datagill-core/services/search
 
 run-ingestion:
 	go run ./services/ingestion/...
@@ -22,4 +22,4 @@ lint:
 	go vet ./...
 
 test:
-	go test github.com/datagill/datagill-website/services/ingestion/... github.com/datagill/datagill-website/services/processing/... github.com/datagill/datagill-website/services/search/... -v
+	go test github.com/datagill/datagill-core/services/ingestion/... github.com/datagill/datagill-core/services/processing/... github.com/datagill/datagill-core/services/search/... -v

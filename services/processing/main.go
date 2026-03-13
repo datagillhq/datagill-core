@@ -14,7 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	pingv1 "github.com/datagill/datagill-website/shared/gen/ping/v1"
+	pingv1 "github.com/datagill/datagill-core/shared/gen/ping/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 

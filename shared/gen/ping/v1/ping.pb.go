@@ -126,7 +126,7 @@ const file_ping_v1_ping_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"B\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x18\n" +
-	"\aservice\x18\x02 \x01(\tR\aserviceB@Z>github.com/datagill/datagill-website/shared/gen/ping/v1;pingv1b\x06proto3"
+	"\aservice\x18\x02 \x01(\tR\aserviceB=Z;github.com/datagill/datagill-core/shared/gen/ping/v1;pingv1b\x06proto3"
 
 var (
 	file_ping_v1_ping_proto_rawDescOnce sync.Once

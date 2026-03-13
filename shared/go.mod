@@ -1,4 +1,4 @@
-module github.com/datagill/datagill-website/shared
+module github.com/datagill/datagill-core/shared
 
 go 1.26
 
