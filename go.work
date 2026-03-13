@@ -3,5 +3,6 @@ go 1.26
 use (
 	./services/ingestion
 	./services/processing
+	./services/search
 	./shared
 )
