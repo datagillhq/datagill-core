@@ -27,7 +27,63 @@ The system is an **ETL pipeline** with a semantic search and query layer on top.
 
 ---
 
-## 1. Technology Decisions
+## 1. Product Requirements
+
+Features are organized by tier. MVP is the launch bar. P0/P1/P2 are post-launch priorities.
+
+> **Data source notes:** "LD" = LaunchDarkly. "All 3" = LaunchDarkly, Unleash, Flagsmith (current MVP providers). Where notes reference Statsig or PostHog, those observations are carried forward from earlier API research but those providers are not in the current `integration_source` enum — see §9 open questions.
+
+### MVP — "Lights On"
+
+All data directly available from feature flag audit log APIs. No inference required for LaunchDarkly; Unleash/Flagsmith may require lightweight inference for some fields.
+
+| Feature | Data Source | Notes |
+|---------|-------------|-------|
+| Activity feed (who changed what, when) | All 3 | LD's `titleVerb` is cleanest; use as canonical change description |
+| Flag status breakdown (off / on / partial) | LD direct; Unleash/Flagsmith need inference | LD `titleVerb` reliably encodes enable/disable state |
+| Trend line (changes over time) | All 3 | Aggregate by date using `occurred_at` |
+| Actor attribution ("last modified by") | All 3 | LD has `member.email`; normalize to `actor_email` in `normalized_events` |
+| Basic search by flag name / time range | All 3 | LD supports `q` param + `before`/`after`; others: time range only |
+
+### P0 — Root Cause Analysis
+
+| Feature | Data Source | Notes |
+|---------|-------------|-------|
+| "What changed in the last X hours?" scoped to prod | All 3 | Filter `normalized_events` by `environment_key = 'production'` + `occurred_at > now() - interval` |
+| Automated vs. human change detection | LD: `token.serviceToken` field | Flag changes made by API token vs. human login. Store as boolean in `metadata` |
+| Rollback detection | All 3 | Flag toggled back within short window — requires processing logic in `NormalizeEvent` activity |
+| Per-flag timeline view | All 3 | Paginated history per `flag_key`, ordered by `occurred_at DESC` |
+
+### P1 — Developer Velocity
+
+| Feature | Data Source | Caveat |
+|---------|-------------|--------|
+| Time from flag creation → turned on in prod | All 3 | Compare `first_seen_at` vs. first `occurred_at` where event_type = enabled-in-prod. Requires storing `first_seen_at` per flag |
+| Stale flag list (created but never launched) | All 3 | Flags with no "enabled" event past X days |
+| Dead flag list (launched 60+ days, never changed) | All 3 | `last_event_at` comparison |
+| Flag cleanup suggestions | Derived | Combine stale + dead signals |
+| Owner-level velocity | All 3 | Group by `actor_email` across paginated flag history |
+
+### P1 — Company Progress / Monthly Snapshot
+
+| Feature | Data Source | Notes |
+|---------|-------------|-------|
+| Flags launched this month | All 3 | Count events where `event_type` = enabled-to-100% or equivalent |
+| Flags cleaned up (deleted) | All 3 | Count `event_type = flag.deleted` |
+| Monthly digest summary | Derived | Aggregated counts; AI-generated narrative is a P2 enhancement |
+
+### P2 — Intelligence Layer
+
+| Feature | Data Source | Notes |
+|---------|-------------|-------|
+| Anomaly: unusually high change frequency | Derived | Flag changed >N times in 24h |
+| Natural language search | LLM layer over `event_embeddings` | Do not rely on source `q` param alone — it is keyword-only |
+| Risk score (blast radius × recent change) | LD: flag metadata (targeting %) + audit log | Both available from LD API |
+| Narrative AI summaries per flag | LLM over `normalized_events` history | Feasible with Claude over stored event history |
+
+---
+
+## 2. Technology Decisions
 
 ### Decided
 
@@ -61,7 +117,7 @@ The system is an **ETL pipeline** with a semantic search and query layer on top.
 
 ---
 
-## 2. Architecture Overview
+## 3. Architecture Overview
 
 The platform has two runtime components: a **Worker** (Temporal worker running all ingestion + processing activities) and a **Search Service** (HTTP query layer). They share a PostgreSQL application database.
 
@@ -128,7 +184,7 @@ The platform has two runtime components: a **Worker** (Temporal worker running a
 
 ---
 
-## 3. ETL Pipeline — The Flow
+## 4. ETL Pipeline — The Flow
 
 ```
 Step 1: SCHEDULE
@@ -160,6 +216,8 @@ Step 3: ENRICH BATCH (per page)
 Step 4: NORMALIZE & EMBED (per enriched_events row)
   └─ NormalizeEvent activity
        — map raw audit log entry + flag snapshot → canonical normalized_events schema
+       — detect rollback (flag toggled back within short window) → set metadata.is_rollback
+       — detect automated change (token.serviceToken present) → set metadata.is_automated
   └─ GenerateEmbedding activity
        — call EmbedProvider (OpenAI or Ollama)
        — produce vector(1536)
@@ -187,7 +245,7 @@ Step 5: SERVE
 
 ---
 
-## 4. Worker (Temporal Activities)
+## 5. Worker (Temporal Activities)
 
 The Worker registers all activity and workflow implementations. It is a single binary scaled via replicas.
 
@@ -208,7 +266,7 @@ The Worker registers all activity and workflow implementations. It is a single b
 | `BatchFetchFlags` | `EnrichBatchWorkflow` | Fetch full flag state from source API for cache misses. Scoped per environment |
 | `WriteFlagCache` | `EnrichBatchWorkflow` | UPSERT `flag_cache` rows keyed on `(integration_id, environment_key, flag_key)` |
 | `ExplodeAndWrite` | `EnrichBatchWorkflow` | Write `raw_events` (dedup on `UNIQUE(integration_id, source_event_id)`). Explode to `enriched_events` (one row per raw_event_id × flag_key) |
-| `NormalizeEvent` | `NormalizeAndEmbedWorkflow` | Map raw payload + flag snapshot → canonical `normalized_events` schema |
+| `NormalizeEvent` | `NormalizeAndEmbedWorkflow` | Map raw payload + flag snapshot → canonical `normalized_events` schema. Detects rollbacks and automated changes |
 | `GenerateEmbedding` | `NormalizeAndEmbedWorkflow` | Call EmbedProvider. Returns vector(1536) |
 | `StoreEmbedding` | `NormalizeAndEmbedWorkflow` | Write to `event_embeddings` |
 | `PublishEvent` | `NormalizeAndEmbedWorkflow` | Notify downstream (TBD) |
@@ -223,7 +281,7 @@ The Worker registers all activity and workflow implementations. It is a single b
 
 ---
 
-## 5. Search Service
+## 6. Search Service
 
 ### Components
 
@@ -259,7 +317,7 @@ The Worker registers all activity and workflow implementations. It is a single b
 
 ---
 
-## 6. Database Schema
+## 7. Database Schema
 
 Two PostgreSQL 16 instances:
 - **`temporal-postgres`** — Temporal's internal state DB. Managed by Temporal; do not write to it directly.
@@ -393,7 +451,7 @@ CREATE TABLE normalized_events (
   project_key      text,
   environment_key  text NOT NULL DEFAULT 'production',
   occurred_at      timestamptz,
-  metadata         jsonb NOT NULL DEFAULT '{}',
+  metadata         jsonb NOT NULL DEFAULT '{}',  -- is_rollback, is_automated, etc.
   created_at       timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (raw_event_id, flag_key) REFERENCES enriched_events(raw_event_id, flag_key)
 );
@@ -404,6 +462,9 @@ CREATE INDEX normalized_events_org_env_occurred_idx
 
 CREATE INDEX normalized_events_flag_key_idx
   ON normalized_events (flag_key);
+
+CREATE INDEX normalized_events_actor_idx
+  ON normalized_events (org_id, actor_email, occurred_at DESC);
 ```
 
 ### `event_embeddings`
@@ -439,12 +500,12 @@ CREATE INDEX event_embeddings_hnsw_idx
 | `004_raw_events.sql` | raw_events table + UNIQUE(integration_id, source_event_id) + indexes |
 | `005_flag_cache.sql` | flag_cache with `(integration_id, environment_key, flag_key)` PK + cron vacuum |
 | `006_enriched_events.sql` | enriched_events with `integration_id` + `(raw_event_id, flag_key)` PK + index |
-| `007_normalized_events.sql` | normalized_events with `integration_id` + composite index |
+| `007_normalized_events.sql` | normalized_events with `integration_id` + composite indexes |
 | `008_event_embeddings.sql` | event_embeddings + HNSW index |
 
 ---
 
-## 7. Shared Types
+## 8. Shared Types
 
 Defined in `shared/` and imported by all services.
 
@@ -456,19 +517,21 @@ Defined in `shared/` and imported by all services.
 
 ---
 
-## 8. Open Questions
+## 9. Open Questions
 
 Do not make implementation decisions that depend on unresolved questions.
 
 | Question | Options | Needed by |
 |----------|---------|-----------|
 | ~~Per-environment flag tracking~~ | **Decided: one row per flag per environment.** `environment_key` is part of `flag_cache` PK and `enriched_events`/`normalized_events` filtering dimension. Not a tenant boundary. | — |
+| ~~Multi-source orgs~~ | **Decided: `integrations` table.** `organizations` is source-agnostic. Each provider connection is a row in `integrations` with its own encrypted `api_key`, `source` enum, and independent Temporal Schedule. Adding a second provider is purely additive. | — |
+| Flag detail page in MVP | Include (requires per-flag paginated history) vs. defer to P0 (launch with activity feed + search only) | MVP scope decision |
+| Statsig / PostHog support | Add to `integration_source` enum? Referenced in product requirements notes but not currently planned | Before second provider |
 | Ollama vector dimension mismatch (768 vs 1536) | Zero-pad to 1536 (wastes storage) vs configurable column per org (schema complexity) | Before self-hosted GA |
 | Weekly digest generation | Cron in Temporal (scheduled workflow) vs separate Digest Service | Phase 2 planning |
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
 | Hosting / compute | Railway, Fly.io, GCP Cloud Run, self-hosted VPS | Cost analysis |
 | `PublishEvent` activity downstream | Webhook, Slack notification, internal event bus | Post-MVP |
-| ~~Multi-source orgs~~ | **Decided: `integrations` table.** `organizations` is source-agnostic. Each provider connection is a row in `integrations` with its own encrypted `api_key`, `source` enum, and independent Temporal Schedule. Adding a second provider is purely additive. | — |
 
 ### Known Optimizations (not blocking, but tracked)
 
@@ -477,7 +540,7 @@ Do not make implementation decisions that depend on unresolved questions.
 
 ---
 
-## 9. Roadmap Beyond MVP
+## 10. Roadmap Beyond MVP
 
 Do not build these yet, but **do not design the MVP in a way that makes them hard to add**.
 
@@ -502,7 +565,7 @@ Do not build these yet, but **do not design the MVP in a way that makes them har
 
 ---
 
-## 10. Monorepo Structure
+## 11. Monorepo Structure
 
 ```
 datagill-core/
@@ -535,7 +598,7 @@ datagill-core/
 | `temporal-postgres` | postgres:16 | Temporal's internal state DB (separate from app DB) |
 | `temporal` | temporalio/auto-setup:1.24 | Temporal server — runs auto-migration on first start |
 | `temporal-ui` | temporalio/ui:2.26 | Temporal Web UI on :8080 |
-| `app-postgres` | postgres:16 | Application data — all tables in Section 6 |
+| `app-postgres` | postgres:16 | Application data — all tables in §7 |
 | `worker` | your build | Temporal worker. Scale via replicas |
 | `search` | your build | Search Service HTTP server on :8082 |
 
@@ -544,4 +607,4 @@ Each service is an independently deployable Go binary with its own `go.mod`. The
 ---
 
 *Last updated: 2026-03-16*
-*Status: v0.3 — integrations table added; organizations made source-agnostic; schema keys updated to integration_id scope*
+*Status: v0.4 — product requirements added (MVP / P0 / P1 / P2); sections renumbered*
