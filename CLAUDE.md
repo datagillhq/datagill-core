@@ -73,7 +73,7 @@ The platform has two runtime components: a **Worker** (Temporal worker running a
   +--------------------------------------------------+
   |  Temporal Server (self-hosted)                   |
   |                                                  |
-  |  OrgIngestWorkflow  ← Schedule every 5 min      |
+  |  IntegrationIngestWorkflow  ← Schedule/integration|
   |    └─ EnrichBatchWorkflow (per page)             |
   |         ├─ FetchAuditLogPage activity            |
   |         ├─ CheckFlagCache activity               |
@@ -111,11 +111,12 @@ The platform has two runtime components: a **Worker** (Temporal worker running a
 
 | Property | Value |
 |----------|-------|
-| Trigger | Temporal Schedule, every 5 min per org |
+| Trigger | Temporal Schedule, every 5 min **per integration** (one schedule per `integrations` row) |
 | Overlap policy | `ScheduleOverlapPolicy.SKIP` — if a run is still in progress, the next scheduled fire is skipped |
-| Startup jitter | Up to 30s per org to avoid thundering herd on source APIs |
-| Cursor state | Lives inside `OrgIngestWorkflow` durable state — no cursor column in the DB |
+| Startup jitter | Up to 30s per integration to avoid thundering herd on source APIs |
+| Cursor state | Lives inside `IntegrationIngestWorkflow` durable state — no cursor column in the DB |
 | History pruning | `Continue-As-New` called after every 100 pages to keep event history under Temporal limits (50 MB / 51,200 events) |
+| Schedule lifecycle | Created when an integration is enabled; paused/deleted when `integrations.enabled = false` |
 
 ### Service / Component Responsibilities
 
@@ -131,28 +132,29 @@ The platform has two runtime components: a **Worker** (Temporal worker running a
 
 ```
 Step 1: SCHEDULE
-  └─ Temporal Schedule fires OrgIngestWorkflow every 5 min per org
-     Jitter (up to 30s) applied per org to spread load
-     ScheduleOverlapPolicy.SKIP: concurrent runs for same org are dropped
+  └─ Temporal Schedule fires IntegrationIngestWorkflow every 5 min per integration
+     Jitter (up to 30s) applied per integration to spread load
+     ScheduleOverlapPolicy.SKIP: concurrent runs for same integration are dropped
+     Schedule created/paused/deleted in sync with integrations.enabled
 
 Step 2: FETCH AUDIT LOG PAGE
-  └─ FetchAuditLogPage activity — GET /auditlog?org=X&cursor=Y
-     Cursor lives in OrgIngestWorkflow durable state (not DB)
+  └─ FetchAuditLogPage activity — GET /auditlog?integration=X&cursor=Y
+     Cursor lives in IntegrationIngestWorkflow durable state (not DB)
      One EnrichBatchWorkflow spawned per page of results
      Continue-As-New after every 100 pages
 
 Step 3: ENRICH BATCH (per page)
   └─ CheckFlagCache activity
-       — lookup (org_id, environment_key, flag_key) in flag_cache
+       — lookup (integration_id, environment_key, flag_key) in flag_cache
        — TTL check: WHERE fetched_at > now() - interval '5 minutes'
      BatchFetchFlags activity
        — for cache misses: GET /flags from source API, scoped per environment
        — flag_keys extracted at FetchAuditLogPage to avoid re-parsing payloads
      WriteFlagCache activity
-       — UPSERT flag_cache rows (org_id, environment_key, flag_key)
+       — UPSERT flag_cache rows (integration_id, environment_key, flag_key)
      ExplodeAndWrite activity
-       — write raw_events row (one per audit log event)
-       — explode to enriched_events rows (one per event_id × flag_key pair)
+       — write raw_events row (one per audit log event), dedup on UNIQUE(integration_id, source_event_id)
+       — explode to enriched_events rows (one per raw_event_id × flag_key pair)
        — spawn one NormalizeAndEmbedWorkflow per enriched_events row
 
 Step 4: NORMALIZE & EMBED (per enriched_events row)
@@ -175,12 +177,12 @@ Step 5: SERVE
 ### Critical Invariants (never violate these)
 
 - **Raw data is never discarded.** `raw_events` is the only copy of raw source payloads. Never delete. Failed enrichment retries from this table.
-- **Deduplication at the DB layer.** `event_id` is the source-stable ID — `raw_events.event_id` is the primary key. Safe to receive the same event twice.
+- **Deduplication at the DB layer.** `UNIQUE(integration_id, source_event_id)` on `raw_events` — safe to receive the same event twice.
 - **Every query filters by `org_id` first.** No cross-tenant data leakage. Ever.
-- **Enriched rows are idempotent.** `enriched_events` upserts on `(event_id, flag_key)` PK — re-running enrichment is always safe.
+- **Enriched rows are idempotent.** `enriched_events` upserts on `(raw_event_id, flag_key)` PK — re-running enrichment is always safe.
 - **Webhook handlers return immediately (future).** Never do synchronous processing inside a webhook handler. Store raw, dispatch workflow, return 200.
 - **All writes must be idempotent.** Reprocessing any event must be safe.
-- **`flag_cache` is scoped per environment.** Key is `(org_id, environment_key, flag_key)` — production state must never overwrite staging.
+- **`flag_cache` is scoped per integration, not per org.** Key is `(integration_id, environment_key, flag_key)` — flag keys are not globally unique across sources; two providers can use the same key string.
 - **Temporal activities are the unit of retry.** Do not retry inside application code. Failed activities are retried by Temporal with configured backoff.
 
 ---
@@ -193,8 +195,8 @@ The Worker registers all activity and workflow implementations. It is a single b
 
 | Workflow | Trigger | Responsibility |
 |----------|---------|---------------|
-| `OrgIngestWorkflow` | Temporal Schedule (every 5 min per org) | Outer loop. Manages cursor in durable state. Spawns `EnrichBatchWorkflow` per page. Calls `Continue-As-New` after 100 pages |
-| `EnrichBatchWorkflow` | Spawned by `OrgIngestWorkflow` | Per-page enrichment. Runs cache check, flag fetch, write, and explode activities. Spawns `NormalizeAndEmbedWorkflow` per row |
+| `IntegrationIngestWorkflow` | Temporal Schedule (every 5 min **per integration**) | Outer loop. Manages cursor in durable state. Spawns `EnrichBatchWorkflow` per page. Calls `Continue-As-New` after 100 pages |
+| `EnrichBatchWorkflow` | Spawned by `IntegrationIngestWorkflow` | Per-page enrichment. Runs cache check, flag fetch, write, and explode activities. Spawns `NormalizeAndEmbedWorkflow` per row |
 | `NormalizeAndEmbedWorkflow` | Spawned by `EnrichBatchWorkflow` | Per-row normalization, embedding, and storage |
 
 ### Activities
@@ -202,10 +204,10 @@ The Worker registers all activity and workflow implementations. It is a single b
 | Activity | Workflow | Responsibility |
 |----------|----------|---------------|
 | `FetchAuditLogPage` | `EnrichBatchWorkflow` | Paginate source audit log API. Returns ordered entries + next cursor |
-| `CheckFlagCache` | `EnrichBatchWorkflow` | Lookup `(org_id, environment_key, flag_key)` in `flag_cache`. TTL: 5 min |
+| `CheckFlagCache` | `EnrichBatchWorkflow` | Lookup `(integration_id, environment_key, flag_key)` in `flag_cache`. TTL: 5 min |
 | `BatchFetchFlags` | `EnrichBatchWorkflow` | Fetch full flag state from source API for cache misses. Scoped per environment |
-| `WriteFlagCache` | `EnrichBatchWorkflow` | UPSERT `flag_cache` rows |
-| `ExplodeAndWrite` | `EnrichBatchWorkflow` | Write `raw_events`. Explode to `enriched_events` (one row per event × flag_key) |
+| `WriteFlagCache` | `EnrichBatchWorkflow` | UPSERT `flag_cache` rows keyed on `(integration_id, environment_key, flag_key)` |
+| `ExplodeAndWrite` | `EnrichBatchWorkflow` | Write `raw_events` (dedup on `UNIQUE(integration_id, source_event_id)`). Explode to `enriched_events` (one row per raw_event_id × flag_key) |
 | `NormalizeEvent` | `NormalizeAndEmbedWorkflow` | Map raw payload + flag snapshot → canonical `normalized_events` schema |
 | `GenerateEmbedding` | `NormalizeAndEmbedWorkflow` | Call EmbedProvider. Returns vector(1536) |
 | `StoreEmbedding` | `NormalizeAndEmbedWorkflow` | Write to `event_embeddings` |
@@ -214,10 +216,10 @@ The Worker registers all activity and workflow implementations. It is a single b
 ### Constraints
 
 - Back off on 429, respect `Retry-After` headers from source APIs — configure as Temporal activity retry policy
-- Cursor state is in `OrgIngestWorkflow` durable state — no cursor columns in the DB
+- Cursor state is in `IntegrationIngestWorkflow` durable state — no cursor columns in the DB
 - Poll concurrency is managed by Temporal (`ScheduleOverlapPolicy.SKIP`) — no poll lock table needed
-- Onboarding backfill: start `OrgIngestWorkflow` with cursor set to 30 days ago — same code path as live polling
-- One source per org for MVP; multi-source support is additive
+- Onboarding backfill: start `IntegrationIngestWorkflow` with cursor set to `now() - backfill_days` — same code path as live polling
+- Each `integrations` row gets its own independent Temporal Schedule — adding a second integration for an org is purely additive
 
 ---
 
@@ -265,30 +267,62 @@ Two PostgreSQL 16 instances:
 
 ### `organizations`
 
-One row per customer tenant. Primary isolation boundary.
+One row per customer tenant. Primary isolation boundary. Source-agnostic — no provider-specific columns here.
 
 ```sql
 CREATE TABLE organizations (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name            text NOT NULL,
-  ld_api_key      text NOT NULL,        -- stored encrypted at rest (AES-256-GCM)
-  ld_project_key  text NOT NULL,
-  active          boolean NOT NULL DEFAULT true,
-  created_at      timestamptz NOT NULL DEFAULT now()
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
+```
+
+### `integrations`
+
+One row per provider connection per org. An org can have multiple integrations (e.g. LaunchDarkly + Unleash, or two separate LD projects). Each integration gets its own Temporal Schedule.
+
+```sql
+CREATE TYPE integration_source AS ENUM (
+  'launchdarkly', 'unleash', 'flagsmith', 'github', 'pagerduty'
+);
+
+CREATE TABLE integrations (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id                 uuid NOT NULL REFERENCES organizations(id),
+  source                 integration_source NOT NULL,
+  api_key                text NOT NULL,         -- AES-256-GCM encrypted; fetched by worker at activity start
+  project_key            text NOT NULL,         -- source system project identifier
+  environment_key        text,                  -- null = track all environments
+  poll_interval_minutes  int NOT NULL DEFAULT 60,
+  backfill_days          int NOT NULL DEFAULT 30,
+  enabled                boolean NOT NULL DEFAULT true,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX integrations_org_id_idx ON integrations (org_id);
+-- One connection per org + source + project (prevents duplicate integrations)
+CREATE UNIQUE INDEX integrations_org_source_project_idx
+  ON integrations (org_id, source, project_key);
 ```
 
 ### `raw_events`
 
 One row per audit log event. Written by `ExplodeAndWrite`. The only copy of raw source payloads — never deleted.
 
+`source_event_id` is the stable ID from the source API. It is only unique within a single integration — not globally — so dedup is keyed on `(integration_id, source_event_id)`.
+
 ```sql
 CREATE TABLE raw_events (
-  event_id     text PRIMARY KEY,                          -- stable ID from source
-  org_id       uuid NOT NULL REFERENCES organizations(id),
-  raw_json     jsonb NOT NULL,
-  flag_keys    text[] NOT NULL DEFAULT '{}',              -- extracted at ingest to avoid re-parsing
-  ingested_at  timestamptz NOT NULL DEFAULT now()
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  integration_id   uuid NOT NULL REFERENCES integrations(id),
+  org_id           uuid NOT NULL REFERENCES organizations(id),  -- denormalised for query efficiency
+  source_event_id  text NOT NULL,                               -- stable ID from source API
+  raw_json         jsonb NOT NULL,
+  flag_keys        text[] NOT NULL DEFAULT '{}',                -- extracted at ingest to avoid re-parsing
+  ingested_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (integration_id, source_event_id)
 );
 
 CREATE INDEX raw_events_org_id_idx   ON raw_events (org_id);
@@ -297,16 +331,16 @@ CREATE INDEX raw_events_ingested_idx ON raw_events (ingested_at);
 
 ### `flag_cache`
 
-Deduplication cache for flag detail API responses. Replaces Redis. Keyed per `(org_id, environment_key, flag_key)` — environment is required to prevent production state overwriting staging.
+Deduplication cache for flag detail API responses. Replaces Redis. Keyed per `(integration_id, environment_key, flag_key)` — `integration_id` rather than `org_id` because flag keys are not globally unique across sources (LaunchDarkly and Unleash can both use the same key string). Environment is required to prevent production state overwriting staging.
 
 ```sql
 CREATE TABLE flag_cache (
-  org_id           uuid NOT NULL REFERENCES organizations(id),
+  integration_id   uuid NOT NULL REFERENCES integrations(id),
   environment_key  text NOT NULL,
   flag_key         text NOT NULL,
   data             jsonb NOT NULL,
   fetched_at       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (org_id, environment_key, flag_key)
+  PRIMARY KEY (integration_id, environment_key, flag_key)
 );
 
 -- Vacuum stale entries nightly
@@ -321,18 +355,19 @@ TTL check in `CheckFlagCache`: `WHERE fetched_at > now() - interval '5 minutes'`
 
 ### `enriched_events`
 
-Exploded model — one row per `(event_id, flag_key)` pair. Written by `ExplodeAndWrite`. Upsert on PK makes re-running enrichment idempotent. Retry granularity: a failed embedding retries one flag, not the whole audit event.
+Exploded model — one row per `(raw_event_id, flag_key)` pair. Written by `ExplodeAndWrite`. Upsert on PK makes re-running enrichment idempotent. Retry granularity: a failed embedding retries one flag, not the whole audit event.
 
 ```sql
 CREATE TABLE enriched_events (
-  event_id         text NOT NULL,
-  org_id           uuid NOT NULL REFERENCES organizations(id),
+  raw_event_id     uuid NOT NULL REFERENCES raw_events(id),
+  integration_id   uuid NOT NULL REFERENCES integrations(id),
+  org_id           uuid NOT NULL REFERENCES organizations(id),  -- denormalised for query efficiency
   environment_key  text NOT NULL DEFAULT 'production',
   flag_key         text NOT NULL,
   flag_data        jsonb NOT NULL,  -- snapshot from flag_cache at time of event
   raw_event        jsonb NOT NULL,  -- copy of raw_events.raw_json
   created_at       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (event_id, flag_key)
+  PRIMARY KEY (raw_event_id, flag_key)
 );
 
 CREATE INDEX enriched_events_org_env_idx
@@ -346,9 +381,10 @@ Canonical schema decoupled from the source API shape. Written by `NormalizeEvent
 ```sql
 CREATE TABLE normalized_events (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  event_id         text NOT NULL,
+  raw_event_id     uuid NOT NULL,
   flag_key         text NOT NULL,
-  org_id           uuid NOT NULL REFERENCES organizations(id),
+  integration_id   uuid NOT NULL REFERENCES integrations(id),
+  org_id           uuid NOT NULL REFERENCES organizations(id),  -- denormalised for query efficiency
   event_type       text NOT NULL,  -- flag.created, flag.updated, flag.deleted, targeting.changed
   actor_id         text,
   actor_email      text,
@@ -359,7 +395,7 @@ CREATE TABLE normalized_events (
   occurred_at      timestamptz,
   metadata         jsonb NOT NULL DEFAULT '{}',
   created_at       timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY (event_id, flag_key) REFERENCES enriched_events(event_id, flag_key)
+  FOREIGN KEY (raw_event_id, flag_key) REFERENCES enriched_events(raw_event_id, flag_key)
 );
 
 -- Covers the dashboard default filter (production, recent events)
@@ -399,11 +435,12 @@ CREATE INDEX event_embeddings_hnsw_idx
 |------|-------------|
 | `001_bootstrap.sql` | Enable `uuid-ossp`, `vector`, `pg_cron` extensions |
 | `002_organizations.sql` | organizations table |
-| `003_raw_events.sql` | raw_events table + indexes |
-| `004_flag_cache.sql` | flag_cache with `(org_id, environment_key, flag_key)` PK + cron vacuum |
-| `005_enriched_events.sql` | enriched_events with `environment_key` column + index |
-| `006_normalized_events.sql` | normalized_events with `environment_key` + composite index |
-| `007_event_embeddings.sql` | event_embeddings + HNSW index |
+| `003_integrations.sql` | integrations table + indexes (depends on organizations) |
+| `004_raw_events.sql` | raw_events table + UNIQUE(integration_id, source_event_id) + indexes |
+| `005_flag_cache.sql` | flag_cache with `(integration_id, environment_key, flag_key)` PK + cron vacuum |
+| `006_enriched_events.sql` | enriched_events with `integration_id` + `(raw_event_id, flag_key)` PK + index |
+| `007_normalized_events.sql` | normalized_events with `integration_id` + composite index |
+| `008_event_embeddings.sql` | event_embeddings + HNSW index |
 
 ---
 
@@ -431,7 +468,7 @@ Do not make implementation decisions that depend on unresolved questions.
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
 | Hosting / compute | Railway, Fly.io, GCP Cloud Run, self-hosted VPS | Cost analysis |
 | `PublishEvent` activity downstream | Webhook, Slack notification, internal event bus | Post-MVP |
-| Multi-source orgs | Single `ld_api_key` on `organizations` is LaunchDarkly-specific. Needs integration table when Unleash/Flagsmith added | Before second provider |
+| ~~Multi-source orgs~~ | **Decided: `integrations` table.** `organizations` is source-agnostic. Each provider connection is a row in `integrations` with its own encrypted `api_key`, `source` enum, and independent Temporal Schedule. Adding a second provider is purely additive. | — |
 
 ### Known Optimizations (not blocking, but tracked)
 
@@ -507,4 +544,4 @@ Each service is an independently deployable Go binary with its own `go.mod`. The
 ---
 
 *Last updated: 2026-03-16*
-*Status: v0.2 — pipeline redesigned around self-hosted Temporal; schema updated; implementation pending*
+*Status: v0.3 — integrations table added; organizations made source-agnostic; schema keys updated to integration_id scope*
