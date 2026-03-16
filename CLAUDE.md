@@ -36,18 +36,19 @@ The system is an **ETL pipeline** with a semantic search and query layer on top.
 | Frontend | Next.js (App Router) + shadcn/ui | Best-in-class React SSR, shadcn gives us accessible, unstyled components we own |
 | Backend language | **Go** | Goroutines are a natural fit for the ETL workload — concurrent provider polling, parallel normalization jobs, low memory per goroutine |
 | Go HTTP framework | **Chi** | Lightweight, idiomatic, stdlib-compatible. Easy to add middleware and route groups as endpoints grow |
-| Database | **PostgreSQL 16 + pgvector** | ACID guarantees, JSONB for raw payload flexibility, pgvector for semantic search embeddings. One DB for all services |
+| Database | **PostgreSQL 16 + pgvector** | ACID guarantees, JSONB for raw payload flexibility, pgvector for semantic search embeddings. Two DB instances: one for Temporal internal state, one for application data |
 | Auth (platform) | **Clerk** | Handles user login, org management, and JWT issuance. Language-agnostic — Go validates Clerk JWTs via JWKS endpoint |
 | Embedding model | **OpenAI text-embedding-3-small** (cloud) / **Ollama nomic-embed-text** (self-hosted) | Swappable via EmbedProvider interface — same interface, different implementation |
-| Queue | **BullMQ + Redis** (everywhere) | Single implementation for cloud and self-hosted. Cloud uses ElastiCache, self-hosted uses Docker Redis. Three priority tiers (HIGH / NORMAL / LOW) |
+| Workflow orchestration | **Self-hosted Temporal** | Replaces BullMQ + Redis. Durable workflow state eliminates cursor tables and poll lock tables. Retry, scheduling, and concurrency handled by Temporal primitives |
 | Metrics | **Prometheus + Grafana Cloud** (cloud) / **Prometheus + Grafana** (self-hosted) | Standard scrape endpoint at `/metrics` on all services |
 | Secret management | **AWS Secrets Manager** (cloud) / **env vars + Docker secrets** (self-hosted) | |
 | DB migrations | **golang-migrate** | Applied at service startup or as a separate migration job |
 | Search Service auth | **Clerk JWT** | Frontend passes Clerk JWT; Search Service validates via JWKS. No per-resource authorization yet — everyone is admin. Permissions TBD post-MVP |
 | Organisation creation | **Clerk webhook** | An `organisations` row is created on business onboarding when the Clerk org is provisioned. Clerk org ID is the primary external reference |
 | Provider auth (MVP) | **API key** | Customer generates read-only API key in their provider, pastes into DataGill. Encrypted at rest with AES-256-GCM |
-| Search backend | **PostgreSQL + pgvector** | HNSW index for ANN semantic search. Structured search via parameterized SQL |
+| Search backend | **PostgreSQL + pgvector** | HNSW index for ANN semantic search over `event_embeddings`. Structured search via parameterized SQL over `normalized_events` |
 | Webhooks (v1) | **None — poll only** | No inbound public endpoints in v1. Customers provide an API key; we poll on a schedule |
+| Flag detail cache | **PostgreSQL `flag_cache` table** | Replaces Redis. TTL enforced inline with `WHERE fetched_at > now() - interval '5 minutes'`. Stale rows vacuumed nightly by `pg_cron` |
 
 ### Not Decided Yet (TBD)
 
@@ -62,47 +63,37 @@ The system is an **ETL pipeline** with a semantic search and query layer on top.
 
 ## 2. Architecture Overview
 
-The platform is three independent Go services connected by a priority queue and a shared PostgreSQL database.
+The platform has two runtime components: a **Worker** (Temporal worker running all ingestion + processing activities) and a **Search Service** (HTTP query layer). They share a PostgreSQL application database.
 
 ```
   Customer tools (LaunchDarkly, Unleash, GitHub, PagerDuty)
          |
-         |  Poll-based (audit log API + detail fetch)
+         |  Poll-based (audit log API + flag detail fetch)
          v
-  +------------------------------------------+
-  |         Ingestion Service  :8080          |
-  |  PollScheduler (fixed delay + jitter)     |
-  |  PollLockManager (multi-instance safe)    |
-  |  AuditLogFetcher + DetailFetcher          |
-  |  RawEventStore → ingestion_raw_events     |  ← only raw storage in system
-  |  Normaliser + PriorityClassifier          |
-  |  DeduplicatorService                      |
-  |  QueuePublisher                           |
-  +------------------------------------------+
-         |                |                |
-      HIGH queue      NORMAL queue      LOW queue
-      (enterprise)    (standard)        (backfill)
-         |                |                |
-         +----------------+----------------+
-                          |
-                          v
-  +------------------------------------------+
-  |       Processing Service  :8081           |
-  |  QueueConsumer (weighted scheduler)       |
-  |                                           |
-  |  FlagOrchestrator                         |
-  |    FlagInitPhase                          |
-  |    EmbedPhase                             |
-  |    FlagFinalizationPhase                  |
-  |                                           |
-  |  FlagEventOrchestrator                    |
-  |    FlagEventInitPhase                     |
-  |    FlagEventFinalizationPhase             |
-  +------------------------------------------+
-         |                    |
-    feature_flags       feature_flag_events
-    ops_locks            (normalised only,
-    (PostgreSQL)          no raw payload)
+  +--------------------------------------------------+
+  |  Temporal Server (self-hosted)                   |
+  |                                                  |
+  |  OrgIngestWorkflow  ← Schedule every 5 min      |
+  |    └─ EnrichBatchWorkflow (per page)             |
+  |         ├─ FetchAuditLogPage activity            |
+  |         ├─ CheckFlagCache activity               |
+  |         ├─ BatchFetchFlags activity              |
+  |         ├─ WriteFlagCache activity               |
+  |         └─ ExplodeAndWrite activity              |
+  |              └─ NormalizeAndEmbedWorkflow        |
+  |                   ├─ NormalizeEvent activity     |
+  |                   ├─ GenerateEmbedding activity  |
+  |                   ├─ StoreEmbedding activity     |
+  |                   └─ PublishEvent activity       |
+  +--------------------------------------------------+
+         |
+         | writes to app DB
+         v
+  +-----------------------------------------------+
+  |  PostgreSQL (app DB)                          |
+  |  raw_events · flag_cache · enriched_events    |
+  |  normalized_events · event_embeddings         |
+  +-----------------------------------------------+
          |
          v
   +---------------------------+
@@ -116,27 +107,22 @@ The platform is three independent Go services connected by a priority queue and 
     Frontend / API consumers
 ```
 
-### Queue Priority Model
+### Temporal Scheduling Details
 
-| Tier | Who uses it | Scheduler weight |
-|------|-------------|-----------------|
-| HIGH | Enterprise org events, incident events | 10 |
-| NORMAL | Standard polling events | 3 |
-| LOW | Onboarding backfill, historical imports | 1 |
+| Property | Value |
+|----------|-------|
+| Trigger | Temporal Schedule, every 5 min per org |
+| Overlap policy | `ScheduleOverlapPolicy.SKIP` — if a run is still in progress, the next scheduled fire is skipped |
+| Startup jitter | Up to 30s per org to avoid thundering herd on source APIs |
+| Cursor state | Lives inside `OrgIngestWorkflow` durable state — no cursor column in the DB |
+| History pruning | `Continue-As-New` called after every 100 pages to keep event history under Temporal limits (50 MB / 51,200 events) |
 
-**Scheduler algorithm — counter-based round-robin:**
-Each round is 14 slots (10+3+1). Fill them in order: 10 from HIGH, 3 from NORMAL, 1 from LOW.
-If a queue is empty on its slot, skip it — do not steal the slot for another tier.
-Starvation guard: if LOW hasn't been drained in >1000 rounds, force one LOW poll regardless.
-This is intentionally simple and easy to swap for a token bucket if needed.
+### Service / Component Responsibilities
 
-### Service Responsibilities
-
-| Service | Port | Owns | Does NOT own |
-|---------|------|------|--------------|
-| Ingestion | 8080 | Polling, raw storage, normalisation, queue publishing | Enrichment, embeddings, serving queries |
-| Processing | 8081 | Consuming queue, enrichment pipeline, embeddings, writing to DB | HTTP query serving, raw storage |
-| Search | 8082 | Serving semantic + structured search queries | Writing to any table |
+| Component | Port | Owns | Does NOT own |
+|-----------|------|------|--------------|
+| Worker (Temporal) | — | Polling, raw storage, enrichment, normalization, embeddings | HTTP query serving |
+| Search Service | 8082 | Serving semantic + structured search queries | Writing to any table |
 | Frontend | — | UI rendering, data display, user interaction | Business logic, direct DB access |
 
 ---
@@ -144,164 +130,107 @@ This is intentionally simple and easy to swap for a token bucket if needed.
 ## 3. ETL Pipeline — The Flow
 
 ```
-Step 1: EXTRACT
-  └─ PollScheduler triggers per integration (fixed delay + startup jitter)
-     → AuditLogFetcher paginates audit log API since cursor, one page at a time
-     → CursorStore.Update(latest_timestamp_on_page) after each page — not at end of poll
-        This means a crash mid-poll resumes from the last completed page, not the beginning
-     → DetailFetcher fetches full current state — deduplicated per unique flag_key per poll cycle
-        (50 audit entries across 10 flags = 10 detail fetches, not 50)
+Step 1: SCHEDULE
+  └─ Temporal Schedule fires OrgIngestWorkflow every 5 min per org
+     Jitter (up to 30s) applied per org to spread load
+     ScheduleOverlapPolicy.SKIP: concurrent runs for same org are dropped
 
-Step 2: DEDUPLICATE
-  └─ DeduplicatorService checks (source + source_event_id + org_id) in DB
-     Already seen? Skip. Not seen? Continue.
+Step 2: FETCH AUDIT LOG PAGE
+  └─ FetchAuditLogPage activity — GET /auditlog?org=X&cursor=Y
+     Cursor lives in OrgIngestWorkflow durable state (not DB)
+     One EnrichBatchWorkflow spawned per page of results
+     Continue-As-New after every 100 pages
 
-Step 3: RAW STORAGE
-  └─ RawEventStore writes audit_log_payload to ingestion_raw_events (JSONB)
-     published_at = null until queue publish succeeds
+Step 3: ENRICH BATCH (per page)
+  └─ CheckFlagCache activity
+       — lookup (org_id, environment_key, flag_key) in flag_cache
+       — TTL check: WHERE fetched_at > now() - interval '5 minutes'
+     BatchFetchFlags activity
+       — for cache misses: GET /flags from source API, scoped per environment
+       — flag_keys extracted at FetchAuditLogPage to avoid re-parsing payloads
+     WriteFlagCache activity
+       — UPSERT flag_cache rows (org_id, environment_key, flag_key)
+     ExplodeAndWrite activity
+       — write raw_events row (one per audit log event)
+       — explode to enriched_events rows (one per event_id × flag_key pair)
+       — spawn one NormalizeAndEmbedWorkflow per enriched_events row
 
-Step 4: NORMALISE
-  └─ Normaliser maps source-specific payload → canonical RawEvent struct
-     Produces two events per audit entry:
-       RawFlagEvent        → feature-flag-{priority}-queue
-       RawFlagAuditEvent   → feature-flag-event-{priority}-queue
+Step 4: NORMALIZE & EMBED (per enriched_events row)
+  └─ NormalizeEvent activity
+       — map raw audit log entry + flag snapshot → canonical normalized_events schema
+  └─ GenerateEmbedding activity
+       — call EmbedProvider (OpenAI or Ollama)
+       — produce vector(1536)
+  └─ StoreEmbedding activity
+       — write to event_embeddings with model name + input_text for debugging
+  └─ PublishEvent activity
+       — notify downstream (webhook, Slack, etc. — TBD)
 
-Step 5: ENQUEUE
-  └─ PriorityClassifier assigns HIGH / NORMAL / LOW based on org tier + event type
-     QueuePublisher publishes to correct queue
-     RawEventStore.MarkPublished sets published_at = now()
-
-Step 6: PROCESS — Pipeline 1 (Feature Flag Entity)
-  └─ FlagInitPhase: acquire ops_lock, UPSERT feature_flags, set ShouldEmbed
-     EmbedPhase: call EmbedProvider if ShouldEmbed=true → vector
-     FlagFinalizationPhase: write embedding, update last_event_at, release lock
-
-Step 7: PROCESS — Pipeline 2 (Feature Flag Audit Event)
-  └─ FlagEventInitPhase: INSERT feature_flag_events (normalised fields only)
-     FlagEventFinalizationPhase: UPDATE feature_flags.last_event_id
-
-Step 8: SERVE
+Step 5: SERVE
   └─ Search Service receives query from frontend
-     Semantic: embed query → ANN search → re-rank by recency → return top 20
-     Structured: parse filters → parameterized SQL → return results
+     Semantic: embed query → ANN search over event_embeddings → re-rank by recency → return top 20
+     Structured: parse filters → parameterized SQL over normalized_events → return results
 ```
 
 ### Critical Invariants (never violate these)
 
-- **Raw data is never discarded.** `ingestion_raw_events` is the only copy of raw payloads in the system. Never delete. If processing fails, reprocess from this table.
-- **Deduplication at the DB layer.** `UNIQUE(integration_id, source_event_id)` on `ingestion_raw_events` — safe to receive the same event twice.
+- **Raw data is never discarded.** `raw_events` is the only copy of raw source payloads. Never delete. Failed enrichment retries from this table.
+- **Deduplication at the DB layer.** `event_id` is the source-stable ID — `raw_events.event_id` is the primary key. Safe to receive the same event twice.
 - **Every query filters by `org_id` first.** No cross-tenant data leakage. Ever.
-- **Processing Service stores normalised data only.** No raw payloads in `feature_flag_events`. Raw data lives exclusively in the Ingestion Service's `ingestion_raw_events`.
-- **Webhook handlers return immediately (future).** Never do synchronous processing inside a webhook handler. Store raw, dispatch job, return 200.
+- **Enriched rows are idempotent.** `enriched_events` upserts on `(event_id, flag_key)` PK — re-running enrichment is always safe.
+- **Webhook handlers return immediately (future).** Never do synchronous processing inside a webhook handler. Store raw, dispatch workflow, return 200.
 - **All writes must be idempotent.** Reprocessing any event must be safe.
-- **Middle phases (EmbedPhase) must not touch the database.** Only Init and Finalization phases interact with DB.
-- **ops_lock must be acquired before any write to a shared entity in Pipeline 1.** Pipeline 2 is append-only (`feature_flag_events`) plus a single FK update — it does not require a lock. Lock key is `resource_key text`, not a UUID, so it can be acquired before the entity row exists.
+- **`flag_cache` is scoped per environment.** Key is `(org_id, environment_key, flag_key)` — production state must never overwrite staging.
+- **Temporal activities are the unit of retry.** Do not retry inside application code. Failed activities are retried by Temporal with configured backoff.
 
 ---
 
-## 4. Ingestion Service
+## 4. Worker (Temporal Activities)
 
-### Components
+The Worker registers all activity and workflow implementations. It is a single binary scaled via replicas.
 
-| Component | Responsibility |
-|-----------|---------------|
-| `IngestionService` | Entry point. Wires all components, manages scheduler lifecycle, handles shutdown |
-| `PollScheduler` | Fixed delay per integration goroutine. Random startup jitter to prevent thundering herd |
-| `PollLockManager` | Acquires/releases rows in `poll_locks`. Prevents concurrent polls across instances |
-| `SourcePoller` | Interface. One implementation per source: `LaunchDarklyPoller`, `UnleashPoller`, etc |
-| `AuditLogFetcher` | Paginates source audit log API. Returns ordered `[]AuditLogEntry` |
-| `DetailFetcher` | Given a resource key, fetches full current state from source API |
-| `RawEventStore` | Writes to `ingestion_raw_events`. Sets `published_at` after successful queue publish |
-| `Normaliser` | Pure function. Maps source payload → canonical `RawEvent`. One per source |
-| `PriorityClassifier` | Assigns HIGH / NORMAL / LOW based on org tier and event type |
-| `DeduplicatorService` | Checks `(source, source_event_id, org_id)` in DB before processing |
-| `QueuePublisher` | Interface. `SQSPublisher` and `BullMQPublisher` implementations |
-| `CursorStore` | Reads/writes `last_seen_at` per integration to `integration_cursors` |
-| `OrgConfig` | Org settings including queue tier |
+### Workflows
+
+| Workflow | Trigger | Responsibility |
+|----------|---------|---------------|
+| `OrgIngestWorkflow` | Temporal Schedule (every 5 min per org) | Outer loop. Manages cursor in durable state. Spawns `EnrichBatchWorkflow` per page. Calls `Continue-As-New` after 100 pages |
+| `EnrichBatchWorkflow` | Spawned by `OrgIngestWorkflow` | Per-page enrichment. Runs cache check, flag fetch, write, and explode activities. Spawns `NormalizeAndEmbedWorkflow` per row |
+| `NormalizeAndEmbedWorkflow` | Spawned by `EnrichBatchWorkflow` | Per-row normalization, embedding, and storage |
+
+### Activities
+
+| Activity | Workflow | Responsibility |
+|----------|----------|---------------|
+| `FetchAuditLogPage` | `EnrichBatchWorkflow` | Paginate source audit log API. Returns ordered entries + next cursor |
+| `CheckFlagCache` | `EnrichBatchWorkflow` | Lookup `(org_id, environment_key, flag_key)` in `flag_cache`. TTL: 5 min |
+| `BatchFetchFlags` | `EnrichBatchWorkflow` | Fetch full flag state from source API for cache misses. Scoped per environment |
+| `WriteFlagCache` | `EnrichBatchWorkflow` | UPSERT `flag_cache` rows |
+| `ExplodeAndWrite` | `EnrichBatchWorkflow` | Write `raw_events`. Explode to `enriched_events` (one row per event × flag_key) |
+| `NormalizeEvent` | `NormalizeAndEmbedWorkflow` | Map raw payload + flag snapshot → canonical `normalized_events` schema |
+| `GenerateEmbedding` | `NormalizeAndEmbedWorkflow` | Call EmbedProvider. Returns vector(1536) |
+| `StoreEmbedding` | `NormalizeAndEmbedWorkflow` | Write to `event_embeddings` |
+| `PublishEvent` | `NormalizeAndEmbedWorkflow` | Notify downstream (TBD) |
 
 ### Constraints
 
-- Back off on 429, respect `Retry-After` headers from source APIs
-- Stateless between poll cycles — all cursor state in DB
-- Must not call Processing Service directly — all communication via queue
-- Poll scheduling uses **fixed delay** (not fixed interval) — next poll starts only after previous completes
-- Multiple instances safe — `poll_locks` table prevents concurrent polls for the same integration
-- Onboarding backfill is the same code path as live polling — cursor set to 30 days ago, events go to LOW queue
+- Back off on 429, respect `Retry-After` headers from source APIs — configure as Temporal activity retry policy
+- Cursor state is in `OrgIngestWorkflow` durable state — no cursor columns in the DB
+- Poll concurrency is managed by Temporal (`ScheduleOverlapPolicy.SKIP`) — no poll lock table needed
+- Onboarding backfill: start `OrgIngestWorkflow` with cursor set to 30 days ago — same code path as live polling
+- One source per org for MVP; multi-source support is additive
 
 ---
 
-## 5. Processing Service
-
-### Framework Abstractions
-
-| Abstraction | Responsibility |
-|-------------|---------------|
-| `ProcessingService` | Entry point. Wires orchestrators, HTTP server, metrics. Graceful shutdown |
-| `QueueConsumer` | Reads `RawEvent` off queue. Manages visibility timeout extension. ACKs on success |
-| `Orchestrator` | Owns ordered list of `PhaseRunner`s. Wires inter-phase channels |
-| `PhaseRunner` | Wraps one `Phase`. Owns configurable worker goroutine pool. Restarts crashed workers |
-| `Phase` (interface) | `Process(EventContext) → (EventContext, error)`. Pure logic. No DB, no queues |
-| `EventContext` | Immutable data carrier flowing through all phases. Each phase adds its result field |
-| `EventStore` (interface) | DB operations. Used only by Init and Finalization phases. Injected for testability |
-| `EmbedProvider` (interface) | `OpenAIEmbedProvider` and `OllamaEmbedProvider`. Swapped via config |
-| `MetricsCollector` (interface) | Per-phase throughput, latency, error rate. `PrometheusMetricsCollector` implementation |
-| `OpsLockManager` | Acquires/releases rows in `ops_locks`. Used by Init and Finalization phases |
-
-### Pipeline 1 — Feature Flag Entity
-
-```
-feature-flag-{priority}-queue
-  → FlagInitPhase    — acquire ops_lock, UPSERT feature_flags, set ShouldEmbed
-  → EmbedPhase       — call EmbedProvider if ShouldEmbed=true (no DB access)
-  → FlagFinalizationPhase — write embedding, update metadata, release ops_lock
-```
-
-### Pipeline 2 — Feature Flag Audit Event
-
-Historical record only. No embedding. No ops_lock needed — this pipeline only appends to
-`feature_flag_events` and does a single FK update on `feature_flags`.
-
-To handle the ordering race with Pipeline 1 (flag entity row may not exist yet):
-`FlagEventInitPhase` does `INSERT INTO feature_flags ... ON CONFLICT DO NOTHING` before
-inserting the event row. This ensures the parent row exists without blocking on Pipeline 1.
-
-```
-feature-flag-event-{priority}-queue
-  → FlagEventInitPhase        — INSERT INTO feature_flags ON CONFLICT DO NOTHING (ensure parent exists)
-                                 INSERT feature_flag_events
-  → FlagEventFinalizationPhase — UPDATE feature_flags.last_event_id = this event id
-```
-
-### HTTP Endpoints (internal only)
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /healthz` | Liveness — 200 when PhaseRunners running and DB reachable |
-| `GET /readyz` | Readiness — 200 when QueueConsumer connected |
-| `GET /metrics` | Prometheus scrape |
-| `POST /flags/:flag_key/reprocess` | Re-queue all events for a flag key |
-| `GET /events/:id/status` | Check processing status of a specific event |
-| `POST /pipeline/pause` | Pause queue consumption |
-| `POST /pipeline/resume` | Resume after pause |
-
-### Constraints
-
-- Must never write to a table without first acquiring the relevant `ops_lock`
-- Middle phases must not interact with the database
-- Failed events must not be retried by application code — infrastructure (SQS/BullMQ DLQ) handles retry
-
----
-
-## 6. Search Service
+## 5. Search Service
 
 ### Components
 
 | Component | Responsibility |
 |-----------|---------------|
 | `SearchService` | Entry point. HTTP server, routing, middleware, graceful shutdown |
-| `SemanticSearchHandler` | Natural language queries. Embeds query, runs ANN search, re-ranks, returns results |
-| `StructuredQueryHandler` | Filtered queries by source, date range, actor, environment. No embedding |
-| `EmbedProvider` | Same interface as Processing Service. Must use same model as stored embeddings |
+| `SemanticSearchHandler` | Natural language queries. Embeds query, runs ANN search over `event_embeddings`, re-ranks, returns results |
+| `StructuredQueryHandler` | Filtered queries by source, date range, actor, environment. Queries `normalized_events` |
+| `EmbedProvider` | Same interface as Worker. Must use same model as stored embeddings |
 | `SearchRepository` | All DB queries. Injected interface for testability. Enforces `org_id` scoping |
 | `ResultRanker` | Re-ranks ANN results: `final_score = 0.7 * similarity + 0.3 * recency`. Configurable weights |
 | `QueryParser` | Parses + validates structured query params from HTTP request |
@@ -312,7 +241,7 @@ feature-flag-event-{priority}-queue
 |----------|---------|
 | `GET /search` | Semantic (if `q` param present) or structured search |
 | `GET /flags` | List all flags for an org. Filter by source, environment, tag |
-| `GET /flags/:flag_key` | Flag detail — current `enrichment_data` + paginated event history |
+| `GET /flags/:flag_key` | Flag detail — current state from `normalized_events` + paginated event history |
 | `GET /flags/:flag_key/history` | Paginated audit event history. Supports date range filters |
 | `GET /timeline` | Unified event timeline for an org within a date range |
 | `GET /healthz` | Liveness probe |
@@ -324,174 +253,194 @@ feature-flag-event-{priority}-queue
 - All queries scoped by `org_id`
 - Latency targets: p99 < 2s semantic search, p99 < 500ms structured search
 - Query embedding must use the same model as stored embeddings
+- HNSW search: filter `org_id` (and optionally `environment_key`) before the vector scan
 
 ---
 
-## 7. Database Schema
+## 6. Database Schema
 
-### Ingestion Service Tables
+Two PostgreSQL 16 instances:
+- **`temporal-postgres`** — Temporal's internal state DB. Managed by Temporal; do not write to it directly.
+- **`app-postgres`** — All application tables below.
 
-**`integrations`** — One row per provider connection per org.
+### `organizations`
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| org_id | uuid | FK → organisations |
-| source | enum | `launchdarkly \| unleash \| flagsmith \| github \| pagerduty` |
-| credentials | jsonb | AES-256-GCM encrypted |
-| project_key | string | Source system project identifier |
-| environment_key | string | Which environment to track. Null = all |
-| poll_interval_minutes | int | Default 60 |
-| backfill_days | int | Default 30 |
-| enabled | bool | Can be paused without deleting |
-| created_at / updated_at | timestamp | |
+One row per customer tenant. Primary isolation boundary.
 
-**`integration_cursors`** — Poll cursor per integration.
+```sql
+CREATE TABLE organizations (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            text NOT NULL,
+  ld_api_key      text NOT NULL,        -- stored encrypted at rest (AES-256-GCM)
+  ld_project_key  text NOT NULL,
+  active          boolean NOT NULL DEFAULT true,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+```
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| integration_id | uuid | FK → integrations |
-| org_id | uuid | Denormalised for query efficiency |
-| last_seen_at | timestamp | Timestamp of last successfully processed entry |
-| last_fetched_at | timestamp | When the last poll ran |
-| last_entry_count | int | Entries found in last poll |
-| updated_at | timestamp | |
+### `raw_events`
 
-**`poll_locks`** — Prevents concurrent polls across multiple Ingestion Service instances.
+One row per audit log event. Written by `ExplodeAndWrite`. The only copy of raw source payloads — never deleted.
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| integration_id | uuid | FK → integrations. UNIQUE |
-| org_id | uuid | |
-| locked_by | string | Instance ID (hostname + PID) |
-| locked_at | timestamp | |
-| expires_at | timestamp | Default TTL 15 min. Stale locks auto-taken-over |
-| created_at | timestamp | |
+```sql
+CREATE TABLE raw_events (
+  event_id     text PRIMARY KEY,                          -- stable ID from source
+  org_id       uuid NOT NULL REFERENCES organizations(id),
+  raw_json     jsonb NOT NULL,
+  flag_keys    text[] NOT NULL DEFAULT '{}',              -- extracted at ingest to avoid re-parsing
+  ingested_at  timestamptz NOT NULL DEFAULT now()
+);
 
-Lock acquisition: `UPDATE poll_locks SET locked_by=... WHERE integration_id=$id AND (locked_by IS NULL OR expires_at < now()) RETURNING id`
+CREATE INDEX raw_events_org_id_idx   ON raw_events (org_id);
+CREATE INDEX raw_events_ingested_idx ON raw_events (ingested_at);
+```
 
-**`ingestion_raw_events`** — The only copy of raw source payloads in the system. Never deleted.
+### `flag_cache`
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| integration_id | uuid | FK → integrations |
-| org_id | uuid | |
-| source_event_id | string | Stable ID from source. Used for dedup |
-| audit_log_payload | jsonb | Raw audit log entry + full-state detail fetch response |
-| processing_status | enum | `pending \| queued \| processed \| failed` — `pending` on insert, `queued` after publish, `processed` after Pipeline finalization, `failed` after DLQ |
-| published_at | timestamp | Null until QueuePublisher.Publish succeeds |
-| fetched_at | timestamp | When fetched from source API |
+Deduplication cache for flag detail API responses. Replaces Redis. Keyed per `(org_id, environment_key, flag_key)` — environment is required to prevent production state overwriting staging.
 
-Indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id, fetched_at DESC)`. `(processing_status) WHERE processing_status IN ('pending', 'failed')` for reprocessing queries.
+```sql
+CREATE TABLE flag_cache (
+  org_id           uuid NOT NULL REFERENCES organizations(id),
+  environment_key  text NOT NULL,
+  flag_key         text NOT NULL,
+  data             jsonb NOT NULL,
+  fetched_at       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, environment_key, flag_key)
+);
 
-### Processing Service Tables
+-- Vacuum stale entries nightly
+SELECT cron.schedule(
+  'vacuum-flag-cache',
+  '0 3 * * *',
+  $$DELETE FROM flag_cache WHERE fetched_at < now() - interval '1 hour'$$
+);
+```
 
-**`feature_flags`** — Current enriched state per flag per org. Upserted on every pipeline run.
+TTL check in `CheckFlagCache`: `WHERE fetched_at > now() - interval '5 minutes'`
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| org_id | uuid | FK → organisations |
-| flag_key | string | Stable identifier from source |
-| environment | string | Environment name from source (e.g. `production`, `staging`). One row per flag per environment |
-| source | enum | `launchdarkly \| unleash \| flagsmith` |
-| enrichment_data | jsonb | Current state snapshot. Replaced on `full_snapshot`. On `diff`: application-level merge required — PostgreSQL's `||` operator replaces keys but does NOT handle deletions. The merge function must explicitly remove keys that appear as deleted in the diff, otherwise stale data accumulates silently. |
-| data_completeness | enum | `partial` (diffs only) \| `full` (at least one full snapshot) |
-| embedding | vector(1536) | Null until first embed run |
-| embedding_text | text | Text sent to embedding model. Stored for debugging |
-| last_embedded_at | timestamp | |
-| first_seen_at | timestamp | |
-| last_event_at | timestamp | `occurred_at` of most recent processed event |
-| last_event_id | uuid | FK → feature_flag_events |
-| pipeline_version | string | For targeted backfills |
-| created_at / updated_at | timestamp | |
+### `enriched_events`
 
-Indexes: `UNIQUE(org_id, flag_key, source, environment)`. `HNSW(embedding) WHERE embedding IS NOT NULL`. `(org_id, last_event_at DESC)`. `GIN(enrichment_data)`.
+Exploded model — one row per `(event_id, flag_key)` pair. Written by `ExplodeAndWrite`. Upsert on PK makes re-running enrichment idempotent. Retry granularity: a failed embedding retries one flag, not the whole audit event.
+
+```sql
+CREATE TABLE enriched_events (
+  event_id         text NOT NULL,
+  org_id           uuid NOT NULL REFERENCES organizations(id),
+  environment_key  text NOT NULL DEFAULT 'production',
+  flag_key         text NOT NULL,
+  flag_data        jsonb NOT NULL,  -- snapshot from flag_cache at time of event
+  raw_event        jsonb NOT NULL,  -- copy of raw_events.raw_json
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, flag_key)
+);
+
+CREATE INDEX enriched_events_org_env_idx
+  ON enriched_events (org_id, environment_key);
+```
+
+### `normalized_events`
+
+Canonical schema decoupled from the source API shape. Written by `NormalizeEvent`. Queried by the Search Service for structured search and flag history.
+
+```sql
+CREATE TABLE normalized_events (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id         text NOT NULL,
+  flag_key         text NOT NULL,
+  org_id           uuid NOT NULL REFERENCES organizations(id),
+  event_type       text NOT NULL,  -- flag.created, flag.updated, flag.deleted, targeting.changed
+  actor_id         text,
+  actor_email      text,
+  flag_name        text,
+  flag_kind        text,           -- boolean, multivariate, etc.
+  project_key      text,
+  environment_key  text NOT NULL DEFAULT 'production',
+  occurred_at      timestamptz,
+  metadata         jsonb NOT NULL DEFAULT '{}',
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (event_id, flag_key) REFERENCES enriched_events(event_id, flag_key)
+);
+
+-- Covers the dashboard default filter (production, recent events)
+CREATE INDEX normalized_events_org_env_occurred_idx
+  ON normalized_events (org_id, environment_key, occurred_at DESC);
+
+CREATE INDEX normalized_events_flag_key_idx
+  ON normalized_events (flag_key);
+```
+
+### `event_embeddings`
+
+Vector embeddings for semantic search. Written by `StoreEmbedding`. Separate from `normalized_events` so embeddings can be regenerated without touching the canonical event record.
+
+```sql
+CREATE TABLE event_embeddings (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  normalized_id  uuid NOT NULL REFERENCES normalized_events(id),
+  org_id         uuid NOT NULL REFERENCES organizations(id),
+  embedding      vector(1536) NOT NULL,   -- 1536 dims for text-embedding-3-small
+  model          text NOT NULL,
+  input_text     text NOT NULL,           -- text sent to embedding model, stored for debugging/re-embedding
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX event_embeddings_hnsw_idx
+  ON event_embeddings
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+```
 
 **HNSW build strategy:** Do not build the HNSW index during onboarding backfill. Bulk-insert all vectors first, then build the index once in a single `CREATE INDEX` pass after backfill completes. pgvector's HNSW is not incrementally updated — building during high-insert load causes write amplification. ANN search falls back to sequential scan until the index exists, which is acceptable during backfill.
 
-**`feature_flag_events`** — Normalised audit log. Append-only. No raw payloads.
+### Migration Order
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| org_id | uuid | FK → organisations |
-| flag_key | string | Denormalised for query performance |
-| source | enum | |
-| source_event_id | string | For dedup and correlation back to `ingestion_raw_events` |
-| change_type | enum | `full_snapshot \| diff` |
-| changed_fields | string[] | Null if full_snapshot |
-| changed_by | string | Actor from source audit log |
-| occurred_at | timestamp | Source system timestamp. Never ingestion time |
-| received_at | timestamp | When ingestion service received this entry |
-| processed_at | timestamp | When finalization phase completed |
-
-Indexes: `UNIQUE(org_id, source, source_event_id)`. `(org_id, flag_key, occurred_at DESC)`. `(org_id, occurred_at DESC)`. `(org_id, changed_by, occurred_at DESC)`.
-
-**`ops_locks`** — Soft lock preventing concurrent processing of the same entity.
-
-`resource_key` is a string (not a UUID) so it can hold any stable identifier — a `flag_key`,
-a GitHub PR number, an incident ID — without needing to look up the entity's UUID first.
-The lock is acquired on the natural key before the entity row is created.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| resource_type | string | `feature_flag \| code_event \| incident` — extensible as new pipelines are added |
-| resource_key | text | Stable natural key of the entity being locked (e.g. flag_key, pr_number) |
-| org_id | uuid | |
-| locked_by | string | Processing service instance ID |
-| locked_at | timestamp | |
-| expires_at | timestamp | Default TTL 10 min. Stale locks auto-taken-over |
-| pipeline_version | string | For observability |
-| created_at | timestamp | |
-
-Indexes: `UNIQUE(resource_type, org_id, resource_key)`. `(expires_at)`.
-
-### Shared Tables
-
-**`organisations`** — One row per customer tenant. Primary isolation boundary.
+| File | Description |
+|------|-------------|
+| `001_bootstrap.sql` | Enable `uuid-ossp`, `vector`, `pg_cron` extensions |
+| `002_organizations.sql` | organizations table |
+| `003_raw_events.sql` | raw_events table + indexes |
+| `004_flag_cache.sql` | flag_cache with `(org_id, environment_key, flag_key)` PK + cron vacuum |
+| `005_enriched_events.sql` | enriched_events with `environment_key` column + index |
+| `006_normalized_events.sql` | normalized_events with `environment_key` + composite index |
+| `007_event_embeddings.sql` | event_embeddings + HNSW index |
 
 ---
 
-## 8. Shared Types
+## 7. Shared Types
 
 Defined in `shared/` and imported by all services.
 
 | Type | Description |
 |------|-------------|
-| `RawEvent` | Normalised event from Ingestion → Processing. Fields: `source`, `event_type`, `org_id`, `occurred_at`, `raw_payload`, `change_type`, `changed_fields`, `priority` |
-| `EventType` | `FlagToggled \| FlagCreated \| FlagDeleted \| FlagArchived \| FlagUpdated \| PRMerged \| IncidentTriggered` |
+| `EventType` | `flag.created \| flag.updated \| flag.deleted \| targeting.changed \| PRMerged \| IncidentTriggered` |
 | `Source` | `LaunchDarkly \| Unleash \| Flagsmith \| GitHub \| PagerDuty` |
-| `Priority` | `High \| Normal \| Low` |
-| `ChangeType` | `FullSnapshot \| Diff` |
+| `EmbedProvider` | Interface: `Embed(text string) ([]float32, error)`. Implementations: `OpenAIEmbedProvider`, `OllamaEmbedProvider` |
 
 ---
 
-## 9. Open Questions
+## 8. Open Questions
 
 Do not make implementation decisions that depend on unresolved questions.
 
 | Question | Options | Needed by |
 |----------|---------|-----------|
-| ~~Per-environment flag tracking~~ | **Decided: one row per flag per environment.** `UNIQUE(org_id, flag_key, source, environment)`. Accurate state per environment at the cost of multiplying rows. `environment` is a required field on `feature_flags`. | — |
-| Inter-phase communication | In-process Go channels (simpler, lower latency, single instance only) vs Redis pub/sub (horizontal scale, higher latency) | Before first scale event |
+| ~~Per-environment flag tracking~~ | **Decided: one row per flag per environment.** `environment_key` is part of `flag_cache` PK and `enriched_events`/`normalized_events` filtering dimension. Not a tenant boundary. | — |
 | Ollama vector dimension mismatch (768 vs 1536) | Zero-pad to 1536 (wastes storage) vs configurable column per org (schema complexity) | Before self-hosted GA |
-| Weekly digest generation | Cron in Processing Service (simpler) vs separate Digest Service (independent scaling) | Phase 2 planning |
+| Weekly digest generation | Cron in Temporal (scheduled workflow) vs separate Digest Service | Phase 2 planning |
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
 | Hosting / compute | Railway, Fly.io, GCP Cloud Run, self-hosted VPS | Cost analysis |
+| `PublishEvent` activity downstream | Webhook, Slack notification, internal event bus | Post-MVP |
+| Multi-source orgs | Single `ld_api_key` on `organizations` is LaunchDarkly-specific. Needs integration table when Unleash/Flagsmith added | Before second provider |
 
 ### Known Optimizations (not blocking, but tracked)
 
-- **DetailFetcher deduplication:** Within a single poll cycle, deduplicate detail fetches by `flag_key`. 50 audit entries across 10 flags should produce 10 detail fetches, not 50. Implement as a `map[flag_key]→detail` cache scoped to the poll cycle.
-- **Circuit breaker on source API calls:** Add circuit breaker (closed → open → half-open) on `AuditLogFetcher` and `DetailFetcher` to prevent hammering a degraded upstream. Not blocking for MVP.
+- **`flag_keys` extraction at ingest:** `FetchAuditLogPage` extracts `flag_keys` from the raw payload and stores it on `raw_events` to avoid re-parsing the JSONB in later activities.
+- **Circuit breaker on source API calls:** Add circuit breaker (closed → open → half-open) on `FetchAuditLogPage` and `BatchFetchFlags` to prevent hammering a degraded upstream. Configure as Temporal activity retry policy with max attempts + backoff. Not blocking for MVP.
 
 ---
 
-## 10. Roadmap Beyond MVP
+## 9. Roadmap Beyond MVP
 
 Do not build these yet, but **do not design the MVP in a way that makes them hard to add**.
 
@@ -516,7 +465,7 @@ Do not build these yet, but **do not design the MVP in a way that makes them har
 
 ---
 
-## 11. Monorepo Structure
+## 10. Monorepo Structure
 
 ```
 datagill-core/
@@ -525,15 +474,10 @@ datagill-core/
 ├── buf.yaml + buf.gen.yaml      # Protobuf generation config
 ├── proto/                       # .proto source files (source of truth for types)
 │   └── ping/v1/ping.proto
-├── shared/                      # Shared Go module: generated proto types, canonical types
+├── shared/                      # Shared Go module: generated proto types, canonical types, EmbedProvider interface
 │   └── gen/ping/v1/ping.pb.go
 ├── services/
-│   ├── ingestion/               # Ingestion Service — port 8080
-│   │   ├── main.go
-│   │   ├── integration_test.go
-│   │   ├── go.mod
-│   │   └── Dockerfile
-│   ├── processing/              # Processing Service — port 8081
+│   ├── worker/                  # Temporal worker — all ingestion + processing activities and workflows
 │   │   ├── main.go
 │   │   ├── integration_test.go
 │   │   ├── go.mod
@@ -547,9 +491,20 @@ datagill-core/
 └── docker-compose.yml           # Local development
 ```
 
+### Docker Compose Services
+
+| Service | Image | Purpose |
+|---------|-------|---------|
+| `temporal-postgres` | postgres:16 | Temporal's internal state DB (separate from app DB) |
+| `temporal` | temporalio/auto-setup:1.24 | Temporal server — runs auto-migration on first start |
+| `temporal-ui` | temporalio/ui:2.26 | Temporal Web UI on :8080 |
+| `app-postgres` | postgres:16 | Application data — all tables in Section 6 |
+| `worker` | your build | Temporal worker. Scale via replicas |
+| `search` | your build | Search Service HTTP server on :8082 |
+
 Each service is an independently deployable Go binary with its own `go.mod`. The `go.work` file links them together for local development. The `shared/` module is the only cross-service Go dependency.
 
 ---
 
-*Last updated: 2026-03-13*
-*Status: v0.1 — services scaffolded, design reviewed, implementation pending LLD session*
+*Last updated: 2026-03-16*
+*Status: v0.2 — pipeline redesigned around self-hosted Temporal; schema updated; implementation pending*
