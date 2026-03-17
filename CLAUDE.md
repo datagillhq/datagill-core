@@ -87,7 +87,6 @@ DataGill is a **business intelligence platform for engineering teams**. It conne
 | Auth | Clerk | JWT issuance + org management; Go validates via JWKS |
 | Embeddings | OpenAI text-embedding-3-small / Ollama nomic-embed-text | Swappable via `EmbedProvider` interface |
 | Orchestration | Self-hosted Temporal | Replaces queues. Durable state, retry, scheduling in one primitive |
-| Flag cache | PostgreSQL `flag_cache` table | Replaces Redis; TTL enforced inline, vacuumed nightly by pg_cron |
 | Migrations | golang-migrate | Run at startup or as a separate job |
 | Metrics | Prometheus + Grafana | Scrape endpoint at `/metrics` on all services |
 | Secrets | AWS Secrets Manager (cloud) / env vars + Docker secrets (self-hosted) | |
@@ -124,18 +123,16 @@ Two runtime components: a **Worker** (Temporal, handles all ETL) and a **Search 
 - **IntegrationIngestWorkflow** — one per integration, runs on schedule
   - **EnrichBatchWorkflow** — one per page of audit log results
     - FetchAuditLogPage
-    - CheckFlagCache
-    - BatchFetchFlags
-    - WriteFlagCache
-    - ExplodeAndWrite
-      - **NormalizeAndEmbedWorkflow** — one per enriched event row
+    - FetchFlagStates
+    - WriteEvents
+      - **NormalizeAndEmbedWorkflow** — one per event × flag_key row
         - NormalizeEvent
         - GenerateEmbedding
         - StoreEmbedding
 
 **Tables written to**
 
-organizations · integrations · raw_events · flag_cache · enriched_events · normalized_events · event_embeddings
+organizations · integrations · raw_events · normalized_events · event_embeddings
 
 ### Temporal Schedule (per integration)
 
@@ -163,13 +160,11 @@ IntegrationIngestWorkflow fires every 5 min per integration. The poll cursor (a 
 Calls `GET /auditlog?before=<cursor>&limit=20`. Spawns an EnrichBatchWorkflow fire-and-forget for the page, then advances the cursor to the earliest date in the page and repeats until the page is empty. Calls Continue-As-New after 100 pages to keep workflow history lean.
 
 ### Step 3 — Enrich batch _(per page)_
-- **CheckFlagCache** — look up current flag state by `(integration_id, env, flag_key)`. Valid if fetched within 5 min.
-- **BatchFetchFlags** — fetch flag state from source API for any cache misses.
-- **WriteFlagCache** — upsert results back to cache.
-- **ExplodeAndWrite** — write one `raw_events` row per audit entry (deduped on `integration_id + source_event_id`), then explode to one `enriched_events` row per event × flag_key pair. Spawns a NormalizeAndEmbedWorkflow fire-and-forget per row.
+- **FetchFlagStates** — deduplicate flag_keys in memory (`map[flag_key]→state`), then fetch all unique flags from the source API in one pass. No DB cache — within a single batch the in-memory map is sufficient, and flag state is stored on `normalized_events` for reprocessing.
+- **WriteEvents** — write one `raw_events` row per audit entry (deduped on `UNIQUE(integration_id, source_event_id)`). Spawn a NormalizeAndEmbedWorkflow fire-and-forget per event × flag_key pair, passing the raw event and flag snapshot as inputs.
 
-### Step 4 — Normalize & embed _(per enriched_events row)_
-- **NormalizeEvent** — maps raw payload to canonical schema; detects rollbacks and automated changes.
+### Step 4 — Normalize & embed _(per event × flag_key)_
+- **NormalizeEvent** — maps raw payload + flag snapshot to canonical schema; detects rollbacks and automated changes. Writes to `normalized_events` (including `flag_data` and `raw_event` snapshots so this step can be retried without extra DB reads).
 - **GenerateEmbedding** — calls EmbedProvider, returns a 1536-dimension vector.
 - **StoreEmbedding** — writes to `event_embeddings`.
 
@@ -183,7 +178,6 @@ Calls `GET /auditlog?before=<cursor>&limit=20`. Spawns an EnrichBatchWorkflow fi
 - **All writes are idempotent.** Upsert on stable keys throughout; reprocessing any event is always safe.
 - **Dedup at the DB layer.** `UNIQUE(integration_id, source_event_id)` on `raw_events`.
 - **Every query filters by `org_id` first.** No cross-tenant leakage. Ever.
-- **`flag_cache` scoped per integration.** Flag keys are not unique across providers.
 - **Activities are the unit of retry.** Never retry in application code — let Temporal handle it.
 
 ---
@@ -216,14 +210,15 @@ Calls `GET /auditlog?before=<cursor>&limit=20`. Spawns an EnrichBatchWorkflow fi
 Two PostgreSQL 16 instances: `temporal-postgres` (Temporal internals — do not touch) and `app-postgres` (all tables below).
 
 ### `organizations`
-One row per customer tenant. No provider-specific columns.
+One row per customer tenant. FK anchor for all other tables. Kept thin — Clerk owns name, billing, and membership; we only store what we need for referential integrity and webhook correlation. Created when Clerk fires the `organization.created` webhook.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| id | uuid | PK |
-| name | text | |
-| active | bool | Default true |
+| id | uuid | PK — used as `org_id` FK throughout |
+| clerk_org_id | text | Clerk's org ID; used to correlate webhook events |
 | created_at | timestamptz | |
+
+Key indexes: `UNIQUE(clerk_org_id)`.
 
 ### `integrations`
 One row per provider connection per org. Each row gets its own Temporal Schedule.
@@ -244,7 +239,7 @@ One row per provider connection per org. Each row gets its own Temporal Schedule
 Key indexes: `(org_id)`. `UNIQUE(org_id, source, project_key)`.
 
 ### `raw_events`
-One row per audit log event. Only copy of raw source payloads — never deleted.
+One row per audit log event. Only copy of raw source payloads — never deleted. Kept despite Temporal storing activity inputs: Temporal history has a 50MB/workflow size limit, a short configurable retention window, and is not queryable by SQL. `raw_events` is the permanent, queryable reprocessing source — e.g. re-embed all events after switching models.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -258,43 +253,15 @@ One row per audit log event. Only copy of raw source payloads — never deleted.
 
 Key indexes: `UNIQUE(integration_id, source_event_id)`. `(org_id)`. `(ingested_at)`.
 
-### `flag_cache`
-Short-lived cache of flag detail API responses. Replaces Redis. TTL 5 min (inline check); vacuumed nightly by pg_cron.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| integration_id | uuid | PK component |
-| environment_key | text | PK component — required, prevents prod overwriting staging |
-| flag_key | text | PK component |
-| data | jsonb | Full flag state snapshot |
-| fetched_at | timestamptz | TTL anchor |
-
-PK: `(integration_id, environment_key, flag_key)`.
-
-### `enriched_events`
-Exploded model — one row per `(raw_event_id, flag_key)`. Upsert on PK = idempotent re-runs. Retry granularity: one failed embedding = retry one flag, not the whole audit event.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| raw_event_id | uuid | PK component, FK → raw_events |
-| flag_key | text | PK component |
-| integration_id | uuid | FK → integrations |
-| org_id | uuid | Denormalized |
-| environment_key | text | Default 'production' |
-| flag_data | jsonb | Flag snapshot from cache at event time |
-| raw_event | jsonb | Copy of raw_events.raw_json |
-| created_at | timestamptz | |
-
-PK: `(raw_event_id, flag_key)`. Index: `(org_id, environment_key)`.
 
 ### `normalized_events`
-Canonical schema, decoupled from source API shape. Queried by Search Service.
+Canonical schema, decoupled from source API shape. Queried by Search Service. Merges what was previously a separate `enriched_events` staging table — the flag snapshot and raw payload are stored here directly so failed normalization or embedding can be retried without additional DB reads or extra joins.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | uuid | PK |
-| raw_event_id | uuid | FK component → enriched_events |
-| flag_key | text | FK component → enriched_events |
+| raw_event_id | uuid | FK → raw_events |
+| flag_key | text | Stable flag identifier |
 | integration_id | uuid | FK → integrations |
 | org_id | uuid | Denormalized |
 | event_type | text | `flag.created \| flag.updated \| flag.deleted \| targeting.changed` |
@@ -304,9 +271,11 @@ Canonical schema, decoupled from source API shape. Queried by Search Service.
 | environment_key | text | Default 'production' |
 | occurred_at | timestamptz | Source timestamp — never ingestion time |
 | metadata | jsonb | `is_rollback`, `is_automated`, etc. |
+| flag_data | jsonb | Flag state snapshot at time of event (from FetchFlagStates) |
+| raw_event | jsonb | Copy of raw payload — enables retry without re-reading raw_events |
 | created_at | timestamptz | |
 
-Key indexes: `(org_id, environment_key, occurred_at DESC)`. `(flag_key)`. `(org_id, actor_email, occurred_at DESC)`.
+Key indexes: `UNIQUE(raw_event_id, flag_key)`. `(org_id, environment_key, occurred_at DESC)`. `(flag_key)`. `(org_id, actor_email, occurred_at DESC)`.
 
 ### `event_embeddings`
 Vector embeddings for semantic search. Separate from `normalized_events` so embeddings can be regenerated independently.
@@ -329,14 +298,12 @@ Key indexes: `HNSW(embedding, cosine)` with `m=16, ef_construction=64`.
 
 | File | Creates |
 |------|---------|
-| `001_bootstrap.sql` | Extensions: `uuid-ossp`, `vector`, `pg_cron` |
+| `001_bootstrap.sql` | Extensions: `uuid-ossp`, `vector` |
 | `002_organizations.sql` | organizations |
 | `003_integrations.sql` | integrations + indexes |
 | `004_raw_events.sql` | raw_events + dedup index |
-| `005_flag_cache.sql` | flag_cache + cron vacuum |
-| `006_enriched_events.sql` | enriched_events |
-| `007_normalized_events.sql` | normalized_events + indexes |
-| `008_event_embeddings.sql` | event_embeddings + HNSW index |
+| `005_normalized_events.sql` | normalized_events + indexes |
+| `006_event_embeddings.sql` | event_embeddings + HNSW index |
 
 ---
 
@@ -391,4 +358,4 @@ datagill-core/
 
 ---
 
-*Last updated: 2026-03-17 — v0.5: trimmed for reviewability*
+*Last updated: 2026-03-17 — v0.7: drop flag_cache + enriched_events; thin organizations; add reasoning*
