@@ -109,39 +109,33 @@ DataGill is a **business intelligence platform for engineering teams**. It conne
 
 Two runtime components: a **Worker** (Temporal, handles all ETL) and a **Search Service** (HTTP query layer).
 
-```
-  LaunchDarkly / Unleash / Flagsmith
-         │  poll every 5 min per integration
-         ▼
-  ┌─────────────────────────────────────────┐
-  │  Temporal (self-hosted)                 │
-  │                                         │
-  │  IntegrationIngestWorkflow              │
-  │    └─ EnrichBatchWorkflow (per page)    │
-  │         ├─ FetchAuditLogPage            │
-  │         ├─ CheckFlagCache               │
-  │         ├─ BatchFetchFlags              │
-  │         ├─ WriteFlagCache               │
-  │         └─ ExplodeAndWrite              │
-  │              └─ NormalizeAndEmbedWorkflow│
-  │                   ├─ NormalizeEvent     │
-  │                   ├─ GenerateEmbedding  │
-  │                   └─ StoreEmbedding     │
-  └─────────────────────────────────────────┘
-         │ writes
-         ▼
-  ┌──────────────────────────────┐
-  │  PostgreSQL (app DB)         │
-  │  organizations · integrations│
-  │  raw_events · flag_cache     │
-  │  enriched_events             │
-  │  normalized_events           │
-  │  event_embeddings            │
-  └──────────────────────────────┘
-         │
-         ▼
-  Search Service :8082 → Frontend
-```
+**Data flow**
+
+| Step | Component |
+|------|-----------|
+| 1. Poll source APIs | LaunchDarkly / Unleash / Flagsmith |
+| 2. Orchestrate workflows | Temporal (self-hosted) — Worker binary |
+| 3. Store and query data | PostgreSQL app DB |
+| 4. Serve queries | Search Service :8082 |
+| 5. Display to users | Frontend |
+
+**Temporal workflow hierarchy**
+
+- **IntegrationIngestWorkflow** — one per integration, runs on schedule
+  - **EnrichBatchWorkflow** — one per page of audit log results
+    - FetchAuditLogPage
+    - CheckFlagCache
+    - BatchFetchFlags
+    - WriteFlagCache
+    - ExplodeAndWrite
+      - **NormalizeAndEmbedWorkflow** — one per enriched event row
+        - NormalizeEvent
+        - GenerateEmbedding
+        - StoreEmbedding
+
+**Tables written to**
+
+organizations · integrations · raw_events · flag_cache · enriched_events · normalized_events · event_embeddings
 
 ### Temporal Schedule (per integration)
 
@@ -162,34 +156,26 @@ LD audit log returns max **20 entries per page**. No cursor token — walk pages
 
 ## 4. Pipeline Flow
 
-```
-1. SCHEDULE
-   IntegrationIngestWorkflow fires every 5 min per integration.
-   Cursor = before-timestamp in durable state.
+### Step 1 — Schedule
+IntegrationIngestWorkflow fires every 5 min per integration. The poll cursor (a `before` timestamp) is stored in Temporal's durable workflow state — no DB column needed.
 
-2. FETCH PAGE  [FetchAuditLogPage]
-   GET /auditlog?before=<cursor>&limit=20
-   Spawn EnrichBatchWorkflow (fire-and-forget) for this page.
-   Advance cursor to earliest date in page. Repeat until empty page.
-   Continue-As-New after 100 pages.
+### Step 2 — Fetch page _(FetchAuditLogPage)_
+Calls `GET /auditlog?before=<cursor>&limit=20`. Spawns an EnrichBatchWorkflow fire-and-forget for the page, then advances the cursor to the earliest date in the page and repeats until the page is empty. Calls Continue-As-New after 100 pages to keep workflow history lean.
 
-3. ENRICH BATCH  [per page]
-   CheckFlagCache  — lookup (integration_id, env, flag_key), TTL 5 min
-   BatchFetchFlags — fetch from source API for cache misses
-   WriteFlagCache  — upsert cache rows
-   ExplodeAndWrite — write raw_events (dedup: UNIQUE integration_id+source_event_id)
-                     explode to enriched_events (one row per event × flag_key)
-                     spawn NormalizeAndEmbedWorkflow per row (fire-and-forget)
+### Step 3 — Enrich batch _(per page)_
+- **CheckFlagCache** — look up current flag state by `(integration_id, env, flag_key)`. Valid if fetched within 5 min.
+- **BatchFetchFlags** — fetch flag state from source API for any cache misses.
+- **WriteFlagCache** — upsert results back to cache.
+- **ExplodeAndWrite** — write one `raw_events` row per audit entry (deduped on `integration_id + source_event_id`), then explode to one `enriched_events` row per event × flag_key pair. Spawns a NormalizeAndEmbedWorkflow fire-and-forget per row.
 
-4. NORMALIZE & EMBED  [per enriched_events row]
-   NormalizeEvent     — map to canonical schema; detect rollback + automated changes
-   GenerateEmbedding  — call EmbedProvider → vector(1536)
-   StoreEmbedding     — write to event_embeddings
+### Step 4 — Normalize & embed _(per enriched_events row)_
+- **NormalizeEvent** — maps raw payload to canonical schema; detects rollbacks and automated changes.
+- **GenerateEmbedding** — calls EmbedProvider, returns a 1536-dimension vector.
+- **StoreEmbedding** — writes to `event_embeddings`.
 
-5. SERVE
-   Semantic: embed query → ANN search → re-rank by recency → top 20
-   Structured: filters → parameterized SQL over normalized_events
-```
+### Step 5 — Serve _(Search Service)_
+- **Semantic search** — embed query → ANN search over embeddings → re-rank by recency → return top 20.
+- **Structured search** — apply filters (environment, actor, date range) via parameterized SQL over `normalized_events`.
 
 ### Invariants
 
