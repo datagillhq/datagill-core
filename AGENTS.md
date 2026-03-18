@@ -1,4 +1,4 @@
-# CLAUDE.md — DataGill Platform: Source of Truth
+# AGENTS.md — DataGill Platform: Source of Truth
 
 > This document is the **single source of truth** for architecture decisions, product requirements, and open questions.
 > Every agent and every PR must trace back to this document.
@@ -306,16 +306,25 @@ feature-flag-event-{priority}-queue
 | `ResultRanker` | Re-ranks ANN results: `final_score = 0.7 * similarity + 0.3 * recency`. Configurable weights |
 | `QueryParser` | Parses + validates structured query params from HTTP request |
 
+### Bootstrap Decisions (current implementation)
+
+- Search Service is the only backend service paired with the frontend in the current local-dev bootstrap
+- Search Service does **not** use Temporal and has no dependency on the other services for local UI work
+- Until the Go DB access layer is decided, the service uses an in-memory `SearchRepository` with demo records so UI development can proceed without PostgreSQL
+- HTTP routes are exposed both as basic probes (`/healthz`, `/readyz`) and versioned API endpoints under `/api/v1`
+- Org scoping is still enforced at the handler boundary; local bootstrap uses `X-Org-Id` and defaults to `local-dev` when absent
+
 ### API Endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /search` | Semantic (if `q` param present) or structured search |
-| `GET /flags` | List all flags for an org. Filter by source, environment, tag |
+| `GET /api/v1/search` | Bootstrap search endpoint for UI integration. Returns demo-backed semantic/keyword results for one org |
+| `GET /api/v1/flags` | Bootstrap flag listing endpoint for UI integration |
 | `GET /flags/:flag_key` | Flag detail — current `enrichment_data` + paginated event history |
 | `GET /flags/:flag_key/history` | Paginated audit event history. Supports date range filters |
 | `GET /timeline` | Unified event timeline for an org within a date range |
 | `GET /healthz` | Liveness probe |
+| `GET /readyz` | Readiness probe |
 | `GET /metrics` | Prometheus scrape |
 
 ### Constraints

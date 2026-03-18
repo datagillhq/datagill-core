@@ -52,4 +52,4 @@ Source Control  ──┤                    ├─ Velocity Metrics
 
 ---
 
-> See [`CLAUDE.md`](./CLAUDE.md) for the full architecture, product requirements, and open questions.
+> See [`AGENTS.md`](./AGENTS.md) for the full architecture, product requirements, and open questions.
