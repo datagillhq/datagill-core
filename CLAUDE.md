@@ -214,8 +214,8 @@ Writes one `raw_events` row per audit entry, deduped on `UNIQUE(integration_id, 
 | -------------------------------- | --------------------------------------------------- |
 | `GET /search`                    | Structured search; post-MVP: semantic with `q` param |
 | `GET /flags`                     | List all flags. Filter by source, environment       |
-| `GET /flags/:entity_key`         | Flag detail + paginated event history               |
-| `GET /flags/:entity_key/history` | Event history with date range filters               |
+| `GET /flags/:flag_key`         | Flag detail + paginated event history               |
+| `GET /flags/:flag_key/history` | Event history with date range filters               |
 | `GET /timeline`                  | Unified event timeline for an org                   |
 | `GET /healthz`                   | Liveness                                            |
 | `GET /metrics`                   | Prometheus scrape                                   |
@@ -379,4 +379,30 @@ datagill-core/
 
 ---
 
-*Last updated: 2026-03-17 — v0.8: ETL workflow naming; remove embeddings to post-MVP; generalize normalized_events; remove flag_data/flag_keys; source_type on integrations; single migration; flag detail in MVP*
+---
+
+## 10. Changelog
+
+**v0.8 — 2026-03-17**
+- Renamed workflows to ETL pattern: `FeatureFlagExtractWorkflow`, `FeatureFlagTransformWorkflow`, `NormalizeWorkflow`
+- Deferred embeddings and `event_embeddings` table to post-MVP
+- Added `source_type` to `integrations` for workflow dispatch
+- Generalized `normalized_events`: `flag_key` → `entity_key`, `flag_name` → `entity_name`, dropped `flag_kind`, `flag_data`, `raw_event`; added metadata/column boundary rule
+- Removed `FetchFlagStates` activity (was only feeding `flag_data`)
+- Removed `flag_keys` from `raw_events`
+- Added `created_at`/`updated_at` to all tables
+- Collapsed migrations to single `001_initialize.sql`
+- Moved flag detail page into MVP scope
+- Updated `feature_flags` open question with P1 direction (derive at MVP, materialize at P1)
+
+**v0.7 — 2026-03-17**
+- Dropped `flag_cache` table (in-memory dedup within a batch is sufficient)
+- Merged `enriched_events` into `normalized_events`
+- Thinned `organizations` table (Clerk owns name, billing, membership)
+- Added reasoning inline for each schema decision
+
+**v0.6 — 2026-03-13**
+- Replaced BullMQ + Redis with self-hosted Temporal throughout
+- Added `integrations` table; cursor moved to Temporal durable workflow state
+- Removed `poll_locks` and `integration_cursors` tables
+- Added product requirements section (MVP, P0, P1, P2)
