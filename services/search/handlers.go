@@ -12,13 +12,6 @@ func healthzHandler(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func readyzHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status":  "ready",
-		"service": serviceName,
-	})
-}
-
 func (a *app) searchHandler(w http.ResponseWriter, r *http.Request) {
 	limit, err := parseLimit(r.URL.Query().Get("limit"))
 	if err != nil {

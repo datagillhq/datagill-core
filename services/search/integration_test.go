@@ -128,3 +128,51 @@ func TestFlags(t *testing.T) {
 		t.Fatalf("expected 3 flags, got %d", body.Count)
 	}
 }
+
+func TestRequestIDHeaderIsSet(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	resp := get(t, srv.URL+"/healthz")
+	defer resp.Body.Close()
+
+	if resp.Header.Get("X-Request-Id") == "" {
+		t.Error("expected X-Request-Id response header to be set")
+	}
+}
+
+func TestOrgIDDefaultsWhenHeaderMissing(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	// No X-Org-Id header — should fall back to defaultOrgID and return results.
+	resp := get(t, srv.URL+"/api/v1/flags")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var body FlagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.OrgID != defaultOrgID {
+		t.Errorf("expected orgId %q, got %q", defaultOrgID, body.OrgID)
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	resp := get(t, srv.URL+"/metrics")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct == "" {
+		t.Error("expected Content-Type header on /metrics response")
+	}
+}
