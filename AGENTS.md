@@ -208,7 +208,7 @@ Read-only. All queries scoped by `org_id`.
 - **Extract is rerunnable.** Stateless API calls plus append-only writes to `source_records`.
 - **Transform is rerunnable without API calls.** Raw payload lives in Temporal's event history and in `source_records`. Fix a normalization bug, re-trigger transform, zero API calls.
 - **Raw data is permanent.** `source_records` is append-only. Canonical tables carry a `source_record_key` reference back to the raw data.
-- **Deterministic keys.** Cross-table references use UUID v5 (deterministic from `source|env|project|source_key`). Both Extract and Transform workflows can independently compute the same key — no coordination required.
+- **Deterministic keys.** Cross-table references use UUID v5. Flag keys are scoped to `source|project|source_key` — environment is **not** part of the key because all environments are stored in the same flag row (`data.environments`). Changelog keys are scoped to `source|project|source_key` where `source_key` is the provider's audit event ID. Both Extract and Transform workflows can independently compute the same key — no coordination required.
 
 ---
 
@@ -259,9 +259,17 @@ Computed with UUID v5:
 ```go
 var DataGillNamespace = uuid.MustParse("...") // hardcoded namespace
 
-// flag_key = uuid5(namespace, "launchdarkly|production|web-app|enable-checkout-v2")
-func ComputeFlagKey(source, envKey, projectKey, sourceFlagKey string) uuid.UUID {
-    raw := fmt.Sprintf("%s|%s|%s|%s", source, envKey, projectKey, sourceFlagKey)
+// flag_key = uuid5(namespace, "launchdarkly|web-app|enable-checkout-v2")
+// Environment is NOT part of the key — all envs are stored in the same row.
+func ComputeFlagKey(source, projectKey, sourceFlagKey string) uuid.UUID {
+    raw := fmt.Sprintf("%s|%s|%s", source, projectKey, sourceFlagKey)
+    return uuid.NewSHA1(DataGillNamespace, []byte(raw))
+}
+
+// changelog_key = uuid5(namespace, "launchdarkly|web-app|evt-abc123")
+// sourceKey is the provider's audit event ID, unique within a project.
+func ComputeChangelogKey(source, projectKey, sourceKey string) uuid.UUID {
+    raw := fmt.Sprintf("%s|%s|%s", source, projectKey, sourceKey)
     return uuid.NewSHA1(DataGillNamespace, []byte(raw))
 }
 ```
@@ -321,7 +329,7 @@ Current normalized state per flag. Populated by Transform from the provider's GE
 | Column | Type | Notes |
 |--------|------|-------|
 | id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic hash(source\|env\|project\|source_key) |
+| key | uuid | UNIQUE — deterministic hash(source\|project\|source_key) |
 | source_record_key | uuid | References source_records.key — traces back to raw data |
 | integration_id | uuid | References integrations.key |
 | org_id | uuid | Denormalized for tenant scoping |
@@ -339,7 +347,7 @@ One row per change event. Populated by Transform from the provider's audit log e
 | Column | Type | Notes |
 |--------|------|-------|
 | id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic hash(source\|env\|project\|source_key) |
+| key | uuid | UNIQUE — deterministic hash(source\|project\|source_key) where source_key is the provider's audit event ID |
 | source_record_key | uuid | References source_records.key — traces back to raw data |
 | feature_flag_key | uuid | References feature_flags.key — which flag changed |
 | integration_id | uuid | References integrations.key |

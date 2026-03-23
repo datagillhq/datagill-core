@@ -11,9 +11,10 @@ import (
 var DataGillNamespace = uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 // ComputeFlagKey returns a deterministic UUID v5 for a feature flag record.
-// Inputs uniquely identify a flag within a provider project and environment.
-func ComputeFlagKey(source Source, envKey, projectKey, sourceFlagKey string) uuid.UUID {
-	raw := fmt.Sprintf("%s|%s|%s|%s", source, envKey, projectKey, sourceFlagKey)
+// All environments for a flag are stored in the same row (in data.environments),
+// so the key is scoped to source + project + flag only — not per environment.
+func ComputeFlagKey(source Source, projectKey, sourceFlagKey string) uuid.UUID {
+	raw := fmt.Sprintf("%s|%s|%s", source, projectKey, sourceFlagKey)
 	return uuid.NewSHA1(DataGillNamespace, []byte(raw))
 }
 
@@ -25,8 +26,8 @@ func ComputeSourceRecordKey(source Source, sourceType SourceType, sourceKey stri
 }
 
 // ComputeChangelogKey returns a deterministic UUID v5 for a changelog entry.
-// Inputs uniquely identify a single audit event from a provider.
-func ComputeChangelogKey(source Source, envKey, projectKey, sourceKey string) uuid.UUID {
-	raw := fmt.Sprintf("%s|%s|%s|%s", source, envKey, projectKey, sourceKey)
+// sourceKey is the provider's audit event ID, which is unique within a project.
+func ComputeChangelogKey(source Source, projectKey, sourceKey string) uuid.UUID {
+	raw := fmt.Sprintf("%s|%s|%s", source, projectKey, sourceKey)
 	return uuid.NewSHA1(DataGillNamespace, []byte(raw))
 }
