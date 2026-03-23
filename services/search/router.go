@@ -21,7 +21,7 @@ func (a *app) router() http.Handler {
 		})
 	})
 
-	// Middleware order matches the spec in IMPLEMENTATION_PLAN.md §1C.2.
+	// Middleware order per IMPLEMENTATION_PLAN.md §1C.2.
 	r.Use(middleware.RequestID)
 	r.Use(requestLoggerMiddleware)
 	r.Use(middleware.RealIP)
@@ -30,11 +30,14 @@ func (a *app) router() http.Handler {
 	r.Use(orgIDMiddleware)
 	r.Use(prometheusMiddleware)
 
+	// Routes per IMPLEMENTATION_PLAN.md §1C.3.
 	r.Get("/healthz", healthzHandler)
 	r.Handle("/metrics", promhttp.Handler())
-
-	r.Get("/api/v1/search", a.searchHandler)
-	r.Get("/api/v1/flags", a.flagsHandler)
+	r.Get("/search", a.searchHandler)
+	r.Get("/flags", a.flagsHandler)
+	r.Get("/flags/{flag_key}", a.flagDetailHandler)
+	r.Get("/flags/{flag_key}/history", a.flagHistoryHandler)
+	r.Get("/timeline", a.timelineHandler)
 
 	return r
 }
