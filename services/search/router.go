@@ -17,7 +17,6 @@ func (a *app) router() http.Handler {
 
 	r.Get("/healthz", healthzHandler)
 	r.Get("/readyz", readyzHandler)
-	r.Post("/ping", pingHandler(a.logger))
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Get("/search", a.searchHandler)

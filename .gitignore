@@ -1,6 +1,8 @@
-# Compiled binaries (root-level only)
+# Compiled binaries
 /ingestion
 /processing
+/search
+/worker
 
 # Go build output
 *.exe
