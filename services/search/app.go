@@ -8,10 +8,10 @@ type app struct {
 	repository SearchRepository
 }
 
-func newApp(cfg config, logger zerolog.Logger) *app {
+func newApp(cfg config, logger zerolog.Logger, repo SearchRepository) *app {
 	return &app{
 		config:     cfg,
 		logger:     logger,
-		repository: newMemorySearchRepository(),
+		repository: repo,
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -9,8 +10,13 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// orgIDMiddleware extracts X-Org-Id from the request header, stores it on the
-// context, and enriches the zerolog context logger with the org_id field.
+type contextKey string
+
+const orgIDKey contextKey = "orgID"
+
+// orgIDMiddleware extracts X-Org-Id from the request header, stores it in the
+// context (for handlers), and enriches the zerolog context logger with the
+// org_id field (for structured log filtering by tenant in Loki/Grafana).
 func orgIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
@@ -18,10 +24,8 @@ func orgIDMiddleware(next http.Handler) http.Handler {
 			orgID = defaultOrgID
 		}
 
-		w.Header().Set("X-Org-Id", orgID)
-
 		log := zerolog.Ctx(r.Context()).With().Str("org_id", orgID).Logger()
-		ctx := log.WithContext(r.Context())
+		ctx := context.WithValue(log.WithContext(r.Context()), orgIDKey, orgID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

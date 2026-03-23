@@ -10,6 +10,7 @@ const (
 type config struct {
 	Port        string
 	Environment string
+	DatabaseURL string
 }
 
 func loadConfig() config {
@@ -26,5 +27,6 @@ func loadConfig() config {
 	return config{
 		Port:        port,
 		Environment: environment,
+		DatabaseURL: os.Getenv("APP_DATABASE_URL"),
 	}
 }
