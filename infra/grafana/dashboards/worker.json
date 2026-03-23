@@ -1,0 +1,54 @@
+{
+  "uid": "datagill-worker",
+  "title": "Worker",
+  "tags": ["datagill", "worker", "temporal"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Workflow Start Rate (workflows/s)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(temporal_workflow_start_total{job=\"worker\"}[1m])",
+          "legendFormat": "{{workflow_type}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Workflow Complete / Fail Rate",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(temporal_workflow_completed_total{job=\"worker\"}[1m])",
+          "legendFormat": "completed"
+        },
+        {
+          "expr": "rate(temporal_workflow_failed_total{job=\"worker\"}[1m])",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Activity p99 Duration (s)",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(temporal_activity_schedule_to_close_latency_bucket{job=\"worker\"}[5m]))",
+          "legendFormat": "p99 {{activity_type}}"
+        }
+      ]
+    }
+  ]
+}

@@ -8,6 +8,7 @@
 *.exe
 *.test
 
-# Environment
+# Environment — ignore real credential files, but track the example template.
 .env
-.env.*
+.env.local
+.env.*.local
