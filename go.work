@@ -2,6 +2,8 @@ go 1.26
 
 use (
 	./cmd/worker
+	./models
+	./repository
 	./services/search
 	./shared
 )
