@@ -56,3 +56,25 @@ jobs:
 
       - name: Build
         run: make build
+
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Scan for vulnerabilities
+        # govulncheck doesn't support go.work — run it per module.
+        run: |
+          for dir in models repository cmd/worker services/search; do
+            echo "==> govulncheck $dir"
+            (cd "$dir" && govulncheck ./...)
+          done
