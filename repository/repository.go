@@ -6,8 +6,9 @@ package repository
 import (
 	"context"
 
-	"github.com/datagill/datagill-core/models"
 	"github.com/google/uuid"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 // Repository is the persistence interface used by ETL activities and the

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -16,14 +17,24 @@ func newTestServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(testApp.router())
 }
 
+func get(t *testing.T, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
 func TestHealthz(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/healthz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := get(t, srv.URL+"/healthz")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -46,7 +57,7 @@ func TestSearch(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/search?q=checkout&limit=5", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/v1/search?q=checkout&limit=5", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,10 +90,7 @@ func TestSearchRejectsInvalidLimit(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/search?limit=0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := get(t, srv.URL+"/api/v1/search?limit=0")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -94,7 +102,7 @@ func TestFlags(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/flags", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/v1/flags", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

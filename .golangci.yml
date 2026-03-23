@@ -1,0 +1,58 @@
+linters-settings:
+  exhaustive:
+    # A switch with a default case is not considered exhaustive.
+    # Every enum value must be handled explicitly.
+    default-signifies-exhaustive: false
+
+  godot:
+    # Only require periods on exported declaration comments.
+    scope: declarations
+    capital: false
+
+  goimports:
+    # Keep datagill imports in their own group, separate from stdlib and third-party.
+    local-prefixes: github.com/datagill
+
+  wrapcheck:
+    # fmt.Errorf with %w is the standard wrapping idiom — allow it.
+    ignoreSigs:
+      - fmt.Errorf(
+      - errors.New(
+      - errors.Unwrap(
+      - errors.Join(
+    # Errors returned directly from our own modules do not need re-wrapping.
+    ignorePackageGlobs:
+      - github.com/datagill/datagill-core/*
+
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - disableStutteringCheck
+
+  misspell:
+    locale: US
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck       # never silently ignore errors
+    - govet          # correctness (nilness, printf format strings, etc.)
+    - staticcheck    # advanced static analysis
+    - unused         # dead code
+    - gofmt          # formatting
+    - goimports      # import ordering and grouping
+    - exhaustive     # switch on enums must handle every case explicitly
+    - noctx          # outbound HTTP requests must use context
+    - godot          # exported declaration comments end with a period
+    - wrapcheck      # errors crossing package boundaries must be wrapped
+    - misspell       # spelling in comments and string literals
+    - revive         # general style checks (replaces golint)
+
+issues:
+  # Report all issues, not just the first N per linter.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m
