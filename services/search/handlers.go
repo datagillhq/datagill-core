@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
@@ -158,6 +161,36 @@ func orgIDFromCtx(r *http.Request) string {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// parseLimit parses and validates the ?limit= query parameter.
+func parseLimit(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 10, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parseLimit: %w", err)
+	}
+	if limit <= 0 || limit > 100 {
+		return 0, fmt.Errorf("limit must be between 1 and 100")
+	}
+	return limit, nil
+}
+
+// parsePage parses and validates the ?page= query parameter.
+func parsePage(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 1, nil
+	}
+	page, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parsePage: %w", err)
+	}
+	if page <= 0 {
+		return 0, fmt.Errorf("page must be >= 1")
+	}
+	return page, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
