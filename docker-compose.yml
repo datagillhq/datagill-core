@@ -55,12 +55,11 @@ services:
   temporal:
     image: temporalio/auto-setup:latest
     environment:
-      DB: postgresql
+      DB: postgres12
       DB_PORT: 5432
       POSTGRES_SEEDS: temporal-postgres
       POSTGRES_USER: ${TEMPORAL_POSTGRES_USER}
       POSTGRES_PWD: ${TEMPORAL_POSTGRES_PASSWORD}
-      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig.yml
     ports:
       - "7233:7233"
     depends_on:
@@ -108,11 +107,15 @@ services:
       - datagill
     restart: unless-stopped
 
-  promtail:
-    image: grafana/promtail:latest
-    command: -config.file=/etc/promtail/promtail.yml
+  alloy:
+    image: grafana/alloy:latest
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=0.0.0.0:12345
     volumes:
-      - ./infra/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - ./infra/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki
