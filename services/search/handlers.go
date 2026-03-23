@@ -2,48 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
-
-	pingv1 "github.com/datagill/datagill-core/shared/gen/ping/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 )
-
-func pingHandler(logger *slog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			http.Error(w, "failed to read body", http.StatusBadRequest)
-			return
-		}
-
-		req := &pingv1.PingRequest{}
-		if len(body) > 0 {
-			if err := protojson.Unmarshal(body, req); err != nil {
-				http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
-				return
-			}
-		}
-
-		resp := &pingv1.PingResponse{
-			Message: fmt.Sprintf("pong: %s", req.GetMessage()),
-			Service: serviceName,
-		}
-
-		out, err := protojson.Marshal(resp)
-		if err != nil {
-			http.Error(w, "failed to marshal response", http.StatusInternalServerError)
-			return
-		}
-
-		logger.Info("ping", "message", req.GetMessage())
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(out) //nolint:errcheck
-	}
-}
 
 func healthzHandler(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{

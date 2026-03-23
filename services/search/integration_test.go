@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -15,70 +14,6 @@ func newTestServer(t *testing.T) *httptest.Server {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	testApp := newApp(loadConfig(), logger)
 	return httptest.NewServer(testApp.router())
-}
-
-func TestPing(t *testing.T) {
-	srv := newTestServer(t)
-	defer srv.Close()
-
-	resp, err := http.Post(srv.URL+"/ping", "application/json", strings.NewReader(`{"message":"hello"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var body map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatal(err)
-	}
-	if body["message"] != "pong: hello" {
-		t.Errorf("expected 'pong: hello', got %q", body["message"])
-	}
-	if body["service"] != serviceName {
-		t.Errorf("expected service %q, got %q", serviceName, body["service"])
-	}
-}
-
-func TestPingEmptyBody(t *testing.T) {
-	srv := newTestServer(t)
-	defer srv.Close()
-
-	resp, err := http.Post(srv.URL+"/ping", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var body map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatal(err)
-	}
-	if body["message"] != "pong: " {
-		t.Errorf("expected 'pong: ', got %q", body["message"])
-	}
-}
-
-func TestPingInvalidJSON(t *testing.T) {
-	srv := newTestServer(t)
-	defer srv.Close()
-
-	resp, err := http.Post(srv.URL+"/ping", "application/json", strings.NewReader(`not json`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", resp.StatusCode)
-	}
 }
 
 func TestHealthz(t *testing.T) {
