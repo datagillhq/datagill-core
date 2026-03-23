@@ -19,10 +19,10 @@ const (
 type EventType string
 
 const (
-	EventTypeCreated EventType = "created"
-	EventTypeUpdated EventType = "updated"
-	EventTypeToggled EventType = "toggled"
-	EventTypeDeleted EventType = "deleted"
+	EventTypeCreated  EventType = "created"
+	EventTypeUpdated  EventType = "updated"
+	EventTypeToggled  EventType = "toggled"
+	EventTypeDeleted  EventType = "deleted"
 	EventTypeRollback EventType = "rollback"
 )
 
@@ -48,19 +48,19 @@ const (
 // FeatureFlagData is the normalized payload stored in feature_flags.data JSONB.
 // Fields unavailable from a given provider are omitted (zero value).
 type FeatureFlagData struct {
-	Name        string             `json:"name"`
-	Description string             `json:"description,omitempty"`
-	Source      FlagSource         `json:"source"`
-	Maintainer  *FlagMaintainer    `json:"maintainer,omitempty"`
-	Lifecycle   FlagLifecycle      `json:"lifecycle"`
+	Name         string                     `json:"name"`
+	Description  string                     `json:"description,omitempty"`
+	Source       FlagSource                 `json:"source"`
+	Maintainer   *FlagMaintainer            `json:"maintainer,omitempty"`
+	Lifecycle    FlagLifecycle              `json:"lifecycle"`
 	Environments map[string]FlagEnvironment `json:"environments"`
 }
 
 // FlagSource holds provider-origin metadata for a flag.
 type FlagSource struct {
-	Key       string    `json:"key"`
-	Provider  Source    `json:"provider"`
-	Project   string    `json:"project"`
+	Key       string     `json:"key"`
+	Provider  Source     `json:"provider"`
+	Project   string     `json:"project"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 

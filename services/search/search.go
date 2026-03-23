@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -173,7 +174,7 @@ func parseLimit(raw string) (int, error) {
 
 	limit, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parseLimit: %w", err)
 	}
 	if limit <= 0 || limit > 50 {
 		return 0, strconv.ErrSyntax
