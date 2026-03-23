@@ -20,6 +20,87 @@ These are additions to the stack decided in `AGENTS.md`:
 
 ---
 
+## Cloud Strategy (Cost-Conscious)
+
+We will eventually move to cloud, but budget is limited. Every infrastructure decision must have a local dev form (Docker Compose) and a cloud form (cheapest viable option). The two forms must be identical in behavior — only the host/provider changes.
+
+**Guiding principle:** self-host what is cheap to run, use managed services only where operational cost (time) exceeds the dollar cost. Never pay for a managed service that adds < 1 hour/month of operational burden to self-host.
+
+### Postgres — one RDS instance, three databases
+
+The two Docker Compose Postgres containers (`temporal-postgres`, `app-postgres`) map to a **single RDS instance** in cloud. Temporal requires separate databases (not schemas — its tooling owns them by name), so one instance holds three databases:
+
+```
+RDS instance  (one bill)
+├── temporal              ← Temporal workflow state
+├── temporal_visibility   ← Temporal UI / search
+└── datagill              ← All application tables
+```
+
+- Start with `db.t4g.micro` (~$12/mo) — upgrade to `db.t4g.small` (~$25/mo) when needed
+- No Multi-AZ at MVP — add when the business requires the uptime guarantee
+- No RDS Proxy at MVP — add when connection pool pressure appears
+- Docker Compose keeps two separate containers locally (simpler dev setup) — cloud uses one instance with two connection string env vars pointing to the same host, different database names
+
+### Temporal — self-hosted, not Temporal Cloud
+
+Temporal Cloud costs ~$25+/mo minimum. Self-hosting Temporal on the same compute as the worker is free. At our workflow volume (one ETL run per integration every 5–60 min), self-hosted Temporal on a single small instance is more than sufficient.
+
+Do not switch to Temporal Cloud unless operational burden of self-hosting becomes significant (outages, upgrade pain, on-call load).
+
+### Monitoring and logging — Grafana Cloud free tier
+
+In cloud, do **not** self-host Prometheus, Grafana, and Loki on a separate instance. Use **Grafana Cloud free tier** instead:
+
+| What | Free tier limit | Sufficient for MVP? |
+|------|----------------|---------------------|
+| Prometheus metrics | 10,000 series | Yes — we have ~50–100 series |
+| Loki logs | 50 GB/month | Yes |
+| Grafana dashboards | Unlimited | Yes |
+
+Services push metrics to Grafana Cloud (remote_write) instead of a local Prometheus. Logs ship directly to Loki via the Grafana Cloud endpoint instead of a self-hosted Loki. No separate monitoring instance to pay for.
+
+Local dev keeps the self-hosted stack (Prometheus + Grafana + Loki via Docker Compose) — identical dashboards, different data destination.
+
+### Secrets — SSM Parameter Store, not Secrets Manager
+
+AWS Secrets Manager costs $0.40/secret/month. SSM Parameter Store **Standard** tier is free for up to 10,000 parameters. Use SSM for all secrets at MVP. Secrets Manager is only worth it for automatic rotation — a feature we don't need until we have customers with compliance requirements.
+
+### Compute — start with one host
+
+At MVP, all application services (Worker + Temporal server + Search Service) run on a single EC2 instance or ECS Fargate task. Split onto separate hosts only when resource contention is observed or independent scaling is needed.
+
+Recommended starting point: `t4g.small` (2 vCPU, 2 GB RAM) — ~$12/mo on-demand, ~$7/mo with a 1-year reserved instance. Upgrade path: `t4g.medium` → separate hosts.
+
+### Estimated MVP cloud cost
+
+| Service | Option | Monthly cost |
+|---------|--------|-------------|
+| Compute (worker + temporal + search) | 1× `t4g.small` EC2 | ~$12 |
+| Database | 1× `db.t4g.micro` RDS (3 databases) | ~$12 |
+| Monitoring + logging | Grafana Cloud free tier | $0 |
+| Secrets | SSM Parameter Store standard | $0 |
+| Networking (data transfer, etc.) | Estimate | ~$5 |
+| **Total** | | **~$29/mo** |
+
+### Local dev → cloud mapping
+
+| Docker Compose service | Cloud equivalent |
+|-----------------------|-----------------|
+| `temporal-postgres` | RDS instance (database: `temporal`) |
+| `app-postgres` | RDS instance (database: `datagill`) |
+| `temporal` | Self-hosted on compute instance |
+| `temporal-ui` | Self-hosted on compute instance |
+| `prometheus` | Grafana Cloud (remote_write endpoint) |
+| `grafana` | Grafana Cloud |
+| `loki` + `promtail` | Grafana Cloud Loki endpoint |
+| `worker` | ECS Fargate task / EC2 |
+| `search` | ECS Fargate task / EC2 |
+
+The Docker Compose file is the source of truth for service configuration. Moving to cloud is a matter of swapping env vars and connection strings — no code changes.
+
+---
+
 ## Current Repo State (as of plan creation)
 
 The repo was scaffolded for an older 3-service architecture (ingestion, processing, search + BullMQ).
@@ -149,6 +230,8 @@ linters-settings:
 **Owner:** 1 person (DevOps/infra focus). Fully parallel to 1B and 1C.
 
 **Goal:** Full `docker compose up` brings up every infra dependency; Grafana shows metrics and logs.
+
+> **Cloud note:** Docker Compose is local dev only. See the Cloud Strategy section above for what each service maps to in cloud. Keep env var names consistent between Docker Compose and cloud — the only thing that changes is the values.
 
 ### Tasks
 
