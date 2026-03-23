@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/rs/zerolog"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	logger := zerolog.New(io.Discard)
 	testApp := newApp(loadConfig(), logger)
 	return httptest.NewServer(testApp.router())
 }

@@ -1,14 +1,14 @@
 package main
 
-import "log/slog"
+import "github.com/rs/zerolog"
 
 type app struct {
 	config     config
-	logger     *slog.Logger
+	logger     zerolog.Logger
 	repository SearchRepository
 }
 
-func newApp(cfg config, logger *slog.Logger) *app {
+func newApp(cfg config, logger zerolog.Logger) *app {
 	return &app{
 		config:     cfg,
 		logger:     logger,

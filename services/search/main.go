@@ -3,19 +3,25 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 const serviceName = "search"
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	logger := zerolog.New(os.Stdout).With().
+		Timestamp().
+		Str("service", serviceName).
+		Logger()
+
 	cfg := loadConfig()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	app := newApp(cfg, logger)
 
 	srv := &http.Server{
@@ -27,9 +33,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("starting search service", "port", cfg.Port, "env", cfg.Environment)
+		logger.Info().Str("port", cfg.Port).Str("env", cfg.Environment).Msg("starting search service")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server error", "err", err)
+			logger.Error().Err(err).Msg("server error")
 			os.Exit(1)
 		}
 	}()
@@ -41,8 +47,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	logger.Info("shutting down search service")
+	logger.Info().Msg("shutting down search service")
 	if err := srv.Shutdown(ctx); err != nil {
-		logger.Error("shutdown error", "err", err)
+		logger.Error().Err(err).Msg("shutdown error")
 	}
 }

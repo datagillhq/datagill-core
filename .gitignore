@@ -3,6 +3,8 @@
 /processing
 /search
 /worker
+services/search/search
+cmd/worker/worker
 
 # Go build output
 *.exe

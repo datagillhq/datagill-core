@@ -35,7 +35,7 @@ func (a *app) searchHandler(w http.ResponseWriter, r *http.Request) {
 		Limit: limit,
 	})
 	if err != nil {
-		a.logger.Error("search failed", "err", err, "org_id", orgID)
+		a.logger.Error().Err(err).Str("org_id", orgID).Msg("search failed")
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
@@ -53,7 +53,7 @@ func (a *app) flagsHandler(w http.ResponseWriter, r *http.Request) {
 
 	flags, err := a.repository.ListFlags(r.Context(), orgID)
 	if err != nil {
-		a.logger.Error("list flags failed", "err", err, "org_id", orgID)
+		a.logger.Error().Err(err).Str("org_id", orgID).Msg("list flags failed")
 		writeError(w, http.StatusInternalServerError, "failed to list flags")
 		return
 	}
