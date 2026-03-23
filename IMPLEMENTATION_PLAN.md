@@ -65,9 +65,12 @@ Phase 0: Repo Reset & Tooling         ← 1 person, unblocks everything, ~0.5 da
 
 ### Tasks
 
-**0.1 — Remove obsolete services**
+**0.1 — Remove obsolete services and proto scaffolding**
 - Delete `services/ingestion/`, `services/processing/`
 - Delete root-level `ingestion/`, `processing/` directories
+- Delete `buf.yaml`, `buf.gen.yaml`, `proto/`, `shared/gen/`
+- Remove `google.golang.org/protobuf` dependency from `services/search/go.mod` and `shared/go.mod`
+- Remove proto-generated imports from `services/search/handlers.go` (ping handler uses proto types)
 - Update `go.work` to reference only `./services/search` and `./shared`
 - Verify `go build ./...` passes
 
