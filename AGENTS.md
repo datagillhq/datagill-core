@@ -511,7 +511,12 @@ datagill-core/
 │   ├── source_record.go         # SourceRecord
 │   └── launchdarkly.go          # LDAuditEntry, LDFlagDetail (provider-specific raw types)
 ├── repository/
-│   └── repository.go            # DB upserts (shared)
+│   ├── repository.go            # Repository interface
+│   ├── postgres.go              # PostgresRepository struct, constructor, Close
+│   ├── postgres_source_records.go   # SaveSourceRecord
+│   ├── postgres_feature_flags.go    # SaveFeatureFlag
+│   ├── postgres_changelog.go        # SaveChangelog
+│   └── postgres_integrations.go     # GetIntegration, ListIntegrations
 ├── activities/
 │   ├── shared.go                # SaveSourceRecord, SaveChangelog, SaveFeatureFlag
 │   └── launchdarkly.go          # LD extract + normalize activities
@@ -859,6 +864,13 @@ High-frequency events (per-audit-log-entry, per-Temporal-activity) must be logge
 - A package has one clear responsibility. If you cannot describe it in one sentence, split it
 - No circular imports — they indicate a structural design problem
 - `internal/` sub-packages for code that must not leak outside the module
+
+**File organization**
+- Split files by entity when a single file exceeds ~400 lines or an entity has 3+ methods
+- Naming convention: `{implementation}_{entity}.go` — e.g., `postgres_feature_flags.go`, `postgres_integrations.go`
+- Keep the main implementation file (`postgres.go`) for struct definition, constructor, Close, and shared helpers
+- Go allows methods on a type to be spread across multiple files in the same package — use this to keep files focused
+- One file per entity makes it easier to find code, reduces merge conflicts, and keeps each file under ~100 lines
 
 **Avoid**
 - Premature abstraction: do not generalize until you have three concrete cases
