@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,17 +20,16 @@ type PostgresRepository struct {
 }
 
 // NewPostgresRepository creates a new PostgresRepository with a connection pool.
+// Pool settings can be configured via connection string parameters:
+//   - pool_max_conns (default: 4)
+//   - pool_min_conns (default: 0)
+//   - pool_max_conn_lifetime (e.g., "1h")
+//   - pool_max_conn_idle_time (e.g., "30m")
+//   - pool_health_check_period (e.g., "1m")
+//
+// Example: postgres://user:pass@host/db?pool_max_conns=20&pool_min_conns=2
 func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRepository, error) {
-	config, err := pgxpool.ParseConfig(connString)
-	if err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-
-	config.MaxConns = 20
-	config.MinConns = 2
-	config.MaxConnIdleTime = 5 * time.Minute
-
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
 		return nil, fmt.Errorf("create pool: %w", err)
 	}
