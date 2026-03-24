@@ -61,20 +61,21 @@ func (r *PostgresSearchRepository) GetFlag(ctx context.Context, orgID, flagKey s
 func (r *PostgresSearchRepository) GetFlagHistory(ctx context.Context, orgID, flagKey string, p Pagination) ([]ChangelogEntry, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
-			key::text,
-			feature_flag_key::text,
-			org_id::text,
-			COALESCE(data->>'project', ''),
-			COALESCE(data->>'environment', ''),
-			event_type,
-			COALESCE(data->'actor'->>'email', ''),
-			occurred_at,
-			COALESCE((data->'actor'->>'is_automated')::boolean, false),
-			COALESCE((data->>'is_rollback')::boolean, false)
-		FROM feature_flag_changelog
-		WHERE org_id = $1::uuid
-		  AND feature_flag_key = $2::uuid
-		ORDER BY occurred_at DESC
+			c.key::text,
+			c.feature_flag_key::text,
+			c.org_id::text,
+			COALESCE(f.data->'source'->>'provider', ''),
+			COALESCE(c.data->>'environment', ''),
+			c.event_type,
+			COALESCE(c.data->'actor'->>'email', ''),
+			c.occurred_at,
+			COALESCE((c.data->'actor'->'is_automated')::boolean, false),
+			COALESCE((c.data->'is_rollback')::boolean, false)
+		FROM feature_flag_changelog c
+		JOIN feature_flags f ON f.key = c.feature_flag_key
+		WHERE c.org_id = $1::uuid
+		  AND c.feature_flag_key = $2::uuid
+		ORDER BY c.occurred_at DESC
 		LIMIT $3 OFFSET $4
 	`, orgID, flagKey, p.Limit, (p.Page-1)*p.Limit)
 	if err != nil {

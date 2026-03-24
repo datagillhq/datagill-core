@@ -89,7 +89,7 @@ func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagName, source string, 
 	for _, e := range envs {
 		environments[e] = map[string]bool{"enabled": true}
 	}
-	data, _ := json.Marshal(map[string]any{
+	data, err := json.Marshal(map[string]any{
 		"name": flagName,
 		"source": map[string]string{
 			"provider": source,
@@ -99,14 +99,16 @@ func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagName, source string, 
 		"environments": environments,
 		"lifecycle":    map[string]string{"purpose": "temporary", "state": "active"},
 	})
+	if err != nil {
+		t.Fatalf("seedFlag marshal: %v", err)
+	}
 	var key string
-	err := pool.QueryRow(context.Background(), `
+	if err = pool.QueryRow(context.Background(), `
 		INSERT INTO feature_flags (key, source_record_key, integration_id, org_id, state, data, created_at, updated_at)
 		SELECT gen_random_uuid(), gen_random_uuid(), i.key, $1::uuid, 'on', $2::jsonb, NOW(), NOW()
 		FROM integrations i WHERE i.org_id = $1::uuid LIMIT 1
 		RETURNING key::text
-	`, orgID, string(data)).Scan(&key)
-	if err != nil {
+	`, orgID, string(data)).Scan(&key); err != nil {
 		t.Fatalf("seedFlag: %v", err)
 	}
 	return key
@@ -115,18 +117,20 @@ func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagName, source string, 
 // seedChangelog inserts a changelog entry for the given flag key.
 func seedChangelog(t *testing.T, pool *pgxpool.Pool, orgID, flagKey, eventType, environment string) {
 	t.Helper()
-	data, _ := json.Marshal(map[string]any{
+	data, err := json.Marshal(map[string]any{
 		"environment": environment,
 		"actor":       map[string]any{"email": "test@example.com", "is_automated": false},
 		"is_rollback": false,
 	})
-	_, err := pool.Exec(context.Background(), `
+	if err != nil {
+		t.Fatalf("seedChangelog marshal: %v", err)
+	}
+	if _, err = pool.Exec(context.Background(), `
 		INSERT INTO feature_flag_changelog
 			(key, source_record_key, feature_flag_key, integration_id, org_id, event_type, state, occurred_at, data, created_at, updated_at)
 		SELECT gen_random_uuid(), gen_random_uuid(), $2::uuid, i.key, $1::uuid, $3, 'on', NOW(), $4::jsonb, NOW(), NOW()
 		FROM integrations i WHERE i.org_id = $1::uuid LIMIT 1
-	`, orgID, flagKey, eventType, string(data))
-	if err != nil {
+	`, orgID, flagKey, eventType, string(data)); err != nil {
 		t.Fatalf("seedChangelog: %v", err)
 	}
 }
@@ -151,7 +155,9 @@ func seedOrg(t *testing.T, pool *pgxpool.Pool, orgName string) string {
 	}
 	// CASCADE deletes integrations, feature_flags, and changelog entries for this org.
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM organizations WHERE key = $1::uuid`, orgID)
+		if _, err := pool.Exec(context.Background(), `DELETE FROM organizations WHERE key = $1::uuid`, orgID); err != nil {
+			t.Errorf("cleanup seedOrg: %v", err)
+		}
 	})
 	return orgID
 }
@@ -161,7 +167,7 @@ func TestPostgresListFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	orgA := seedOrg(t, pool, "org-a")
 	orgB := seedOrg(t, pool, "org-b")
@@ -222,7 +228,7 @@ func TestPostgresGetFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	org := seedOrg(t, pool, "org-getflag")
 	flagKey := seedFlag(t, pool, org, "My Flag", "launchdarkly", []string{"production"})
@@ -264,7 +270,7 @@ func TestPostgresGetFlagHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	org := seedOrg(t, pool, "org-history")
 	flagKey := seedFlag(t, pool, org, "History Flag", "launchdarkly", []string{"production"})
