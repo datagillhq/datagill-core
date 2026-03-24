@@ -38,7 +38,7 @@ func main() {
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           newApp(cfg, logger, repo).router(),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 
 	quit := make(chan os.Signal, 1)
