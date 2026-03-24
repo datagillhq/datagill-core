@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -21,7 +27,37 @@ func main() {
 		logger.Fatal().Msg("APP_DATABASE_URL is required")
 	}
 
-	// TODO(Phase 2B): construct PostgresSearchRepository from cfg.DatabaseURL,
-	// pass it to newApp, then start the HTTP server and handle graceful shutdown.
-	logger.Fatal().Msg("PostgresSearchRepository not yet implemented — complete Phase 2B")
+	ctx := context.Background()
+
+	repo, err := NewPostgresSearchRepository(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to connect to database")
+	}
+	defer repo.Close()
+
+	srv := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           newApp(cfg, logger, repo).router(),
+		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
+	}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		logger.Info().Str("port", cfg.Port).Msg("server started")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatal().Err(err).Msg("server error")
+		}
+	}()
+
+	<-quit
+	logger.Info().Msg("shutting down")
+
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error().Err(err).Msg("shutdown error")
+	}
 }
