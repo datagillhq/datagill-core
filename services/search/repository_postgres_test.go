@@ -82,30 +82,52 @@ func runTestMigrations(ctx context.Context, connString string) error {
 	return nil
 }
 
-// seedFlag inserts a feature_flag row directly, bypassing the ETL layer.
-func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagKey, name, source string, envs []string) {
+// seedFlag inserts a feature_flag row and returns the generated key.
+func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagName, source string, envs []string) string {
 	t.Helper()
 	environments := make(map[string]map[string]bool, len(envs))
 	for _, e := range envs {
 		environments[e] = map[string]bool{"enabled": true}
 	}
 	data, _ := json.Marshal(map[string]any{
-		"name": name,
+		"name": flagName,
 		"source": map[string]string{
 			"provider": source,
-			"key":      flagKey,
+			"key":      flagName,
 			"project":  "test-project",
 		},
 		"environments": environments,
 		"lifecycle":    map[string]string{"purpose": "temporary", "state": "active"},
 	})
-	_, err := pool.Exec(context.Background(), `
+	var key string
+	err := pool.QueryRow(context.Background(), `
 		INSERT INTO feature_flags (key, source_record_key, integration_id, org_id, state, data, created_at, updated_at)
 		SELECT gen_random_uuid(), gen_random_uuid(), i.key, $1::uuid, 'on', $2::jsonb, NOW(), NOW()
 		FROM integrations i WHERE i.org_id = $1::uuid LIMIT 1
-	`, orgID, string(data))
+		RETURNING key::text
+	`, orgID, string(data)).Scan(&key)
 	if err != nil {
 		t.Fatalf("seedFlag: %v", err)
+	}
+	return key
+}
+
+// seedChangelog inserts a changelog entry for the given flag key.
+func seedChangelog(t *testing.T, pool *pgxpool.Pool, orgID, flagKey, eventType, environment string) {
+	t.Helper()
+	data, _ := json.Marshal(map[string]any{
+		"environment": environment,
+		"actor":       map[string]any{"email": "test@example.com", "is_automated": false},
+		"is_rollback": false,
+	})
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO feature_flag_changelog
+			(key, source_record_key, feature_flag_key, integration_id, org_id, event_type, state, occurred_at, data, created_at, updated_at)
+		SELECT gen_random_uuid(), gen_random_uuid(), $2::uuid, i.key, $1::uuid, $3, 'on', NOW(), $4::jsonb, NOW(), NOW()
+		FROM integrations i WHERE i.org_id = $1::uuid LIMIT 1
+	`, orgID, flagKey, eventType, string(data))
+	if err != nil {
+		t.Fatalf("seedChangelog: %v", err)
 	}
 }
 
@@ -144,9 +166,9 @@ func TestPostgresListFlags(t *testing.T) {
 	orgA := seedOrg(t, pool, "org-a")
 	orgB := seedOrg(t, pool, "org-b")
 
-	seedFlag(t, pool, orgA, "flag-1", "Checkout Redesign", "launchdarkly", []string{"production", "staging"})
-	seedFlag(t, pool, orgA, "flag-2", "Dark Mode", "unleash", []string{"staging"})
-	seedFlag(t, pool, orgB, "flag-3", "Other Org Flag", "launchdarkly", []string{"production"})
+	seedFlag(t, pool, orgA, "Checkout Redesign", "launchdarkly", []string{"production", "staging"})
+	seedFlag(t, pool, orgA, "Dark Mode", "unleash", []string{"staging"})
+	seedFlag(t, pool, orgB, "Other Org Flag", "launchdarkly", []string{"production"})
 
 	repo, err := NewPostgresSearchRepository(context.Background(), testPGConnString)
 	if err != nil {
@@ -191,6 +213,95 @@ func TestPostgresListFlags(t *testing.T) {
 		}
 		if len(flags) != 1 || flags[0].Name != "Other Org Flag" {
 			t.Errorf("expected only org-b flag, got %+v", flags)
+		}
+	})
+}
+
+func TestPostgresGetFlag(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	org := seedOrg(t, pool, "org-getflag")
+	flagKey := seedFlag(t, pool, org, "My Flag", "launchdarkly", []string{"production"})
+
+	repo, err := NewPostgresSearchRepository(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	t.Run("returns flag detail", func(t *testing.T) {
+		flag, err := repo.GetFlag(context.Background(), org, flagKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if flag.FlagKey != flagKey || flag.Name != "My Flag" || flag.Source != "launchdarkly" {
+			t.Errorf("unexpected flag detail: %+v", flag)
+		}
+	})
+
+	t.Run("returns ErrNotFound for unknown key", func(t *testing.T) {
+		_, err := repo.GetFlag(context.Background(), org, "00000000-0000-0000-0000-000000000000")
+		if err != ErrNotFound {
+			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("org isolation — wrong org cannot see flag", func(t *testing.T) {
+		otherOrg := seedOrg(t, pool, "org-getflag-other")
+		_, err := repo.GetFlag(context.Background(), otherOrg, flagKey)
+		if err != ErrNotFound {
+			t.Errorf("expected ErrNotFound for wrong org, got %v", err)
+		}
+	})
+}
+
+func TestPostgresGetFlagHistory(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	org := seedOrg(t, pool, "org-history")
+	flagKey := seedFlag(t, pool, org, "History Flag", "launchdarkly", []string{"production"})
+	seedChangelog(t, pool, org, flagKey, "flag_toggled_on", "production")
+	seedChangelog(t, pool, org, flagKey, "flag_toggled_off", "production")
+	seedChangelog(t, pool, org, flagKey, "flag_updated", "staging")
+
+	repo, err := NewPostgresSearchRepository(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	t.Run("returns all entries for flag", func(t *testing.T) {
+		entries, err := repo.GetFlagHistory(context.Background(), org, flagKey, Pagination{Page: 1, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("pagination limits results", func(t *testing.T) {
+		entries, err := repo.GetFlagHistory(context.Background(), org, flagKey, Pagination{Page: 1, Limit: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 2 {
+			t.Errorf("expected 2 entries on page 1, got %d", len(entries))
+		}
+		page2, err := repo.GetFlagHistory(context.Background(), org, flagKey, Pagination{Page: 2, Limit: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page2) != 1 {
+			t.Errorf("expected 1 entry on page 2, got %d", len(page2))
 		}
 	})
 }
