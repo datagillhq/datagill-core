@@ -311,3 +311,110 @@ func TestPostgresGetFlagHistory(t *testing.T) {
 		}
 	})
 }
+
+func TestPostgresGetTimeline(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	org := seedOrg(t, pool, "org-timeline")
+	flagA := seedFlag(t, pool, org, "Flag A", "launchdarkly", []string{"production"})
+	flagB := seedFlag(t, pool, org, "Flag B", "launchdarkly", []string{"production"})
+	otherOrg := seedOrg(t, pool, "org-timeline-other")
+	otherFlag := seedFlag(t, pool, otherOrg, "Other Flag", "launchdarkly", []string{"production"})
+
+	seedChangelog(t, pool, org, flagA, "flag_toggled_on", "production")
+	seedChangelog(t, pool, org, flagA, "flag_toggled_off", "production")
+	seedChangelog(t, pool, org, flagB, "flag_created", "production")
+	seedChangelog(t, pool, otherOrg, otherFlag, "flag_created", "production")
+
+	repo, err := NewPostgresSearchRepository(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	t.Run("returns entries across all flags for org", func(t *testing.T) {
+		entries, err := repo.GetTimeline(context.Background(), org, Pagination{Page: 1, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("org isolation", func(t *testing.T) {
+		entries, err := repo.GetTimeline(context.Background(), otherOrg, Pagination{Page: 1, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 {
+			t.Errorf("expected 1 entry for other org, got %d", len(entries))
+		}
+	})
+
+	t.Run("pagination", func(t *testing.T) {
+		entries, err := repo.GetTimeline(context.Background(), org, Pagination{Page: 1, Limit: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 2 {
+			t.Errorf("expected 2 entries on page 1, got %d", len(entries))
+		}
+	})
+}
+
+func TestPostgresSearch(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	org := seedOrg(t, pool, "org-search")
+	seedFlag(t, pool, org, "Checkout Redesign", "launchdarkly", []string{"production"})
+	seedFlag(t, pool, org, "New Checkout Flow", "launchdarkly", []string{"production"})
+	seedFlag(t, pool, org, "Dark Mode", "launchdarkly", []string{"production"})
+
+	repo, err := NewPostgresSearchRepository(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	t.Run("returns matching flags", func(t *testing.T) {
+		results, err := repo.Search(context.Background(), SearchRequest{OrgID: org, Query: "checkout", Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results for 'checkout', got %d", len(results))
+		}
+	})
+
+	t.Run("prefix match scores higher than substring match", func(t *testing.T) {
+		results, err := repo.Search(context.Background(), SearchRequest{OrgID: org, Query: "Checkout", Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) < 2 {
+			t.Fatalf("expected at least 2 results, got %d", len(results))
+		}
+		if results[0].Score <= results[1].Score {
+			t.Errorf("expected prefix match to score higher: %v vs %v", results[0].Score, results[1].Score)
+		}
+	})
+
+	t.Run("empty query returns no results", func(t *testing.T) {
+		results, err := repo.Search(context.Background(), SearchRequest{OrgID: org, Query: "", Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results for empty query, got %d", len(results))
+		}
+	})
+}
