@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -144,6 +145,16 @@ func (r *PostgresSearchRepository) GetTimeline(ctx context.Context, orgID string
 	return entries, nil
 }
 
+// escapeLike escapes LIKE special characters so user input is treated as a
+// literal string. Postgres LIKE treats % (any sequence) and _ (any single
+// character) as wildcards; \ is the default escape character.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // Search returns flags whose name matches the query string, scored by match
 // quality (prefix match ranks above substring match). Returns up to req.Limit
 // results scoped to req.OrgID.
@@ -151,7 +162,8 @@ func (r *PostgresSearchRepository) Search(ctx context.Context, req SearchRequest
 	if req.Query == "" {
 		return nil, nil
 	}
-	pattern := "%" + req.Query + "%"
+	safe := escapeLike(req.Query)
+	pattern := "%" + safe + "%"
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			key::text,
@@ -162,15 +174,15 @@ func (r *PostgresSearchRepository) Search(ctx context.Context, req SearchRequest
 			COALESCE(data->>'name', ''),
 			updated_at,
 			CASE
-				WHEN lower(data->>'name') LIKE lower($2) THEN 1.0
+				WHEN lower(data->>'name') LIKE lower($2) ESCAPE '\' THEN 1.0
 				ELSE 0.5
 			END AS score
 		FROM feature_flags
 		WHERE org_id = $1::uuid
-		  AND lower(data->>'name') LIKE lower($3)
+		  AND lower(data->>'name') LIKE lower($3) ESCAPE '\'
 		ORDER BY score DESC, updated_at DESC
 		LIMIT $4
-	`, req.OrgID, req.Query+"%", pattern, req.Limit)
+	`, req.OrgID, safe+"%", pattern, req.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("Search: %w", err)
 	}

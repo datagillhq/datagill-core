@@ -55,6 +55,25 @@ func TestParsePage(t *testing.T) {
 	}
 }
 
+func TestEscapeLike(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"checkout", "checkout"},
+		{"dark_mode", `dark\_mode`},
+		{"100%", `100\%`},
+		{`back\slash`, `back\\slash`},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		got := escapeLike(tc.input)
+		if got != tc.want {
+			t.Errorf("escapeLike(%q): want %q, got %q", tc.input, tc.want, got)
+		}
+	}
+}
+
 // TODO(Phase 2B): add integration tests for PostgresSearchRepository using
 // testcontainers-go. Tests must cover: Search, ListFlags, GetFlag,
 // GetFlagHistory, GetTimeline, org_id scoping (org A cannot see org B data),
