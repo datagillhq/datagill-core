@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -101,6 +102,105 @@ func (r *PostgresSearchRepository) GetFlagHistory(ctx context.Context, orgID, fl
 // isNotFound returns true when pgx finds no rows.
 func isNotFound(err error) bool {
 	return errors.Is(err, pgx.ErrNoRows)
+}
+
+// GetTimeline returns changelog entries across all flags for the given org,
+// ordered by most recent first, with page-based pagination.
+func (r *PostgresSearchRepository) GetTimeline(ctx context.Context, orgID string, p Pagination) ([]ChangelogEntry, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			c.key::text,
+			c.feature_flag_key::text,
+			c.org_id::text,
+			COALESCE(f.data->'source'->>'provider', ''),
+			COALESCE(c.data->>'environment', ''),
+			c.event_type,
+			COALESCE(c.data->'actor'->>'email', ''),
+			c.occurred_at,
+			COALESCE((c.data->'actor'->'is_automated')::boolean, false),
+			COALESCE((c.data->'is_rollback')::boolean, false)
+		FROM feature_flag_changelog c
+		JOIN feature_flags f ON f.key = c.feature_flag_key
+		WHERE c.org_id = $1::uuid
+		ORDER BY c.occurred_at DESC
+		LIMIT $2 OFFSET $3
+	`, orgID, p.Limit, (p.Page-1)*p.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("GetTimeline: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []ChangelogEntry
+	for rows.Next() {
+		var e ChangelogEntry
+		if err := rows.Scan(&e.ID, &e.FlagKey, &e.OrgID, &e.Source, &e.Environment,
+			&e.EventType, &e.ActorEmail, &e.OccurredAt, &e.IsAutomated, &e.IsRollback); err != nil {
+			return nil, fmt.Errorf("GetTimeline scan: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetTimeline rows: %w", err)
+	}
+	return entries, nil
+}
+
+// escapeLike escapes LIKE special characters so user input is treated as a
+// literal string. Postgres LIKE treats % (any sequence) and _ (any single
+// character) as wildcards; \ is the default escape character.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
+// Search returns flags whose name matches the query string, scored by match
+// quality (prefix match ranks above substring match). Returns up to req.Limit
+// results scoped to req.OrgID.
+func (r *PostgresSearchRepository) Search(ctx context.Context, req SearchRequest) ([]SearchResult, error) {
+	if req.Query == "" {
+		return nil, nil
+	}
+	safe := escapeLike(req.Query)
+	pattern := "%" + safe + "%"
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			key::text,
+			key::text,
+			org_id::text,
+			COALESCE(data->'source'->>'provider', ''),
+			COALESCE(data->>'description', ''),
+			COALESCE(data->>'name', ''),
+			updated_at,
+			CASE
+				WHEN lower(data->>'name') LIKE lower($2) ESCAPE '\' THEN 1.0
+				ELSE 0.5
+			END AS score
+		FROM feature_flags
+		WHERE org_id = $1::uuid
+		  AND lower(data->>'name') LIKE lower($3) ESCAPE '\'
+		ORDER BY score DESC, updated_at DESC
+		LIMIT $4
+	`, req.OrgID, safe+"%", pattern, req.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("Search: %w", err)
+	}
+	defer rows.Close()
+
+	var results []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.ID, &r.FlagKey, &r.OrgID, &r.Source, &r.Description,
+			&r.Title, &r.LastEventAt, &r.Score); err != nil {
+			return nil, fmt.Errorf("Search scan: %w", err)
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("Search rows: %w", err)
+	}
+	return results, nil
 }
 
 // ListFlags returns flags for the given org, with optional source and environment filters.
