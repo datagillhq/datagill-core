@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,11 +36,27 @@ func (r *PostgresSearchRepository) Close() {
 	r.pool.Close()
 }
 
+// observe records datagill_db_query_duration_seconds for a completed query.
+// Pass a pointer to the method's named error return so the status reflects
+// the final resolved error, not the value at defer call time.
+func (r *PostgresSearchRepository) observe(query string, start time.Time, errp *error) {
+	status := "ok"
+	if *errp != nil {
+		if errors.Is(*errp, ErrNotFound) {
+			status = "not_found"
+		} else {
+			status = "error"
+		}
+	}
+	dbQueryDuration.WithLabelValues(query, status).Observe(time.Since(start).Seconds())
+}
+
 // GetFlag returns the full detail for a single flag scoped to the given org.
 // Returns ErrNotFound if no matching flag exists.
-func (r *PostgresSearchRepository) GetFlag(ctx context.Context, orgID, flagKey string) (FlagDetail, error) {
+func (r *PostgresSearchRepository) GetFlag(ctx context.Context, orgID, flagKey string) (_ FlagDetail, err error) {
+	defer r.observe("get_flag", time.Now(), &err)
 	var f FlagDetail
-	err := r.pool.QueryRow(ctx, `
+	err = r.pool.QueryRow(ctx, `
 		SELECT
 			key::text,
 			COALESCE(data->>'name', ''),
@@ -62,7 +79,8 @@ func (r *PostgresSearchRepository) GetFlag(ctx context.Context, orgID, flagKey s
 
 // GetFlagHistory returns changelog entries for a specific flag, ordered by
 // most recent first, with page-based pagination.
-func (r *PostgresSearchRepository) GetFlagHistory(ctx context.Context, orgID, flagKey string, p Pagination) ([]ChangelogEntry, error) {
+func (r *PostgresSearchRepository) GetFlagHistory(ctx context.Context, orgID, flagKey string, p Pagination) (_ []ChangelogEntry, err error) {
+	defer r.observe("get_flag_history", time.Now(), &err)
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			c.key::text,
@@ -109,7 +127,8 @@ func isNotFound(err error) bool {
 
 // GetTimeline returns changelog entries across all flags for the given org,
 // ordered by most recent first, with page-based pagination.
-func (r *PostgresSearchRepository) GetTimeline(ctx context.Context, orgID string, p Pagination) ([]ChangelogEntry, error) {
+func (r *PostgresSearchRepository) GetTimeline(ctx context.Context, orgID string, p Pagination) (_ []ChangelogEntry, err error) {
+	defer r.observe("get_timeline", time.Now(), &err)
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			c.key::text,
@@ -161,10 +180,11 @@ func escapeLike(s string) string {
 // Search returns flags whose name matches the query string, scored by match
 // quality (prefix match ranks above substring match). Returns up to req.Limit
 // results scoped to req.OrgID.
-func (r *PostgresSearchRepository) Search(ctx context.Context, req SearchRequest) ([]SearchResult, error) {
+func (r *PostgresSearchRepository) Search(ctx context.Context, req SearchRequest) (_ []SearchResult, err error) {
 	if req.Query == "" {
 		return nil, nil
 	}
+	defer r.observe("search", time.Now(), &err)
 	safe := escapeLike(req.Query)
 	pattern := "%" + safe + "%"
 	rows, err := r.pool.Query(ctx, `
@@ -208,7 +228,8 @@ func (r *PostgresSearchRepository) Search(ctx context.Context, req SearchRequest
 
 // ListFlags returns flags for the given org, with optional source and environment filters.
 // Flags are ordered by most recently updated first.
-func (r *PostgresSearchRepository) ListFlags(ctx context.Context, orgID string, filters FlagFilters) ([]FlagSummary, error) {
+func (r *PostgresSearchRepository) ListFlags(ctx context.Context, orgID string, filters FlagFilters) (_ []FlagSummary, err error) {
+	defer r.observe("list_flags", time.Now(), &err)
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			key::text,

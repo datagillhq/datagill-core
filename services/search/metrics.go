@@ -22,5 +22,5 @@ var (
 		Name:    "datagill_db_query_duration_seconds",
 		Help:    "Database query duration in seconds.",
 		Buckets: prometheus.DefBuckets,
-	}, []string{"query_name"})
+	}, []string{"query_name", "status"})
 )
