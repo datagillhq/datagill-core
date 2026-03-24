@@ -36,8 +36,9 @@ func main() {
 	defer repo.Close()
 
 	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: newApp(cfg, logger, repo).router(),
+		Addr:              ":" + cfg.Port,
+		Handler:           newApp(cfg, logger, repo).router(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	quit := make(chan os.Signal, 1)

@@ -433,7 +433,8 @@ func TestPostgresWiring(t *testing.T) {
 	srv := httptest.NewServer(newApp(loadConfig(), zerolog.New(io.Discard), repo).router())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/healthz")
+	testClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := testClient.Get(srv.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
