@@ -5,6 +5,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 	"github.com/testcontainers/testcontainers-go"
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -417,4 +421,24 @@ func TestPostgresSearch(t *testing.T) {
 			t.Errorf("expected 0 results for empty query, got %d", len(results))
 		}
 	})
+}
+
+func TestPostgresWiring(t *testing.T) {
+	repo, err := NewPostgresSearchRepository(context.Background(), testPGConnString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	srv := httptest.NewServer(newApp(loadConfig(), zerolog.New(io.Discard), repo).router())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 from /healthz, got %d", resp.StatusCode)
+	}
 }

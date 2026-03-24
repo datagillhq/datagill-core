@@ -10,6 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Compile-time check that PostgresSearchRepository satisfies SearchRepository.
+var _ SearchRepository = (*PostgresSearchRepository)(nil)
+
 // PostgresSearchRepository implements SearchRepository against the app Postgres database.
 type PostgresSearchRepository struct {
 	pool *pgxpool.Pool
