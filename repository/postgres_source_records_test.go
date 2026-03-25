@@ -28,7 +28,7 @@ func TestSaveSourceRecord(t *testing.T) {
 	integrationKey := setupTestIntegration(ctx, t, pool, orgKey)
 
 	rec := models.SourceRecord{
-		Key:           models.ComputeSourceRecordKey(models.SourceLaunchDarkly, models.SourceTypeAuditLog, "audit-123"),
+		Key:           models.ComputeSourceRecordKey(orgKey, models.SourceLaunchDarkly, models.SourceTypeAuditLog, "audit-123"),
 		IntegrationID: integrationKey,
 		OrgID:         orgKey,
 		SourceType:    models.SourceTypeAuditLog,

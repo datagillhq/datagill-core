@@ -29,7 +29,7 @@ func TestSaveFeatureFlag(t *testing.T) {
 
 	now := time.Now().UTC()
 	flag := models.FeatureFlag{
-		Key:             models.ComputeFlagKey(models.SourceLaunchDarkly, "test-project", "my-flag"),
+		Key:             models.ComputeFlagKey(orgKey, models.SourceLaunchDarkly, "test-project", "my-flag"),
 		SourceRecordKey: uuid.New(),
 		IntegrationID:   integrationKey,
 		OrgID:           orgKey,
