@@ -42,9 +42,12 @@ func (r *PostgresSearchRepository) Close() {
 func (r *PostgresSearchRepository) observe(query string, start time.Time, errp *error) {
 	status := "ok"
 	if *errp != nil {
-		if errors.Is(*errp, ErrNotFound) {
+		switch {
+		case errors.Is(*errp, ErrNotFound):
 			status = "not_found"
-		} else {
+		case errors.Is(*errp, context.DeadlineExceeded):
+			status = "timeout"
+		default:
 			status = "error"
 		}
 	}
