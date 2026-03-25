@@ -58,10 +58,15 @@ type FeatureFlagData struct {
 
 // FlagSource holds provider-origin metadata for a flag.
 type FlagSource struct {
-	Key       string     `json:"key"`
-	Provider  Source     `json:"provider"`
-	Project   string     `json:"project"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Key       string      `json:"key"`
+	Provider  Source      `json:"provider"`
+	Project   FlagProject `json:"project"`
+	CreatedAt *time.Time  `json:"created_at,omitempty"`
+}
+
+// FlagProject identifies the provider project a flag belongs to.
+type FlagProject struct {
+	ID string `json:"id"`
 }
 
 // FlagMaintainer holds optional ownership information for a flag.
@@ -106,20 +111,16 @@ type FeatureFlag struct {
 
 // ChangelogData is the normalized payload stored in feature_flag_changelog.data JSONB.
 type ChangelogData struct {
-	FlagName      string         `json:"flag_name"`
-	Description   string         `json:"description,omitempty"`
-	Actor         ChangelogActor `json:"actor"`
-	Environment   string         `json:"environment"`
-	Project       string         `json:"project"`
-	IsRollback    bool           `json:"is_rollback"`
-	PreviousState string         `json:"previous_state,omitempty"`
-	NewState      string         `json:"new_state,omitempty"`
+	Description  string         `json:"description,omitempty"`
+	Actor        ChangelogActor `json:"actor"`
+	Source       FlagSource     `json:"source"`
+	Environments []string       `json:"environments"`
+	ChangeType   string         `json:"change_type"`
 }
 
-// ChangelogActor identifies who made a change and whether it was automated.
+// ChangelogActor identifies who made a change.
 type ChangelogActor struct {
-	Email       string `json:"email,omitempty"`
-	IsAutomated bool   `json:"is_automated"`
+	Email string `json:"email,omitempty"`
 }
 
 // FeatureFlagChangelog maps to the feature_flag_changelog table.

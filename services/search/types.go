@@ -31,7 +31,6 @@ type SearchResult struct {
 	OrgID       string    `json:"orgId"`
 	FlagKey     string    `json:"flagKey"`
 	Source      string    `json:"source"`
-	Environment string    `json:"environment"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Score       float64   `json:"score"`
@@ -43,7 +42,6 @@ type FlagSummary struct {
 	FlagKey     string    `json:"flagKey"`
 	Name        string    `json:"name"`
 	Source      string    `json:"source"`
-	Environment string    `json:"environment"`
 	LastEventAt time.Time `json:"lastEventAt"`
 }
 
@@ -52,7 +50,6 @@ type FlagDetail struct {
 	FlagKey     string    `json:"flagKey"`
 	Name        string    `json:"name"`
 	Source      string    `json:"source"`
-	Environment string    `json:"environment"`
 	Description string    `json:"description"`
 	Tags        []string  `json:"tags"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -62,16 +59,15 @@ type FlagDetail struct {
 // ChangelogEntry is a single flag change event, used in both history and
 // timeline responses.
 type ChangelogEntry struct {
-	ID          string    `json:"id"`
-	FlagKey     string    `json:"flagKey"`
-	OrgID       string    `json:"orgId"`
-	Source      string    `json:"source"`
-	Environment string    `json:"environment"`
-	EventType   string    `json:"eventType"`
-	ActorEmail  string    `json:"actorEmail"`
-	OccurredAt  time.Time `json:"occurredAt"`
-	IsAutomated bool      `json:"isAutomated"`
-	IsRollback  bool      `json:"isRollback"`
+	ID           string    `json:"id"`
+	FlagKey      string    `json:"flagKey"`
+	OrgID        string    `json:"orgId"`
+	Source       string    `json:"source"`
+	Environments []string  `json:"environments"`
+	EventType    string    `json:"eventType"`
+	ActorEmail   string    `json:"actorEmail"`
+	OccurredAt   time.Time `json:"occurredAt"`
+	ChangeType   string    `json:"changeType"`
 }
 
 // --- HTTP response types ---

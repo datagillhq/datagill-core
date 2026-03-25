@@ -95,10 +95,10 @@ func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagName, source string, 
 	}
 	data, err := json.Marshal(map[string]any{
 		"name": flagName,
-		"source": map[string]string{
+		"source": map[string]any{
 			"provider": source,
 			"key":      flagName,
-			"project":  "test-project",
+			"project":  map[string]string{"id": "test-project"},
 		},
 		"environments": environments,
 		"lifecycle":    map[string]string{"purpose": "temporary", "state": "active"},
@@ -122,9 +122,14 @@ func seedFlag(t *testing.T, pool *pgxpool.Pool, orgID, flagName, source string, 
 func seedChangelog(t *testing.T, pool *pgxpool.Pool, orgID, flagKey, eventType, environment string) {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{
-		"environment": environment,
-		"actor":       map[string]any{"email": "test@example.com", "is_automated": false},
-		"is_rollback": false,
+		"environments": []string{environment},
+		"actor":        map[string]any{"email": "test@example.com"},
+		"change_type":  eventType,
+		"source": map[string]any{
+			"key":      "changelog-key",
+			"provider": "launchdarkly",
+			"project":  map[string]string{"id": "test-project"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("seedChangelog marshal: %v", err)
