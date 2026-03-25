@@ -40,7 +40,7 @@ func TestSaveFeatureFlag(t *testing.T) {
 			Source: models.FlagSource{
 				Key:      "my-flag",
 				Provider: models.SourceLaunchDarkly,
-				Project:  "test-project",
+				Project:  models.FlagProject{ID: "test-project"},
 			},
 			Lifecycle: models.FlagLifecycle{
 				Purpose: models.LifecyclePurposeTemporary,

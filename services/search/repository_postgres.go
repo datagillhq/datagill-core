@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -90,12 +91,11 @@ func (r *PostgresSearchRepository) GetFlagHistory(ctx context.Context, orgID, fl
 			c.feature_flag_key::text,
 			c.org_id::text,
 			COALESCE(f.data->'source'->>'provider', ''),
-			COALESCE(c.data->>'environment', ''),
+			COALESCE(c.data->'environments', '[]'::jsonb),
 			c.event_type,
 			COALESCE(c.data->'actor'->>'email', ''),
 			c.occurred_at,
-			COALESCE((c.data->'actor'->'is_automated')::boolean, false),
-			COALESCE((c.data->'is_rollback')::boolean, false)
+			COALESCE(c.data->>'change_type', '')
 		FROM feature_flag_changelog c
 		JOIN feature_flags f ON f.key = c.feature_flag_key
 		WHERE c.org_id = $1::uuid
@@ -111,9 +111,13 @@ func (r *PostgresSearchRepository) GetFlagHistory(ctx context.Context, orgID, fl
 	var entries []ChangelogEntry
 	for rows.Next() {
 		var e ChangelogEntry
-		if err := rows.Scan(&e.ID, &e.FlagKey, &e.OrgID, &e.Source, &e.Environment,
-			&e.EventType, &e.ActorEmail, &e.OccurredAt, &e.IsAutomated, &e.IsRollback); err != nil {
+		var envsBytes []byte
+		if err := rows.Scan(&e.ID, &e.FlagKey, &e.OrgID, &e.Source, &envsBytes,
+			&e.EventType, &e.ActorEmail, &e.OccurredAt, &e.ChangeType); err != nil {
 			return nil, fmt.Errorf("GetFlagHistory scan: %w", err)
+		}
+		if len(envsBytes) > 0 {
+			_ = json.Unmarshal(envsBytes, &e.Environments) // tolerate NULL/malformed; nil slice is a safe empty value
 		}
 		entries = append(entries, e)
 	}
@@ -138,12 +142,11 @@ func (r *PostgresSearchRepository) GetTimeline(ctx context.Context, orgID string
 			c.feature_flag_key::text,
 			c.org_id::text,
 			COALESCE(f.data->'source'->>'provider', ''),
-			COALESCE(c.data->>'environment', ''),
+			COALESCE(c.data->'environments', '[]'::jsonb),
 			c.event_type,
 			COALESCE(c.data->'actor'->>'email', ''),
 			c.occurred_at,
-			COALESCE((c.data->'actor'->'is_automated')::boolean, false),
-			COALESCE((c.data->'is_rollback')::boolean, false)
+			COALESCE(c.data->>'change_type', '')
 		FROM feature_flag_changelog c
 		JOIN feature_flags f ON f.key = c.feature_flag_key
 		WHERE c.org_id = $1::uuid
@@ -158,9 +161,13 @@ func (r *PostgresSearchRepository) GetTimeline(ctx context.Context, orgID string
 	var entries []ChangelogEntry
 	for rows.Next() {
 		var e ChangelogEntry
-		if err := rows.Scan(&e.ID, &e.FlagKey, &e.OrgID, &e.Source, &e.Environment,
-			&e.EventType, &e.ActorEmail, &e.OccurredAt, &e.IsAutomated, &e.IsRollback); err != nil {
+		var envsBytes []byte
+		if err := rows.Scan(&e.ID, &e.FlagKey, &e.OrgID, &e.Source, &envsBytes,
+			&e.EventType, &e.ActorEmail, &e.OccurredAt, &e.ChangeType); err != nil {
 			return nil, fmt.Errorf("GetTimeline scan: %w", err)
+		}
+		if len(envsBytes) > 0 {
+			_ = json.Unmarshal(envsBytes, &e.Environments)
 		}
 		entries = append(entries, e)
 	}
