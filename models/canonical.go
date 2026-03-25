@@ -58,10 +58,10 @@ type FeatureFlagData struct {
 
 // FlagSource holds provider-origin metadata for a flag.
 type FlagSource struct {
-	Key       string     `json:"key"`
-	Provider  Source     `json:"provider"`
+	Key       string      `json:"key"`
+	Provider  Source      `json:"provider"`
 	Project   FlagProject `json:"project"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
+	CreatedAt *time.Time  `json:"created_at,omitempty"`
 }
 
 // FlagProject identifies the provider project a flag belongs to.
