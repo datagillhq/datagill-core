@@ -3,8 +3,9 @@ package models_test
 import (
 	"testing"
 
-	"github.com/datagill/datagill-core/models"
 	"github.com/google/uuid"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 var testOrgID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
