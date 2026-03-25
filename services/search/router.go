@@ -27,17 +27,21 @@ func (a *app) router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
-	r.Use(orgIDMiddleware)
 	r.Use(prometheusMiddleware)
 
-	// Routes per IMPLEMENTATION_PLAN.md §1C.3.
+	// Infrastructure routes — no org ID required.
 	r.Get("/healthz", healthzHandler)
 	r.Handle("/metrics", promhttp.Handler())
-	r.Get("/search", a.searchHandler)
-	r.Get("/flags", a.flagsHandler)
-	r.Get("/flags/{flag_key}", a.flagDetailHandler)
-	r.Get("/flags/{flag_key}/history", a.flagHistoryHandler)
-	r.Get("/timeline", a.timelineHandler)
+
+	// API routes — X-Org-Id header required.
+	r.Group(func(r chi.Router) {
+		r.Use(orgIDMiddleware)
+		r.Get("/search", a.searchHandler)
+		r.Get("/flags", a.flagsHandler)
+		r.Get("/flags/{flag_key}", a.flagDetailHandler)
+		r.Get("/flags/{flag_key}/history", a.flagHistoryHandler)
+		r.Get("/timeline", a.timelineHandler)
+	})
 
 	return r
 }

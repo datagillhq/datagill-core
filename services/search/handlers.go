@@ -153,10 +153,8 @@ func (a *app) timelineHandler(w http.ResponseWriter, r *http.Request) {
 
 // orgIDFromCtx returns the org ID stored in context by orgIDMiddleware.
 func orgIDFromCtx(r *http.Request) string {
-	if v, ok := r.Context().Value(orgIDKey).(string); ok && v != "" {
-		return v
-	}
-	return defaultOrgID
+	v, _ := r.Context().Value(orgIDKey).(string)
+	return v
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

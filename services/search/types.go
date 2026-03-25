@@ -2,8 +2,6 @@ package main
 
 import "time"
 
-const defaultOrgID = "local-dev"
-
 // --- Repository input types ---
 
 // SearchRequest is the input for a full-text or structured search query.

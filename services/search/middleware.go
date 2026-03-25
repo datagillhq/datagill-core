@@ -23,7 +23,8 @@ func orgIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
 		if orgID == "" {
-			orgID = defaultOrgID
+			writeError(w, http.StatusBadRequest, "X-Org-Id header is required")
+			return
 		}
 
 		log := zerolog.Ctx(r.Context()).With().Str("org_id", orgID).Logger()
