@@ -140,7 +140,7 @@ Phase 0: Repo Reset & Tooling         ← 1 person, unblocks everything, ~0.5 da
 
 ---
 
-## Phase 0: Repo Reset & Tooling
+## Phase 0: Repo Reset & Tooling ✅ DONE
 
 **Owner:** 1 person. Must complete before any other phase starts — structural changes cause merge conflicts.
 
@@ -225,7 +225,7 @@ linters-settings:
 
 ---
 
-## Phase 1A: Infrastructure
+## Phase 1A: Infrastructure ✅ DONE
 
 **Owner:** 1 person (DevOps/infra focus). Fully parallel to 1B and 1C.
 
@@ -288,7 +288,7 @@ add labels `service`, `container_name`. Parse JSON log lines (zerolog outputs JS
 
 ---
 
-## Phase 1B: DB & Shared Layer
+## Phase 1B: DB & Shared Layer ✅ DONE
 
 **Owner:** 1 person (Go/data focus). Fully parallel to 1A and 1C.
 
@@ -376,7 +376,7 @@ Integration tests (`repository/repository_test.go`):
 
 ---
 
-## Phase 1C: Search Service Scaffold
+## Phase 1C: Search Service Scaffold ✅ DONE
 
 **Owner:** 1 person. Fully parallel to 1A and 1B.
 
@@ -441,7 +441,7 @@ Test: happy path, missing org_id, invalid params, repository error.
 
 ---
 
-## Phase 2A: ETL Worker
+## Phase 2A: ETL Worker 🔲 NOT STARTED
 
 **Owner:** 1–2 people. Starts after Phase 1B completes.
 
@@ -551,7 +551,7 @@ File: `cmd/worker/integration_test.go`
 
 ---
 
-## Phase 2B: Search Service Implementation
+## Phase 2B: Search Service Implementation ✅ DONE
 
 **Owner:** 1 person. Starts after Phase 1B and 1C complete.
 
@@ -559,7 +559,7 @@ File: `cmd/worker/integration_test.go`
 
 ### Tasks
 
-**2B.1 — PostgresSearchRepository**
+**2B.1 — PostgresSearchRepository** ✅
 
 File: `services/search/repository_postgres.go`
 - Implement `SearchRepository` against real Postgres using `pgx/v5`
@@ -570,22 +570,24 @@ File: `services/search/repository_postgres.go`
 - `GetTimeline`: query `feature_flag_changelog` for org, ordered by `occurred_at DESC`, paginated
 - All queries have `org_id = $1` as the first predicate — never omit this
 
-**2B.2 — Wire Postgres into app**
+**2B.2 — Wire Postgres into app** ✅
 
 Update `config.go` to read `APP_DATABASE_URL` from env.
 Update `main.go`: if `APP_DATABASE_URL` set → use `PostgresSearchRepository`; else → use `InMemorySearchRepository` (keeps local dev without DB working).
 
-**2B.3 — Prometheus metrics**
+> **As built:** `APP_DATABASE_URL` is required — service fails fast on startup if missing. In-memory fallback was removed; use integration tests for local DB-less development.
+
+**2B.3 — Prometheus metrics** ✅ (partial — see note)
 
 Metrics to expose (all labelled by `handler`):
-- `datagill_http_requests_total` counter (method, handler, status_code)
-- `datagill_http_request_duration_seconds` histogram (method, handler)
-- `datagill_db_query_duration_seconds` histogram (query_name)
-- `datagill_search_results_returned` histogram (handler)
+- `datagill_http_requests_total` counter (method, handler, status_code) ✅
+- `datagill_http_request_duration_seconds` histogram (method, handler) ✅
+- `datagill_db_query_duration_seconds` histogram (query_name, status) ✅
+- `datagill_search_results_returned` histogram (handler) 🔲 deferred
 
-Register all metrics in `metrics.go`; inject `MetricsRecorder` interface into repository and handlers.
+> **As built:** DB metrics are instrumented directly in `PostgresSearchRepository` via a named-return `defer observe(...)` pattern, labelled by `query_name` and `status` (ok/not_found/timeout/error). `MetricsRecorder` interface was not used — no injection needed. `datagill_search_results_returned` not yet implemented.
 
-**2B.4 — Zerolog context propagation**
+**2B.4 — Zerolog context propagation** ✅
 
 Every log line inside a handler must carry `request_id` and `org_id`.
 Pattern:
@@ -596,7 +598,7 @@ log.Info().Str("query", q).Msg("search request")
 The middleware (from Phase 1C) already sets `request_id` and `org_id` on the context logger.
 Handlers must use `zerolog.Ctx(ctx)` — never create a new logger in a handler.
 
-**2B.5 — Integration tests**
+**2B.5 — Integration tests** ✅
 
 File: `services/search/integration_test.go`
 - `testcontainers-go` for Postgres (run migrations, seed test data)
@@ -606,7 +608,7 @@ File: `services/search/integration_test.go`
 
 ---
 
-## Phase 3: Integration & Hardening
+## Phase 3: Integration & Hardening 🔲 NOT STARTED
 
 **Owner:** Whole team. Sequential — do not start until Phases 2A and 2B are complete.
 
@@ -661,7 +663,7 @@ Document in `docs/add-provider.md`:
 
 ---
 
-## Phase 4: Frontend
+## Phase 4: Frontend 🔲 NOT STARTED
 
 **Owner:** 1 person. Can start after Phase 1C (in-memory Search Service is enough to build against).
 
