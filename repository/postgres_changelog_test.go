@@ -29,9 +29,9 @@ func TestSaveChangelog(t *testing.T) {
 
 	now := time.Now().UTC()
 	changelog := models.FeatureFlagChangelog{
-		Key:             models.ComputeChangelogKey(models.SourceLaunchDarkly, "test-project", "event-456"),
+		Key:             models.ComputeChangelogKey(orgKey, models.SourceLaunchDarkly, "test-project", "event-456"),
 		SourceRecordKey: uuid.New(),
-		FeatureFlagKey:  models.ComputeFlagKey(models.SourceLaunchDarkly, "test-project", "my-flag"),
+		FeatureFlagKey:  models.ComputeFlagKey(orgKey, models.SourceLaunchDarkly, "test-project", "my-flag"),
 		IntegrationID:   integrationKey,
 		OrgID:           orgKey,
 		EventType:       models.EventTypeToggled,

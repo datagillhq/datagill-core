@@ -208,7 +208,7 @@ Read-only. All queries scoped by `org_id`.
 - **Extract is rerunnable.** Stateless API calls plus append-only writes to `source_records`.
 - **Transform is rerunnable without API calls.** Raw payload lives in Temporal's event history and in `source_records`. Fix a normalization bug, re-trigger transform, zero API calls.
 - **Raw data is permanent.** `source_records` is append-only. Canonical tables carry a `source_record_key` reference back to the raw data.
-- **Deterministic keys.** Cross-table references use UUID v5. Flag keys are scoped to `source|project|source_key` — environment is **not** part of the key because all environments are stored in the same flag row (`data.environments`). Changelog keys are scoped to `source|project|source_key` where `source_key` is the provider's audit event ID. Both Extract and Transform workflows can independently compute the same key — no coordination required.
+- **Deterministic keys.** Cross-table references use UUID v5. Flag keys are scoped to `org_id|source|project|source_key` — environment is **not** part of the key because all environments are stored in the same flag row (`data.environments`). Changelog keys are scoped to `org_id|source|project|source_key` where `source_key` is the provider's audit event ID. `org_id` is included in all keys to prevent collisions across tenants that share the same source, project, and flag/event identifiers (e.g. two orgs both using LaunchDarkly with the same project name). Both Extract and Transform workflows can independently compute the same key — no coordination required.
 
 ---
 
@@ -335,7 +335,7 @@ Current normalized state per flag. Populated by Transform from the provider's GE
 | Column | Type | Notes |
 |--------|------|-------|
 | id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic hash(source\|project\|source_key) |
+| key | uuid | UNIQUE — deterministic hash(org_id\|source\|project\|source_key) |
 | source_record_key | uuid | References source_records.key — traces back to raw data |
 | integration_id | uuid | References integrations.key |
 | org_id | uuid | Denormalized for tenant scoping |
@@ -353,7 +353,7 @@ One row per change event. Populated by Transform from the provider's audit log e
 | Column | Type | Notes |
 |--------|------|-------|
 | id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic hash(source\|project\|source_key) where source_key is the provider's audit event ID |
+| key | uuid | UNIQUE — deterministic hash(org_id\|source\|project\|source_key) where source_key is the provider's audit event ID |
 | source_record_key | uuid | References source_records.key — traces back to raw data |
 | feature_flag_key | uuid | References feature_flags.key — which flag changed |
 | integration_id | uuid | References integrations.key |
