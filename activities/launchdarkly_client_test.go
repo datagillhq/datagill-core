@@ -6,11 +6,20 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/datagill/datagill-core/models"
 )
+
+func TestNewLaunchDarklyClient_EmptyAPIKey(t *testing.T) {
+	_, err := NewLaunchDarklyClient("")
+	if err == nil {
+		t.Error("expected error for empty API key")
+	}
+}
 
 func TestListAuditLog_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +40,7 @@ func TestListAuditLog_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("test-api-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
 	entries, err := client.ListAuditLog(context.Background(), time.Now(), 20)
 	if err != nil {
 		t.Fatalf("ListAuditLog failed: %v", err)
@@ -52,7 +61,7 @@ func TestListAuditLog_RateLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("test-api-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
 	_, err := client.ListAuditLog(context.Background(), time.Now(), 20)
 
 	var rateLimitErr *RateLimitError
@@ -64,6 +73,24 @@ func TestListAuditLog_RateLimit(t *testing.T) {
 	}
 }
 
+func TestListAuditLog_RateLimit_NoRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
+	_, err := client.ListAuditLog(context.Background(), time.Now(), 20)
+
+	var rateLimitErr *RateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("expected RateLimitError, got %T: %v", err, err)
+	}
+	if rateLimitErr.WaitSeconds != ldDefaultRetryWait {
+		t.Errorf("expected default WaitSeconds %d, got %d", ldDefaultRetryWait, rateLimitErr.WaitSeconds)
+	}
+}
+
 func TestListAuditLog_InvalidAPIKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -71,7 +98,7 @@ func TestListAuditLog_InvalidAPIKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("bad-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "bad-key", WithBaseURL(server.URL))
 	_, err := client.ListAuditLog(context.Background(), time.Now(), 20)
 
 	var apiKeyErr *InvalidAPIKeyError
@@ -98,7 +125,7 @@ func TestGetFlagDetail_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("test-api-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
 	flag, err := client.GetFlagDetail(context.Background(), "my-project", "my-flag")
 	if err != nil {
 		t.Fatalf("GetFlagDetail failed: %v", err)
@@ -118,7 +145,7 @@ func TestGetFlagDetail_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("test-api-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
 	_, err := client.GetFlagDetail(context.Background(), "my-project", "nonexistent-flag")
 
 	var notFoundErr *NotFoundError
@@ -134,7 +161,7 @@ func TestGetFlagDetail_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("test-api-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
 	_, err := client.GetFlagDetail(context.Background(), "my-project", "my-flag")
 
 	if err == nil {
@@ -148,6 +175,40 @@ func TestGetFlagDetail_ServerError(t *testing.T) {
 	}
 }
 
+func TestGetFlagDetail_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not valid json"))
+	}))
+	defer server.Close()
+
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
+	_, err := client.GetFlagDetail(context.Background(), "my-project", "my-flag")
+
+	if err == nil {
+		t.Fatal("expected error for malformed JSON response")
+	}
+}
+
+func TestListAuditLog_ContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate slow response
+		time.Sleep(100 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(LDAuditLogResponse{})
+	}))
+	defer server.Close()
+
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := client.ListAuditLog(ctx, time.Now(), 20)
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+}
+
 func TestLimitClamping(t *testing.T) {
 	requestedLimit := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +217,7 @@ func TestLimitClamping(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewLaunchDarklyClient("test-api-key", WithBaseURL(server.URL))
+	client := mustCreateClient(t, "test-api-key", WithBaseURL(server.URL))
 
 	// Test zero limit gets clamped to max
 	_, _ = client.ListAuditLog(context.Background(), time.Now(), 0)
@@ -171,32 +232,22 @@ func TestLimitClamping(t *testing.T) {
 	}
 }
 
-func getLimitFromQuery(query string) int {
-	// Simple parser for limit=N
-	for _, part := range splitQuery(query) {
-		if len(part) > 6 && part[:6] == "limit=" {
-			var limit int
-			if err := json.Unmarshal([]byte(part[6:]), &limit); err == nil {
-				return limit
-			}
-		}
+// Test helpers
+
+func mustCreateClient(t *testing.T, apiKey string, opts ...LaunchDarklyClientOption) *LaunchDarklyClient {
+	t.Helper()
+	client, err := NewLaunchDarklyClient(apiKey, opts...)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
 	}
-	return 0
+	return client
 }
 
-func splitQuery(query string) []string {
-	var parts []string
-	current := ""
-	for _, c := range query {
-		if c == '&' {
-			parts = append(parts, current)
-			current = ""
-		} else {
-			current += string(c)
-		}
+func getLimitFromQuery(rawQuery string) int {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return 0
 	}
-	if current != "" {
-		parts = append(parts, current)
-	}
-	return parts
+	limit, _ := strconv.Atoi(values.Get("limit"))
+	return limit
 }

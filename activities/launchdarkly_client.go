@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	ldAPIBaseURL     = "https://app.launchdarkly.com/api/v2"
-	ldDefaultTimeout = 10 * time.Second
-	ldMaxPageSize    = 20
+	ldAPIBaseURL       = "https://app.launchdarkly.com/api/v2"
+	ldDefaultTimeout   = 10 * time.Second
+	ldMaxPageSize      = 20
+	ldMaxErrorBodySize = 4096 // Max bytes to read from error response bodies
+	ldDefaultRetryWait = 60   // Default seconds to wait on rate limit if no Retry-After header
 )
 
 // LaunchDarklyClient is a thin HTTP wrapper for the LaunchDarkly API.
@@ -44,7 +46,12 @@ func WithHTTPClient(client *http.Client) LaunchDarklyClientOption {
 }
 
 // NewLaunchDarklyClient creates a new client with the given API key.
-func NewLaunchDarklyClient(apiKey string, opts ...LaunchDarklyClientOption) *LaunchDarklyClient {
+// Returns an error if the API key is empty.
+func NewLaunchDarklyClient(apiKey string, opts ...LaunchDarklyClientOption) (*LaunchDarklyClient, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+
 	c := &LaunchDarklyClient{
 		httpClient: &http.Client{Timeout: ldDefaultTimeout},
 		apiKey:     apiKey,
@@ -53,7 +60,7 @@ func NewLaunchDarklyClient(apiKey string, opts ...LaunchDarklyClientOption) *Lau
 	for _, opt := range opts {
 		opt(c)
 	}
-	return c
+	return c, nil
 }
 
 // LDAuditLogResponse is the paginated response from GET /auditlog.
@@ -113,7 +120,7 @@ func (c *LaunchDarklyClient) doRequest(ctx context.Context, method, url string, 
 	// Handle rate limiting - Temporal will retry with backoff
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retryAfter := resp.Header.Get("Retry-After")
-		waitSeconds := 60 // default
+		waitSeconds := ldDefaultRetryWait
 		if retryAfter != "" {
 			if parsed, parseErr := strconv.Atoi(retryAfter); parseErr == nil {
 				waitSeconds = parsed
@@ -124,7 +131,7 @@ func (c *LaunchDarklyClient) doRequest(ctx context.Context, method, url string, 
 
 	// Non-retryable auth errors
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, ldMaxErrorBodySize))
 		return &InvalidAPIKeyError{StatusCode: resp.StatusCode, Message: string(body)}
 	}
 
@@ -135,12 +142,12 @@ func (c *LaunchDarklyClient) doRequest(ctx context.Context, method, url string, 
 
 	// Server errors - retryable via Temporal
 	if resp.StatusCode >= 500 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, ldMaxErrorBodySize))
 		return fmt.Errorf("server error %d: %s", resp.StatusCode, string(body))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, ldMaxErrorBodySize))
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
