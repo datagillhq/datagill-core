@@ -19,11 +19,15 @@ const orgIDKey contextKey = "orgID"
 // orgIDMiddleware extracts X-Org-Id from the request header, stores it in the
 // context (for handlers), and enriches the zerolog context logger with the
 // org_id field (for structured log filtering by tenant in Loki/Grafana).
+// The header is set by the API gateway after JWT verification — this service
+// trusts it without re-validating. See AGENTS.md §5 "Security model".
+// TODO: validate that orgID is a valid UUID format to fail fast before any DB call.
 func orgIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
 		if orgID == "" {
-			orgID = defaultOrgID
+			writeError(w, http.StatusBadRequest, "X-Org-Id header is required")
+			return
 		}
 
 		log := zerolog.Ctx(r.Context()).With().Str("org_id", orgID).Logger()

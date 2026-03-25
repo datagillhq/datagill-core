@@ -6,8 +6,6 @@ import (
 )
 
 // Package-level metrics registered once at startup via promauto.
-// Phase 2B will add a MetricsRecorder interface for per-query DB metrics
-// that can be injected into the repository and handlers.
 var (
 	httpRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "datagill_http_requests_total",
@@ -19,4 +17,10 @@ var (
 		Help:    "HTTP request duration in seconds.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "handler"})
+
+	dbQueryDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "datagill_db_query_duration_seconds",
+		Help:    "Database query duration in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"query_name", "status"})
 )

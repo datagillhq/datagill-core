@@ -42,6 +42,9 @@ func (s *stubRepo) GetTimeline(_ context.Context, _ string, _ Pagination) ([]Cha
 	return s.timeline, s.timelineErr
 }
 
+// testOrgID is a valid UUID used as the org ID in handler tests.
+const testOrgID = "00000000-0000-0000-0000-000000000001"
+
 // testClient has an explicit timeout so tests fail fast rather than hanging.
 var testClient = &http.Client{Timeout: 5 * time.Second}
 

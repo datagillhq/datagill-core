@@ -35,7 +35,7 @@ func TestSearch(t *testing.T) {
 	result := SearchResult{FlagKey: "checkout-redesign", Title: "Checkout", Score: 1.0, LastEventAt: time.Now()}
 	srv := newTestServer(t, &stubRepo{searchResults: []SearchResult{result}})
 	defer srv.Close()
-	resp := getWithOrgID(t, srv.URL+"/search?q=checkout", defaultOrgID)
+	resp := getWithOrgID(t, srv.URL+"/search?q=checkout", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -64,7 +64,7 @@ func TestSearchInvalidLimit(t *testing.T) {
 func TestSearchRepositoryError(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{searchErr: repoErr})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/search?q=test")
+	resp := getWithOrgID(t, srv.URL+"/search?q=test", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", resp.StatusCode)
@@ -80,7 +80,7 @@ func TestListFlags(t *testing.T) {
 	}
 	srv := newTestServer(t, &stubRepo{flags: flags})
 	defer srv.Close()
-	resp := getWithOrgID(t, srv.URL+"/flags", defaultOrgID)
+	resp := getWithOrgID(t, srv.URL+"/flags", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -97,7 +97,7 @@ func TestListFlags(t *testing.T) {
 func TestListFlagsRepositoryError(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{flagsErr: repoErr})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/flags")
+	resp := getWithOrgID(t, srv.URL+"/flags", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", resp.StatusCode)
@@ -110,7 +110,7 @@ func TestGetFlagDetail(t *testing.T) {
 	detail := FlagDetail{FlagKey: "checkout-redesign", Name: "Checkout Redesign"}
 	srv := newTestServer(t, &stubRepo{flagDetail: detail})
 	defer srv.Close()
-	resp := getWithOrgID(t, srv.URL+"/flags/checkout-redesign", defaultOrgID)
+	resp := getWithOrgID(t, srv.URL+"/flags/checkout-redesign", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -127,7 +127,7 @@ func TestGetFlagDetail(t *testing.T) {
 func TestGetFlagDetailNotFound(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{flagDetailErr: ErrNotFound})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/flags/does-not-exist")
+	resp := getWithOrgID(t, srv.URL+"/flags/does-not-exist", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
@@ -137,7 +137,7 @@ func TestGetFlagDetailNotFound(t *testing.T) {
 func TestGetFlagDetailRepositoryError(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{flagDetailErr: repoErr})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/flags/any-flag")
+	resp := getWithOrgID(t, srv.URL+"/flags/any-flag", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", resp.StatusCode)
@@ -152,7 +152,7 @@ func TestGetFlagHistory(t *testing.T) {
 	}
 	srv := newTestServer(t, &stubRepo{history: entries})
 	defer srv.Close()
-	resp := getWithOrgID(t, srv.URL+"/flags/checkout-redesign/history", defaultOrgID)
+	resp := getWithOrgID(t, srv.URL+"/flags/checkout-redesign/history", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -169,7 +169,7 @@ func TestGetFlagHistory(t *testing.T) {
 func TestGetFlagHistoryInvalidPage(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/flags/checkout-redesign/history?page=0")
+	resp := getWithOrgID(t, srv.URL+"/flags/checkout-redesign/history?page=0", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
@@ -179,7 +179,7 @@ func TestGetFlagHistoryInvalidPage(t *testing.T) {
 func TestGetFlagHistoryRepositoryError(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{historyErr: repoErr})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/flags/any-flag/history")
+	resp := getWithOrgID(t, srv.URL+"/flags/any-flag/history", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", resp.StatusCode)
@@ -195,7 +195,7 @@ func TestGetTimeline(t *testing.T) {
 	}
 	srv := newTestServer(t, &stubRepo{timeline: entries})
 	defer srv.Close()
-	resp := getWithOrgID(t, srv.URL+"/timeline", defaultOrgID)
+	resp := getWithOrgID(t, srv.URL+"/timeline", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -212,7 +212,7 @@ func TestGetTimeline(t *testing.T) {
 func TestGetTimelineRepositoryError(t *testing.T) {
 	srv := newTestServer(t, &stubRepo{timelineErr: repoErr})
 	defer srv.Close()
-	resp := get(t, srv.URL+"/timeline")
+	resp := getWithOrgID(t, srv.URL+"/timeline", testOrgID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", resp.StatusCode)

@@ -233,6 +233,12 @@ Read-only. All queries scoped by `org_id`.
 - Latency targets: p99 < 500ms structured search.
 - Post-MVP: p99 < 2s semantic search; query embedding must use the same model as stored embeddings.
 
+### Security model
+
+The search service is an **internal service** — it is never exposed directly to the public internet. All traffic is routed through an API gateway (Clerk-backed) that verifies the JWT and injects `X-Org-Id` after confirming the org belongs to the authenticated user. The search service **trusts this header** and does not perform its own JWT validation.
+
+**Consequence:** if the API gateway is bypassed (e.g. in local dev or a misconfigured deployment), any caller can impersonate any org. This is an accepted risk for internal services. When the API gateway is wired up, the search service requires no auth changes.
+
 ---
 
 ## 6. Database Schema
