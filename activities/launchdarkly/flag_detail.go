@@ -28,7 +28,7 @@ type GetFlagDetailOutput struct {
 func (a *Activities) GetFlagDetail(ctx context.Context, input GetFlagDetailInput) (GetFlagDetailOutput, error) {
 	flag, err := a.client.GetFlagDetail(ctx, input.ProjectKey, input.FlagKey)
 	if err != nil {
-		return GetFlagDetailOutput{}, fmt.Errorf("get flag detail %s/%s: %w", input.ProjectKey, input.FlagKey, err)
+		return GetFlagDetailOutput{}, toServiceError(err)
 	}
 
 	data, err := json.Marshal(flag)

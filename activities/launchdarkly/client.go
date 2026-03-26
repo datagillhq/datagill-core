@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/datagill/datagill-core/models"
-	"github.com/datagill/datagill-core/shared"
 )
 
 const (
@@ -143,26 +142,21 @@ func (c *Client) doRequest(ctx context.Context, url string, result any) error {
 		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
 			waitSeconds = s
 		}
-		return &shared.ServiceError{Message: fmt.Sprintf("rate limited, retry after %ds", waitSeconds)}
+		return &TooManyRequestsError{RetryAfter: waitSeconds}
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		return &shared.NonRetryableServiceError{Message: fmt.Sprintf("invalid API key (%d): %s", resp.StatusCode, string(body))}
+		return &UnauthorizedError{StatusCode: resp.StatusCode, Message: string(body)}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return &shared.NonRetryableServiceError{Message: fmt.Sprintf("not found: %s", url)}
+		return &NotFoundError{URL: url}
 	}
 
-	if resp.StatusCode >= 500 {
+	if resp.StatusCode >= 500 || resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		return &shared.ServiceError{Message: fmt.Sprintf("server error %d: %s", resp.StatusCode, string(body))}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		return &shared.ServiceError{Message: fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, string(body))}
+		return &UnexpectedStatusError{StatusCode: resp.StatusCode, Message: string(body)}
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
@@ -170,4 +164,43 @@ func (c *Client) doRequest(ctx context.Context, url string, result any) error {
 	}
 
 	return nil
+}
+
+// TooManyRequestsError is returned when the API rate limit is exceeded.
+// RetryAfter indicates how many seconds to wait before retrying.
+type TooManyRequestsError struct {
+	RetryAfter int
+}
+
+func (e *TooManyRequestsError) Error() string {
+	return fmt.Sprintf("rate limited, retry after %ds", e.RetryAfter)
+}
+
+// UnauthorizedError is returned when the API key is invalid or lacks permissions.
+type UnauthorizedError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *UnauthorizedError) Error() string {
+	return fmt.Sprintf("unauthorized (%d): %s", e.StatusCode, e.Message)
+}
+
+// NotFoundError is returned when the requested resource does not exist.
+type NotFoundError struct {
+	URL string
+}
+
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("not found: %s", e.URL)
+}
+
+// UnexpectedStatusError is returned for any other non-200 response.
+type UnexpectedStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *UnexpectedStatusError) Error() string {
+	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Message)
 }

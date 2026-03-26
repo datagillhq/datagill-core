@@ -37,7 +37,7 @@ type ListAuditLogsOutput struct {
 func (a *Activities) ListAuditLogs(ctx context.Context, input ListAuditLogsInput) (ListAuditLogsOutput, error) {
 	entries, nextURL, err := a.fetchPage(ctx, input)
 	if err != nil {
-		return ListAuditLogsOutput{}, fmt.Errorf("list audit log: %w", err)
+		return ListAuditLogsOutput{}, toServiceError(err)
 	}
 
 	output := ListAuditLogsOutput{

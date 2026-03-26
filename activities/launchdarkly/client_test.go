@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/datagill/datagill-core/models"
-	"github.com/datagill/datagill-core/shared"
 )
 
 func TestNewClient_EmptyAPIKey(t *testing.T) {
@@ -144,9 +143,12 @@ func TestListAuditLog_RateLimit(t *testing.T) {
 	client := mustNewClient(t, "test-api-key", WithBaseURL(server.URL))
 	_, _, err := client.ListAuditLog(context.Background(), time.Now(), time.Time{}, 20)
 
-	var svcErr *shared.ServiceError
-	if !errors.As(err, &svcErr) {
-		t.Fatalf("expected ServiceError, got %T: %v", err, err)
+	var rateLimitErr *TooManyRequestsError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("expected TooManyRequestsError, got %T: %v", err, err)
+	}
+	if rateLimitErr.RetryAfter != 30 {
+		t.Errorf("expected RetryAfter 30, got %d", rateLimitErr.RetryAfter)
 	}
 }
 
@@ -159,9 +161,12 @@ func TestListAuditLog_RateLimit_NoRetryAfter(t *testing.T) {
 	client := mustNewClient(t, "test-api-key", WithBaseURL(server.URL))
 	_, _, err := client.ListAuditLog(context.Background(), time.Now(), time.Time{}, 20)
 
-	var svcErr *shared.ServiceError
-	if !errors.As(err, &svcErr) {
-		t.Fatalf("expected ServiceError, got %T: %v", err, err)
+	var rateLimitErr *TooManyRequestsError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("expected TooManyRequestsError, got %T: %v", err, err)
+	}
+	if rateLimitErr.RetryAfter != defaultRetryWait {
+		t.Errorf("expected RetryAfter %d, got %d", defaultRetryWait, rateLimitErr.RetryAfter)
 	}
 }
 
@@ -175,9 +180,12 @@ func TestListAuditLog_InvalidAPIKey(t *testing.T) {
 	client := mustNewClient(t, "bad-key", WithBaseURL(server.URL))
 	_, _, err := client.ListAuditLog(context.Background(), time.Now(), time.Time{}, 20)
 
-	var nonRetryableErr *shared.NonRetryableServiceError
-	if !errors.As(err, &nonRetryableErr) {
-		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
+	var unauthorizedErr *UnauthorizedError
+	if !errors.As(err, &unauthorizedErr) {
+		t.Fatalf("expected UnauthorizedError, got %T: %v", err, err)
+	}
+	if unauthorizedErr.StatusCode != 401 {
+		t.Errorf("expected StatusCode 401, got %d", unauthorizedErr.StatusCode)
 	}
 }
 
@@ -250,9 +258,9 @@ func TestGetFlagDetail_NotFound(t *testing.T) {
 	client := mustNewClient(t, "test-api-key", WithBaseURL(server.URL))
 	_, err := client.GetFlagDetail(context.Background(), "my-project", "nonexistent-flag")
 
-	var nonRetryableErr *shared.NonRetryableServiceError
-	if !errors.As(err, &nonRetryableErr) {
-		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
+	var notFoundErr *NotFoundError
+	if !errors.As(err, &notFoundErr) {
+		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
 	}
 }
 
@@ -269,9 +277,12 @@ func TestGetFlagDetail_ServerError(t *testing.T) {
 		t.Fatal("expected error for server error response")
 	}
 
-	var nonRetryableErr *shared.NonRetryableServiceError
-	if errors.As(err, &nonRetryableErr) {
-		t.Errorf("expected ServiceError for 500, got NonRetryableServiceError: %v", err)
+	var unexpectedErr *UnexpectedStatusError
+	if !errors.As(err, &unexpectedErr) {
+		t.Fatalf("expected UnexpectedStatusError, got %T: %v", err, err)
+	}
+	if unexpectedErr.StatusCode != 500 {
+		t.Errorf("expected StatusCode 500, got %d", unexpectedErr.StatusCode)
 	}
 }
 
