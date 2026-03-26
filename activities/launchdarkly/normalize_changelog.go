@@ -27,14 +27,15 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 		return models.FeatureFlagChangelog{}, fmt.Errorf("unsupported audit entry kind: %s", entry.Kind)
 	}
 
-	if entry.Name == "" {
-		return models.FeatureFlagChangelog{}, fmt.Errorf("audit entry %s has no flag name", entry.ID)
+	flagKey := extractFlagKey(entry)
+	if flagKey == "" {
+		return models.FeatureFlagChangelog{}, fmt.Errorf("audit entry %s has no flag key in accesses", entry.ID)
 	}
 
 	changelog := models.FeatureFlagChangelog{
 		Key:             models.ComputeChangelogKey(input.OrgID, models.SourceLaunchDarkly, input.ProjectKey, entry.ID),
 		SourceRecordKey: models.ComputeSourceRecordKey(input.OrgID, models.SourceLaunchDarkly, models.SourceTypeAuditLog, entry.ID),
-		FeatureFlagKey:  models.ComputeFlagKey(input.OrgID, models.SourceLaunchDarkly, input.ProjectKey, entry.Name),
+		FeatureFlagKey:  models.ComputeFlagKey(input.OrgID, models.SourceLaunchDarkly, input.ProjectKey, flagKey),
 		IntegrationID:   input.IntegrationKey,
 		OrgID:           input.OrgID,
 		EventType:       mapTitleVerbToEventType(entry.TitleVerb),
@@ -46,7 +47,7 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 			Environments: extractEnvironments(entry),
 			ChangeType:   entry.TitleVerb,
 			Source: models.FlagSource{
-				Key:      entry.Name,
+				Key:      flagKey,
 				Provider: models.SourceLaunchDarkly,
 				Project:  models.FlagProject{ID: input.ProjectKey},
 			},
@@ -72,9 +73,24 @@ func mapTitleVerbToEventType(titleVerb string) models.EventType {
 	}
 }
 
+func extractFlagKey(entry models.LDAuditEntry) string {
+	for _, access := range entry.Accesses {
+		for _, part := range strings.Split(access.Resource, ":") {
+			if key, ok := strings.CutPrefix(part, "flag/"); ok && key != "" {
+				return key
+			}
+		}
+	}
+	return ""
+}
+
 func extractActor(entry models.LDAuditEntry) models.ChangelogActor {
 	if entry.Member != nil {
 		return models.ChangelogActor{Email: entry.Member.Email}
+	}
+	if entry.Token != nil {
+		// Service token or personal access token; no email available.
+		return models.ChangelogActor{Email: "token:" + entry.Token.Name}
 	}
 	return models.ChangelogActor{}
 }

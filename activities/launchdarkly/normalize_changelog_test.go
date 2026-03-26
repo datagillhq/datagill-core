@@ -62,6 +62,7 @@ func TestNormalizeChangelog_Toggled(t *testing.T) {
 					Name:      "toggle-flag",
 					Date:      time.Now().UnixMilli(),
 					TitleVerb: tt.titleVerb,
+					Accesses:  []models.LDAccess{{Resource: "proj/my-project:env/production:flag/toggle-flag"}},
 				},
 				IntegrationKey: uuid.New(),
 				OrgID:          uuid.New(),
@@ -119,6 +120,90 @@ func TestMapTitleVerbToEventType(t *testing.T) {
 		t.Run(tt.verb, func(t *testing.T) {
 			if got := mapTitleVerbToEventType(tt.verb); got != tt.expected {
 				t.Errorf("mapTitleVerbToEventType(%q) = %q, want %q", tt.verb, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNormalizeChangelog_TokenActor(t *testing.T) {
+	entry := models.LDAuditEntry{
+		ID:        "audit-token",
+		Kind:      "flag",
+		Date:      time.Now().UnixMilli(),
+		TitleVerb: "updated",
+		Token:     &models.LDAuditToken{Name: "my-service-token", ServiceToken: true},
+		Accesses:  []models.LDAccess{{Resource: "proj/my-project:env/production:flag/my-flag"}},
+	}
+
+	acts := New(mustNewClient(t, "test-key"), newMockRepository())
+	out, err := acts.NormalizeChangelog(context.Background(), NormalizeChangelogInput{
+		Entry:          entry,
+		IntegrationKey: uuid.New(),
+		OrgID:          uuid.New(),
+		ProjectKey:     "my-project",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeChangelog failed: %v", err)
+	}
+	if out.Data.Actor.Email != "token:my-service-token" {
+		t.Errorf("expected actor 'token:my-service-token', got %q", out.Data.Actor.Email)
+	}
+}
+
+func TestNormalizeChangelog_NoFlagKeyInAccesses(t *testing.T) {
+	acts := New(mustNewClient(t, "test-key"), newMockRepository())
+	_, err := acts.NormalizeChangelog(context.Background(), NormalizeChangelogInput{
+		Entry: models.LDAuditEntry{
+			ID:   "audit-noflag",
+			Kind: "flag",
+			Date: time.Now().UnixMilli(),
+			// No accesses — flag key cannot be resolved.
+		},
+		IntegrationKey: uuid.New(),
+		OrgID:          uuid.New(),
+		ProjectKey:     "my-project",
+	})
+	if err == nil {
+		t.Fatal("expected error when flag key cannot be extracted")
+	}
+}
+
+func TestExtractFlagKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		accesses []models.LDAccess
+		want     string
+	}{
+		{
+			name:     "standard resource string",
+			accesses: []models.LDAccess{{Resource: "proj/my-project:env/production:flag/my-flag"}},
+			want:     "my-flag",
+		},
+		{
+			name: "flag key from second access",
+			accesses: []models.LDAccess{
+				{Resource: "proj/my-project:env/production"},
+				{Resource: "proj/my-project:env/staging:flag/another-flag"},
+			},
+			want: "another-flag",
+		},
+		{
+			name:     "no flag segment",
+			accesses: []models.LDAccess{{Resource: "proj/my-project:env/production"}},
+			want:     "",
+		},
+		{
+			name:     "empty accesses",
+			accesses: nil,
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := models.LDAuditEntry{Accesses: tt.accesses}
+			if got := extractFlagKey(entry); got != tt.want {
+				t.Errorf("extractFlagKey() = %q, want %q", got, tt.want)
 			}
 		})
 	}

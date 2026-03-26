@@ -249,8 +249,17 @@ type LDPrerequisite struct {
 
 // LDFlagSummary represents summary statistics for a flag environment.
 type LDFlagSummary struct {
-	Variations    map[string]int `json:"variations,omitempty"`
-	Prerequisites int            `json:"prerequisites,omitempty"`
+	Variations    map[string]LDVariationSummary `json:"variations,omitempty"`
+	Prerequisites int                           `json:"prerequisites,omitempty"`
+}
+
+// LDVariationSummary holds per-variation targeting statistics.
+type LDVariationSummary struct {
+	IsFallthrough bool `json:"isFallthrough,omitempty"`
+	IsOff         bool `json:"isOff,omitempty"`
+	NullRules     int  `json:"nullRules"`
+	Rules         int  `json:"rules"`
+	Targets       int  `json:"targets"`
 }
 
 // LDVariation represents a single variation value for a flag.
