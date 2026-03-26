@@ -1,5 +1,3 @@
-version: "2"
-
 linters-settings:
   exhaustive:
     # A switch with a default case is not considered exhaustive.
@@ -35,11 +33,6 @@ linters-settings:
   misspell:
     locale: US
 
-formatters:
-  enable:
-    - gofmt          # formatting
-    - goimports      # import ordering and grouping
-
 linters:
   disable-all: true
   enable:
@@ -47,6 +40,8 @@ linters:
     - govet          # correctness (nilness, printf format strings, etc.)
     - staticcheck    # advanced static analysis
     - unused         # dead code
+    - gofmt          # formatting
+    - goimports      # import ordering and grouping
     - exhaustive     # switch on enums must handle every case explicitly
     - noctx          # outbound HTTP requests must use context
     - godot          # exported declaration comments end with a period
