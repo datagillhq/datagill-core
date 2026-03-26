@@ -52,4 +52,25 @@ Source Control  ──┤                    ├─ Velocity Metrics
 
 ---
 
+### Local Dev Quick Start
+
+Backend:
+
+```bash
+cd datagill-core
+cp .env.example .env
+make docker-up
+docker compose up search --build
+```
+
+Notes:
+
+- The search service runs on `http://localhost:8082`.
+- Grafana from `datagill-core` Docker Compose runs on `http://localhost:3000`.
+- The DataGill UI runs on `http://localhost:3001`; see `../datagill-ui/README.md` for frontend setup and product UI docs.
+- If you want to run the search service with `go run`, you still need `.env`
+  loaded because `APP_DATABASE_URL` is required.
+
+---
+
 > See [`AGENTS.md`](./AGENTS.md) for the full architecture, product requirements, and open questions.
