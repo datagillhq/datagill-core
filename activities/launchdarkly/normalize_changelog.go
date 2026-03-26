@@ -38,14 +38,14 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 		FeatureFlagKey:  models.ComputeFlagKey(input.OrgID, models.SourceLaunchDarkly, input.ProjectKey, flagKey),
 		IntegrationID:   input.IntegrationKey,
 		OrgID:           input.OrgID,
-		EventType:       mapTitleVerbToEventType(entry.TitleVerb),
+		EventType:       mapActionToEventType(firstAction(entry)),
 		State:           inferStateFromEntry(entry),
 		OccurredAt:      time.UnixMilli(entry.Date),
 		Data: models.ChangelogData{
 			Description:  entry.Description,
 			Actor:        extractActor(entry),
 			Environments: extractEnvironments(entry),
-			ChangeType:   entry.TitleVerb,
+			ChangeType:   firstAction(entry),
 			Source: models.FlagSource{
 				Key:      flagKey,
 				Provider: models.SourceLaunchDarkly,
@@ -57,31 +57,45 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 	return changelog, nil
 }
 
-func mapTitleVerbToEventType(titleVerb string) models.EventType {
-	verb := strings.ToLower(titleVerb)
-	switch {
-	case verb == "created":
-		return models.EventTypeCreated
-	case verb == "deleted":
-		return models.EventTypeDeleted
-	case strings.Contains(verb, "turned targeting"):
-		return models.EventTypeToggled
-	case strings.Contains(verb, "rollback"):
-		return models.EventTypeRollback
-	default:
-		return models.EventTypeUpdated
+// resourceSegment parses one segment of a colon-delimited resource string.
+// "proj/my-project:env/production:flag/my-flag" with typ "flag" → "my-flag".
+func resourceSegment(resource, typ string) string {
+	for _, part := range strings.Split(resource, ":") {
+		if before, after, ok := strings.Cut(part, "/"); ok && before == typ {
+			return after
+		}
 	}
+	return ""
+}
+
+func firstAction(entry models.LDAuditEntry) string {
+	for _, access := range entry.Accesses {
+		if access.Action != "" {
+			return access.Action
+		}
+	}
+	return ""
 }
 
 func extractFlagKey(entry models.LDAuditEntry) string {
 	for _, access := range entry.Accesses {
-		for _, part := range strings.Split(access.Resource, ":") {
-			if key, ok := strings.CutPrefix(part, "flag/"); ok && key != "" {
-				return key
-			}
+		if key := resourceSegment(access.Resource, "flag"); key != "" {
+			return key
 		}
 	}
 	return ""
+}
+
+func extractEnvironments(entry models.LDAuditEntry) []string {
+	seen := make(map[string]bool)
+	var envs []string
+	for _, access := range entry.Accesses {
+		if env := resourceSegment(access.Resource, "env"); env != "" && !seen[env] {
+			seen[env] = true
+			envs = append(envs, env)
+		}
+	}
+	return envs
 }
 
 func extractActor(entry models.LDAuditEntry) models.ChangelogActor {
@@ -95,22 +109,23 @@ func extractActor(entry models.LDAuditEntry) models.ChangelogActor {
 	return models.ChangelogActor{}
 }
 
-func extractEnvironments(entry models.LDAuditEntry) []string {
-	seen := make(map[string]bool)
-	var envs []string
-
-	for _, access := range entry.Accesses {
-		for _, part := range strings.Split(access.Resource, ":") {
-			if env, ok := strings.CutPrefix(part, "env/"); ok && !seen[env] {
-				seen[env] = true
-				envs = append(envs, env)
-			}
-		}
+// mapActionToEventType maps a LaunchDarkly flag action to a canonical event type.
+// Actions are stable API enum values; see LaunchDarkly feature flag actions docs.
+func mapActionToEventType(action string) models.EventType {
+	switch action {
+	case "createFlag", "cloneFlag":
+		return models.EventTypeCreated
+	case "deleteFlag":
+		return models.EventTypeDeleted
+	case "updateOn":
+		return models.EventTypeToggled
+	default:
+		return models.EventTypeUpdated
 	}
-
-	return envs
 }
 
+// inferStateFromEntry infers the on/off state for updateOn actions.
+// Direction (on vs off) is only available in the human-readable titleVerb.
 func inferStateFromEntry(entry models.LDAuditEntry) models.FlagState {
 	verb := strings.ToLower(entry.TitleVerb)
 	switch {

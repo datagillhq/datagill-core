@@ -12,13 +12,13 @@ import (
 
 func TestNormalizeChangelog_Created(t *testing.T) {
 	entry := models.LDAuditEntry{
-		ID:        "audit-123",
-		Kind:      "flag",
-		Name:      "new-feature",
-		Date:      time.Now().UnixMilli(),
-		TitleVerb: "created",
-		Member:    &models.LDAuditMember{Email: "dev@example.com"},
-		Accesses:  []models.LDAccess{{Resource: "proj/my-project:env/production:flag/new-feature"}},
+		ID:   "audit-123",
+		Kind: "flag",
+		Date: time.Now().UnixMilli(),
+		Accesses: []models.LDAccess{
+			{Action: "createFlag", Resource: "proj/my-project:env/production:flag/new-feature"},
+		},
+		Member: &models.LDAuditMember{Email: "dev@example.com"},
 	}
 
 	acts := New(mustNewClient(t, "test-key"), newMockRepository())
@@ -33,6 +33,9 @@ func TestNormalizeChangelog_Created(t *testing.T) {
 	}
 	if out.EventType != models.EventTypeCreated {
 		t.Errorf("expected EventType 'created', got %q", out.EventType)
+	}
+	if out.Data.ChangeType != "createFlag" {
+		t.Errorf("expected ChangeType 'createFlag', got %q", out.Data.ChangeType)
 	}
 	if out.Data.Actor.Email != "dev@example.com" {
 		t.Errorf("expected actor email 'dev@example.com', got %q", out.Data.Actor.Email)
@@ -59,10 +62,11 @@ func TestNormalizeChangelog_Toggled(t *testing.T) {
 				Entry: models.LDAuditEntry{
 					ID:        "audit-456",
 					Kind:      "flag",
-					Name:      "toggle-flag",
 					Date:      time.Now().UnixMilli(),
 					TitleVerb: tt.titleVerb,
-					Accesses:  []models.LDAccess{{Resource: "proj/my-project:env/production:flag/toggle-flag"}},
+					Accesses: []models.LDAccess{
+						{Action: "updateOn", Resource: "proj/my-project:env/production:flag/toggle-flag"},
+					},
 				},
 				IntegrationKey: uuid.New(),
 				OrgID:          uuid.New(),
@@ -87,7 +91,6 @@ func TestNormalizeChangelog_NonFlagKind(t *testing.T) {
 		Entry: models.LDAuditEntry{
 			ID:   "audit-789",
 			Kind: "environment",
-			Name: "production",
 			Date: time.Now().UnixMilli(),
 		},
 		IntegrationKey: uuid.New(),
@@ -99,40 +102,15 @@ func TestNormalizeChangelog_NonFlagKind(t *testing.T) {
 	}
 }
 
-func TestMapTitleVerbToEventType(t *testing.T) {
-	tests := []struct {
-		verb     string
-		expected models.EventType
-	}{
-		{"created", models.EventTypeCreated},
-		{"Created", models.EventTypeCreated},
-		{"deleted", models.EventTypeDeleted},
-		{"turned targeting on", models.EventTypeToggled},
-		{"turned targeting off", models.EventTypeToggled},
-		{"updated", models.EventTypeUpdated},
-		{"changed", models.EventTypeUpdated},
-		{"added variation", models.EventTypeUpdated},
-		{"removed targeting rule", models.EventTypeUpdated},
-		{"rollback", models.EventTypeRollback},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.verb, func(t *testing.T) {
-			if got := mapTitleVerbToEventType(tt.verb); got != tt.expected {
-				t.Errorf("mapTitleVerbToEventType(%q) = %q, want %q", tt.verb, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestNormalizeChangelog_TokenActor(t *testing.T) {
 	entry := models.LDAuditEntry{
-		ID:        "audit-token",
-		Kind:      "flag",
-		Date:      time.Now().UnixMilli(),
-		TitleVerb: "updated",
-		Token:     &models.LDAuditToken{Name: "my-service-token", ServiceToken: true},
-		Accesses:  []models.LDAccess{{Resource: "proj/my-project:env/production:flag/my-flag"}},
+		ID:   "audit-token",
+		Kind: "flag",
+		Date: time.Now().UnixMilli(),
+		Token: &models.LDAuditToken{Name: "my-service-token", ServiceToken: true},
+		Accesses: []models.LDAccess{
+			{Action: "updateRules", Resource: "proj/my-project:env/production:flag/my-flag"},
+		},
 	}
 
 	acts := New(mustNewClient(t, "test-key"), newMockRepository())
@@ -165,6 +143,54 @@ func TestNormalizeChangelog_NoFlagKeyInAccesses(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when flag key cannot be extracted")
+	}
+}
+
+func TestMapActionToEventType(t *testing.T) {
+	tests := []struct {
+		action   string
+		expected models.EventType
+	}{
+		{"createFlag", models.EventTypeCreated},
+		{"cloneFlag", models.EventTypeCreated},
+		{"deleteFlag", models.EventTypeDeleted},
+		{"updateOn", models.EventTypeToggled},
+		{"updateRules", models.EventTypeUpdated},
+		{"updateFallthrough", models.EventTypeUpdated},
+		{"updateTargets", models.EventTypeUpdated},
+		{"updateDescription", models.EventTypeUpdated},
+		{"updateGlobalArchived", models.EventTypeUpdated},
+		{"", models.EventTypeUpdated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.action, func(t *testing.T) {
+			if got := mapActionToEventType(tt.action); got != tt.expected {
+				t.Errorf("mapActionToEventType(%q) = %q, want %q", tt.action, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestResourceSegment(t *testing.T) {
+	tests := []struct {
+		resource string
+		typ      string
+		want     string
+	}{
+		{"proj/my-project:env/production:flag/my-flag", "flag", "my-flag"},
+		{"proj/my-project:env/production:flag/my-flag", "env", "production"},
+		{"proj/my-project:env/production:flag/my-flag", "proj", "my-project"},
+		{"proj/my-project:env/production", "flag", ""},
+		{"", "flag", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.resource+"/"+tt.typ, func(t *testing.T) {
+			if got := resourceSegment(tt.resource, tt.typ); got != tt.want {
+				t.Errorf("resourceSegment(%q, %q) = %q, want %q", tt.resource, tt.typ, got, tt.want)
+			}
+		})
 	}
 }
 
