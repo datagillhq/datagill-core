@@ -46,42 +46,28 @@ func TestNormalizeChangelog_Created(t *testing.T) {
 }
 
 func TestNormalizeChangelog_Toggled(t *testing.T) {
-	tests := []struct {
-		titleVerb     string
-		expectedState models.FlagState
-	}{
-		{"turned targeting on", models.FlagStateOn},
-		{"turned targeting off", models.FlagStateOff},
-	}
-
 	acts := New(mustNewClient(t, "test-key"), newMockRepository())
-
-	for _, tt := range tests {
-		t.Run(tt.titleVerb, func(t *testing.T) {
-			out, err := acts.NormalizeChangelog(context.Background(), NormalizeChangelogInput{
-				Entry: models.LDAuditEntry{
-					ID:        "audit-456",
-					Kind:      "flag",
-					Date:      time.Now().UnixMilli(),
-					TitleVerb: tt.titleVerb,
-					Accesses: []models.LDAccess{
-						{Action: "updateOn", Resource: "proj/my-project:env/production:flag/toggle-flag"},
-					},
-				},
-				IntegrationKey: uuid.New(),
-				OrgID:          uuid.New(),
-				ProjectKey:     "my-project",
-			})
-			if err != nil {
-				t.Fatalf("NormalizeChangelog failed: %v", err)
-			}
-			if out.EventType != models.EventTypeToggled {
-				t.Errorf("expected EventType 'toggled', got %q", out.EventType)
-			}
-			if out.State != tt.expectedState {
-				t.Errorf("expected state %q, got %q", tt.expectedState, out.State)
-			}
-		})
+	out, err := acts.NormalizeChangelog(context.Background(), NormalizeChangelogInput{
+		Entry: models.LDAuditEntry{
+			ID:   "audit-456",
+			Kind: "flag",
+			Date: time.Now().UnixMilli(),
+			Accesses: []models.LDAccess{
+				{Action: "updateOn", Resource: "proj/my-project:env/production:flag/toggle-flag"},
+			},
+		},
+		IntegrationKey: uuid.New(),
+		OrgID:          uuid.New(),
+		ProjectKey:     "my-project",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeChangelog failed: %v", err)
+	}
+	if out.EventType != models.EventTypeToggled {
+		t.Errorf("expected EventType 'toggled', got %q", out.EventType)
+	}
+	if out.State != models.RecordStateActive {
+		t.Errorf("expected State 'active', got %q", out.State)
 	}
 }
 

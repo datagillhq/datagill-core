@@ -39,7 +39,7 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 		IntegrationID:   input.IntegrationKey,
 		OrgID:           input.OrgID,
 		EventType:       mapActionToEventType(firstAction(entry)),
-		State:           inferStateFromEntry(entry),
+		State:           models.RecordStateActive,
 		OccurredAt:      time.UnixMilli(entry.Date),
 		Data: models.ChangelogData{
 			Description:  entry.Description,
@@ -124,16 +124,3 @@ func mapActionToEventType(action string) models.EventType {
 	}
 }
 
-// inferStateFromEntry infers the on/off state for updateOn actions.
-// Direction (on vs off) is only available in the human-readable titleVerb.
-func inferStateFromEntry(entry models.LDAuditEntry) models.FlagState {
-	verb := strings.ToLower(entry.TitleVerb)
-	switch {
-	case strings.Contains(verb, "turned targeting on"):
-		return models.FlagStateOn
-	case strings.Contains(verb, "turned targeting off"):
-		return models.FlagStateOff
-	default:
-		return models.FlagStatePartial
-	}
-}
