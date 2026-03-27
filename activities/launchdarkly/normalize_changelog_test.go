@@ -109,8 +109,8 @@ func TestNormalizeChangelog_TokenActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeChangelog failed: %v", err)
 	}
-	if out.Data.Actor.Email != "token:my-service-token" {
-		t.Errorf("expected actor 'token:my-service-token', got %q", out.Data.Actor.Email)
+	if out.Data.Actor.Email != "" {
+		t.Errorf("expected empty actor email for service token, got %q", out.Data.Actor.Email)
 	}
 }
 

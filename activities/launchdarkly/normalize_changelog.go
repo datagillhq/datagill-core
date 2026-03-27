@@ -102,10 +102,6 @@ func extractActor(entry models.LDAuditEntry) models.ChangelogActor {
 	if entry.Member != nil {
 		return models.ChangelogActor{Email: entry.Member.Email}
 	}
-	if entry.Token != nil {
-		// Service token or personal access token; no email available.
-		return models.ChangelogActor{Email: "token:" + entry.Token.Name}
-	}
 	return models.ChangelogActor{}
 }
 

@@ -32,8 +32,8 @@ type LDAuditEntry struct {
 
 // LDAccess represents a resource access in an audit entry.
 type LDAccess struct {
-	Action   string `json:"action,omitempty"`
-	Resource string `json:"resource,omitempty"`
+	Action   string `json:"action"`
+	Resource string `json:"resource"`
 }
 
 // LDAuditSubject represents the subject who performed an audited action.
@@ -97,8 +97,8 @@ type LDFlagDetail struct {
 	MaintainerTeamKey string                  `json:"maintainerTeamKey,omitempty"`
 	MaintainerTeam    *LDMaintainerTeam       `json:"_maintainerTeam,omitempty"`
 	GoalIDs           []string                `json:"goalIds,omitempty"`
-	Experiments       *LDExperiments          `json:"experiments,omitempty"`
-	CustomProperties  map[string]LDCustomProp `json:"customProperties,omitempty"`
+	Experiments       LDExperiments           `json:"experiments"`
+	CustomProperties  map[string]LDCustomProp `json:"customProperties"`
 	Archived          bool                    `json:"archived"`
 	ArchivedDate      *int64                  `json:"archivedDate,omitempty"`
 	Deprecated        bool                    `json:"deprecated,omitempty"`
@@ -150,9 +150,9 @@ type LDFlagEnv struct {
 	Fallthrough            *LDFallthrough          `json:"fallthrough,omitempty"`
 	OffVariation           *int                    `json:"offVariation,omitempty"`
 	Prerequisites          []LDPrerequisite        `json:"prerequisites,omitempty"`
-	Site                   *LDLink                 `json:"_site,omitempty"`
-	Access                 *LDAccess               `json:"_access,omitempty"`
-	EnvironmentName        string                  `json:"_environmentName,omitempty"`
+	Site                   LDLink                  `json:"_site"`
+	Access                 LDAccess                `json:"_access"`
+	EnvironmentName        string                  `json:"_environmentName"`
 	TrackEvents            bool                    `json:"trackEvents"`
 	TrackEventsFallthrough bool                    `json:"trackEventsFallthrough"`
 	DebugEventsUntilDate   *int64                  `json:"_debugEventsUntilDate,omitempty"`
@@ -273,7 +273,7 @@ type LDVariation struct {
 // LDExperiments holds experiment metadata for a flag.
 type LDExperiments struct {
 	BaselineIdx int         `json:"baselineIdx"`
-	Items       []LDExpItem `json:"items,omitempty"`
+	Items       []LDExpItem `json:"items"`
 }
 
 // LDExpItem represents a single experiment item.
