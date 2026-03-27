@@ -123,6 +123,14 @@ type ChangelogActor struct {
 	Email string `json:"email,omitempty"`
 }
 
+// RecordState is the soft-delete state of a database record.
+type RecordState string
+
+const (
+	RecordStateActive  RecordState = "active"
+	RecordStateDeleted RecordState = "deleted"
+)
+
 // FeatureFlagChangelog maps to the feature_flag_changelog table.
 type FeatureFlagChangelog struct {
 	ID              int64
@@ -132,7 +140,7 @@ type FeatureFlagChangelog struct {
 	IntegrationID   uuid.UUID
 	OrgID           uuid.UUID
 	EventType       EventType
-	State           FlagState
+	State           RecordState
 	OccurredAt      time.Time
 	Data            ChangelogData
 	CreatedAt       time.Time

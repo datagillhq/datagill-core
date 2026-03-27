@@ -1,0 +1,48 @@
+package activities
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+
+	"github.com/datagill/datagill-core/models"
+)
+
+// mockRepository implements repository.Repository for testing.
+type mockRepository struct {
+	sourceRecords []models.SourceRecord
+	featureFlags  []models.FeatureFlag
+	changelogs    []models.FeatureFlagChangelog
+	integrations  map[uuid.UUID]models.Integration
+}
+
+func newMockRepository() *mockRepository {
+	return &mockRepository{integrations: make(map[uuid.UUID]models.Integration)}
+}
+
+func (r *mockRepository) SaveSourceRecord(_ context.Context, rec models.SourceRecord) error {
+	r.sourceRecords = append(r.sourceRecords, rec)
+	return nil
+}
+
+func (r *mockRepository) SaveFeatureFlag(_ context.Context, f models.FeatureFlag) error {
+	r.featureFlags = append(r.featureFlags, f)
+	return nil
+}
+
+func (r *mockRepository) SaveChangelog(_ context.Context, c models.FeatureFlagChangelog) error {
+	r.changelogs = append(r.changelogs, c)
+	return nil
+}
+
+func (r *mockRepository) GetIntegration(_ context.Context, key uuid.UUID) (models.Integration, error) {
+	return r.integrations[key], nil
+}
+
+func (r *mockRepository) ListIntegrations(_ context.Context, _ uuid.UUID) ([]models.Integration, error) {
+	var result []models.Integration
+	for _, i := range r.integrations {
+		result = append(result, i)
+	}
+	return result, nil
+}
