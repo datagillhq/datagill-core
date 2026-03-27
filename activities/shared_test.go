@@ -129,6 +129,21 @@ func TestSharedActivities_SaveChangelog_Success(t *testing.T) {
 	}
 }
 
+func TestSharedActivities_GetIntegration_Success(t *testing.T) {
+	repo := newMockRepository()
+	key := uuid.New()
+	repo.integrations[key] = models.Integration{Key: key, Source: models.SourceLaunchDarkly}
+	acts := NewSharedActivities(repo)
+
+	integration, err := acts.GetIntegration(context.Background(), key)
+	if err != nil {
+		t.Fatalf("GetIntegration failed: %v", err)
+	}
+	if integration.Key != key {
+		t.Errorf("expected key %s, got %s", key, integration.Key)
+	}
+}
+
 func TestSharedActivities_SaveChangelog_Error(t *testing.T) {
 	repo := &errorRepository{
 		saveChangelogErr: errors.New("timeout"),

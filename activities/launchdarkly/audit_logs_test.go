@@ -79,6 +79,66 @@ func TestListAuditLogs_HasMore(t *testing.T) {
 	}
 }
 
+func TestScrollAuditLogs_SinglePage(t *testing.T) {
+	entries := []models.LDAuditEntry{
+		{ID: "entry-1", Kind: "flag", Date: time.Now().UnixMilli()},
+		{ID: "entry-2", Kind: "flag", Date: time.Now().Add(-time.Hour).UnixMilli()},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(auditLogResponse{Items: entries})
+	}))
+	defer server.Close()
+
+	acts := New(mustNewClient(t, "test-key", WithBaseURL(server.URL)), newMockRepository())
+	out, err := acts.ScrollAuditLogs(context.Background(), ScrollAuditLogsInput{
+		IntegrationKey: uuid.New(),
+		OrgID:          uuid.New(),
+	})
+	if err != nil {
+		t.Fatalf("ScrollAuditLogs failed: %v", err)
+	}
+	if len(out.Entries) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(out.Entries))
+	}
+	if out.RecordsSaved != 2 {
+		t.Errorf("expected 2 records saved, got %d", out.RecordsSaved)
+	}
+}
+
+func TestScrollAuditLogs_MultiPage(t *testing.T) {
+	var callCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		resp := auditLogResponse{
+			Items: []models.LDAuditEntry{
+				{ID: "entry-" + strconv.Itoa(callCount), Kind: "flag", Date: time.Now().UnixMilli()},
+			},
+		}
+		if callCount < 3 {
+			resp.Links.Next = &struct {
+				Href string `json:"href"`
+			}{Href: "http://" + r.Host + "/auditlog?before=" + strconv.Itoa(callCount)}
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	acts := New(mustNewClient(t, "test-key", WithBaseURL(server.URL)), newMockRepository())
+	out, err := acts.ScrollAuditLogs(context.Background(), ScrollAuditLogsInput{
+		IntegrationKey: uuid.New(),
+		OrgID:          uuid.New(),
+	})
+	if err != nil {
+		t.Fatalf("ScrollAuditLogs failed: %v", err)
+	}
+	if len(out.Entries) != 3 {
+		t.Errorf("expected 3 entries across 3 pages, got %d", len(out.Entries))
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 HTTP calls, got %d", callCount)
+	}
+}
+
 func TestListAuditLogs_Pagination(t *testing.T) {
 	var callCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
