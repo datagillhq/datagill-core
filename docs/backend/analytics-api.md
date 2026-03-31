@@ -18,6 +18,22 @@ In short: DataGill validates JWTs directly in middleware using BetterAuth's publ
 
 ---
 
+## Existing Endpoints to Delete
+
+The following endpoints exist in the current codebase (`services/search/`) and **must be deleted** as part of implementing the analytics API. They are fully replaced by `GET /v1/analytics`. Do not keep them for backwards compatibility — nothing depends on them yet.
+
+| Method | Path | Status |
+|--------|------|--------|
+| `GET` | `/search` | Delete — replaced by `GET /v1/analytics?metric=audit_log` |
+| `GET` | `/flags` | Delete — no replacement (flag list page removed from product) |
+| `GET` | `/flags/{flag_key}` | Delete — users link to source provider directly via `sourceUrl` |
+| `GET` | `/flags/{flag_key}/history` | Delete — replaced by `GET /v1/analytics?metric=audit_log` |
+| `GET` | `/timeline` | Delete — replaced by `GET /v1/analytics?metric=audit_log` |
+
+The `X-Org-Id` header middleware in `services/search/` is also replaced by the JWT middleware documented in `docs/backend/integration-management-api.md`.
+
+---
+
 ## Endpoint
 
 ```
