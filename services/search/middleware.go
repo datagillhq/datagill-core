@@ -9,29 +9,52 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/rs/zerolog"
 )
 
 type contextKey string
 
-const orgIDKey contextKey = "orgID"
+const (
+	orgIDKey  contextKey = "orgID"
+	userIDKey contextKey = "userID"
+)
 
-// orgIDMiddleware extracts X-Org-Id from the request header, stores it in the
-// context (for handlers), and enriches the zerolog context logger with the
-// org_id field (for structured log filtering by tenant in Loki/Grafana).
-// The header is set by the API gateway after JWT verification — this service
-// trusts it without re-validating. See AGENTS.md §5 "Security model".
-// TODO: validate that orgID is a valid UUID format to fail fast before any DB call.
-func orgIDMiddleware(next http.Handler) http.Handler {
+// jwtMiddleware validates the Bearer JWT in the Authorization header, then
+// extracts the organizationId and userId claims and injects them into the
+// request context. Requests with missing, expired, or tampered tokens are
+// rejected with 401.
+func (a *app) jwtMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID := strings.TrimSpace(r.Header.Get("X-Org-Id"))
-		if orgID == "" {
-			writeError(w, http.StatusBadRequest, "X-Org-Id header is required")
+		authHeader := r.Header.Get("Authorization")
+		tokenStr, ok := strings.CutPrefix(authHeader, "Bearer ")
+		if !ok || tokenStr == "" {
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
-		log := zerolog.Ctx(r.Context()).With().Str("org_id", orgID).Logger()
+		token, err := jwt.Parse(tokenStr, a.jwtKeyfunc, jwt.WithExpirationRequired())
+		if err != nil || !token.Valid {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		orgID, _ := claims["organizationId"].(string)
+		userID, _ := claims["userId"].(string)
+		if orgID == "" || userID == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		log := zerolog.Ctx(r.Context()).With().Str("org_id", orgID).Str("user_id", userID).Logger()
 		ctx := context.WithValue(log.WithContext(r.Context()), orgIDKey, orgID)
+		ctx = context.WithValue(ctx, userIDKey, userID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

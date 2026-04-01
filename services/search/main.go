@@ -26,8 +26,16 @@ func main() {
 	if cfg.DatabaseURL == "" {
 		logger.Fatal().Msg("APP_DATABASE_URL is required")
 	}
+	if cfg.AuthURL == "" {
+		logger.Fatal().Msg("AUTH_URL is required")
+	}
 
 	ctx := context.Background()
+
+	jwtKeyfunc, err := fetchJWKSKeyfunc(cfg.AuthURL + "/.well-known/jwks.json")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to fetch JWKS")
+	}
 
 	repo, err := NewPostgresSearchRepository(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -37,7 +45,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo).router(),
+		Handler:           newApp(cfg, logger, repo, jwtKeyfunc).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 

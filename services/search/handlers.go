@@ -151,8 +151,8 @@ func (a *app) timelineHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// orgIDFromCtx returns the org ID stored in context by orgIDMiddleware.
-// The type assertion is always safe: orgIDMiddleware returns 400 before any
+// orgIDFromCtx returns the org ID stored in context by jwtMiddleware.
+// The type assertion is always safe: jwtMiddleware returns 401 before any
 // API handler runs, so the value is guaranteed to be present.
 func orgIDFromCtx(r *http.Request) string {
 	v, _ := r.Context().Value(orgIDKey).(string)
