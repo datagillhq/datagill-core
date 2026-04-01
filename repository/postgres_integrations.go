@@ -21,7 +21,7 @@ func (r *PostgresRepository) rowToIntegration(row pgx.Row) (models.Integration, 
 	var encryptedAPIKey string
 	err := row.Scan(&i.ID, &i.Key, &i.OrgID, &i.Source, &encryptedAPIKey, &configJSON, &i.State, &i.CreatedAt, &i.UpdatedAt)
 	if err != nil {
-		return models.Integration{}, err
+		return models.Integration{}, fmt.Errorf("scan: %w", err)
 	}
 	if err := json.Unmarshal(configJSON, &i.Config); err != nil {
 		return models.Integration{}, fmt.Errorf("unmarshal config: %w", err)
