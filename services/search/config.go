@@ -8,10 +8,10 @@ const (
 )
 
 type config struct {
-	Port          string
-	Environment   string
-	DatabaseURL   string
-	BetterAuthURL string
+	Port        string
+	Environment string
+	DatabaseURL string
+	AuthURL     string
 }
 
 func loadConfig() config {
@@ -26,9 +26,9 @@ func loadConfig() config {
 	}
 
 	return config{
-		Port:         port,
-		Environment:  environment,
-		DatabaseURL:  os.Getenv("APP_DATABASE_URL"),
-		BetterAuthURL: os.Getenv("BETTERAUTH_URL"),
+		Port:        port,
+		Environment: environment,
+		DatabaseURL: os.Getenv("APP_DATABASE_URL"),
+		AuthURL:     os.Getenv("AUTH_URL"),
 	}
 }

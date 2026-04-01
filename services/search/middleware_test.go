@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestJWTMiddleware_ExpiredToken(t *testing.T) {
 	})
 	signed, _ := token.SignedString(testRSAKey)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/flags", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/flags", nil)
 	req.Header.Set("Authorization", "Bearer "+signed)
 	resp, err := testClient.Do(req)
 	if err != nil {
@@ -71,7 +72,7 @@ func TestJWTMiddleware_MissingOrgIDClaim(t *testing.T) {
 	})
 	signed, _ := token.SignedString(testRSAKey)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/flags", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/flags", nil)
 	req.Header.Set("Authorization", "Bearer "+signed)
 	resp, err := testClient.Do(req)
 	if err != nil {
