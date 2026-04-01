@@ -146,6 +146,18 @@ services:
   # Application services
   # ---------------------------------------------------------------------------
 
+  # auth-dev: local development only — issues RS256 JWTs and serves JWKS.
+  # Replace AUTH_URL with your real auth service before deploying anywhere.
+  auth-dev:
+    build:
+      context: .
+      dockerfile: cmd/auth-dev/Dockerfile
+    ports:
+      - "3001:3001"
+    networks:
+      - datagill
+    restart: unless-stopped
+
   search:
     build:
       context: .
