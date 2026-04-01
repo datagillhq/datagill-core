@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -26,8 +27,16 @@ func main() {
 	if cfg.DatabaseURL == "" {
 		logger.Fatal().Msg("APP_DATABASE_URL is required")
 	}
+	if cfg.BetterAuthURL == "" {
+		logger.Fatal().Msg("BETTERAUTH_URL is required")
+	}
 
 	ctx := context.Background()
+
+	jwks, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.BetterAuthURL + "/.well-known/jwks.json"})
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to fetch JWKS from BetterAuth")
+	}
 
 	repo, err := NewPostgresSearchRepository(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -37,7 +46,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo).router(),
+		Handler:           newApp(cfg, logger, repo, jwks.Keyfunc).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 

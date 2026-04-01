@@ -33,9 +33,9 @@ func (a *app) router() http.Handler {
 	r.Get("/healthz", healthzHandler)
 	r.Handle("/metrics", promhttp.Handler())
 
-	// API routes — X-Org-Id header required.
+	// API routes — JWT required.
 	r.Group(func(r chi.Router) {
-		r.Use(orgIDMiddleware)
+		r.Use(a.jwtMiddleware)
 		r.Get("/search", a.searchHandler)
 		r.Get("/flags", a.flagsHandler)
 		r.Get("/flags/{flag_key}", a.flagDetailHandler)

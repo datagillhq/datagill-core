@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"io"
 	"net/http"
@@ -9,8 +11,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/rs/zerolog"
 )
+
+// testRSAKey is generated once per test binary run and used to sign all test JWTs.
+var testRSAKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+
+// testJWTKeyfunc is the jwt.Keyfunc that validates tokens signed with testRSAKey.
+func testJWTKeyfunc(t *jwt.Token) (interface{}, error) {
+	return &testRSAKey.PublicKey, nil
+}
+
+// makeToken returns a signed JWT with the given organizationId and userId claims.
+func makeToken(orgID, userID string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"organizationId": orgID,
+		"userId":         userID,
+		"exp":            time.Now().Add(time.Hour).Unix(),
+	})
+	signed, err := token.SignedString(testRSAKey)
+	if err != nil {
+		panic("makeToken: " + err.Error())
+	}
+	return signed
+}
 
 // stubRepo lets each test configure exactly the data and errors it needs.
 type stubRepo struct {
@@ -54,7 +79,7 @@ var repoErr = errors.New("repository unavailable")
 func newTestServer(t *testing.T, repo SearchRepository) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, repo)
+	testApp := newApp(loadConfig(), logger, repo, testJWTKeyfunc)
 	return httptest.NewServer(testApp.router())
 }
 
@@ -71,13 +96,16 @@ func get(t *testing.T, url string) *http.Response {
 	return resp
 }
 
-func getWithOrgID(t *testing.T, url, orgID string) *http.Response {
+// testUserID is a stable user ID used alongside testOrgID in handler tests.
+const testUserID = "00000000-0000-0000-0000-000000000002"
+
+func getWithToken(t *testing.T, url, orgID, userID string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Org-Id", orgID)
+	req.Header.Set("Authorization", "Bearer "+makeToken(orgID, userID))
 	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
