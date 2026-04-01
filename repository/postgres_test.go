@@ -21,6 +21,9 @@ import (
 
 var testConnString string
 
+// testEncryptionKey is a 32-byte AES-256 key used only in tests.
+var testEncryptionKey = []byte("test-encryption-key-32-bytes!!!!")
+
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
@@ -107,10 +110,15 @@ func setupTestIntegration(ctx context.Context, t *testing.T, pool *pgxpool.Pool,
 	config := models.IntegrationConfig{EnvironmentKey: "production"}
 	configJSON, _ := json.Marshal(config)
 
-	_, err := pool.Exec(ctx, `
+	encryptedKey, err := encryptAPIKey(testEncryptionKey, "test-api-key")
+	if err != nil {
+		t.Fatalf("failed to encrypt test api key: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `
 		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-	`, integrationKey, orgKey, models.SourceLaunchDarkly, "test-api-key", configJSON, models.IntegrationStateActive)
+	`, integrationKey, orgKey, models.SourceLaunchDarkly, encryptedKey, configJSON, models.IntegrationStateActive)
 	if err != nil {
 		t.Fatalf("failed to create test integration: %v", err)
 	}

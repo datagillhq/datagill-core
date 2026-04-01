@@ -14,28 +14,36 @@ import (
 
 const integrationColumns = `id, key, org_id, source, api_key, config, state, created_at, updated_at`
 
-func scanIntegration(row pgx.Row) (models.Integration, error) {
+// rowToIntegration scans a pgx.Row into an Integration, decrypting the API key.
+func (r *PostgresRepository) rowToIntegration(row pgx.Row) (models.Integration, error) {
 	var i models.Integration
 	var configJSON []byte
-	err := row.Scan(&i.ID, &i.Key, &i.OrgID, &i.Source, &i.APIKey, &configJSON, &i.State, &i.CreatedAt, &i.UpdatedAt)
+	var encryptedAPIKey string
+	err := row.Scan(&i.ID, &i.Key, &i.OrgID, &i.Source, &encryptedAPIKey, &configJSON, &i.State, &i.CreatedAt, &i.UpdatedAt)
 	if err != nil {
 		return models.Integration{}, err
 	}
 	if err := json.Unmarshal(configJSON, &i.Config); err != nil {
 		return models.Integration{}, fmt.Errorf("unmarshal config: %w", err)
 	}
+	apiKey, err := decryptAPIKey(r.encryptionKey, encryptedAPIKey)
+	if err != nil {
+		return models.Integration{}, fmt.Errorf("decrypt api_key: %w", err)
+	}
+	i.APIKey = apiKey
 	return i, nil
 }
 
-// EnsureOrg inserts an org row if one does not already exist.
-func (r *PostgresRepository) EnsureOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error {
+// CreateOrg inserts an org row if one does not already exist.
+// Safe to call multiple times — uses INSERT ... ON CONFLICT DO NOTHING.
+func (r *PostgresRepository) CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO organizations (key, external_org_id, created_at, updated_at)
 		VALUES ($1, $2, NOW(), NOW())
 		ON CONFLICT (key) DO NOTHING
 	`, orgID, externalOrgID)
 	if err != nil {
-		return fmt.Errorf("EnsureOrg: %w", err)
+		return fmt.Errorf("CreateOrg: %w", err)
 	}
 	return nil
 }
@@ -47,6 +55,11 @@ func (r *PostgresRepository) CreateIntegration(ctx context.Context, i models.Int
 		return models.Integration{}, fmt.Errorf("CreateIntegration marshal config: %w", err)
 	}
 
+	encryptedKey, err := encryptAPIKey(r.encryptionKey, i.APIKey)
+	if err != nil {
+		return models.Integration{}, fmt.Errorf("CreateIntegration encrypt api_key: %w", err)
+	}
+
 	if i.Key == uuid.Nil {
 		i.Key = uuid.New()
 	}
@@ -55,9 +68,9 @@ func (r *PostgresRepository) CreateIntegration(ctx context.Context, i models.Int
 		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW())
 		RETURNING `+integrationColumns,
-		i.Key, i.OrgID, i.Source, i.APIKey, configJSON,
+		i.Key, i.OrgID, i.Source, encryptedKey, configJSON,
 	)
-	created, err := scanIntegration(row)
+	created, err := r.rowToIntegration(row)
 	if err != nil {
 		return models.Integration{}, fmt.Errorf("CreateIntegration: %w", err)
 	}
@@ -71,7 +84,7 @@ func (r *PostgresRepository) GetIntegration(ctx context.Context, orgID, key uuid
 		FROM integrations
 		WHERE org_id = $1 AND key = $2 AND state != 'deleted'
 	`, orgID, key)
-	i, err := scanIntegration(row)
+	i, err := r.rowToIntegration(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Integration{}, ErrNotFound
@@ -96,7 +109,7 @@ func (r *PostgresRepository) ListIntegrations(ctx context.Context, orgID uuid.UU
 
 	var integrations []models.Integration
 	for rows.Next() {
-		i, err := scanIntegration(rows)
+		i, err := r.rowToIntegration(rows)
 		if err != nil {
 			return nil, fmt.Errorf("ListIntegrations scan: %w", err)
 		}
@@ -110,6 +123,15 @@ func (r *PostgresRepository) ListIntegrations(ctx context.Context, orgID uuid.UU
 
 // UpdateIntegration applies a partial update to an integration scoped to the org.
 func (r *PostgresRepository) UpdateIntegration(ctx context.Context, orgID, key uuid.UUID, patch models.IntegrationPatch) (models.Integration, error) {
+	var encryptedKey *string
+	if patch.APIKey != nil {
+		ek, err := encryptAPIKey(r.encryptionKey, *patch.APIKey)
+		if err != nil {
+			return models.Integration{}, fmt.Errorf("UpdateIntegration encrypt api_key: %w", err)
+		}
+		encryptedKey = &ek
+	}
+
 	row := r.pool.QueryRow(ctx, `
 		UPDATE integrations
 		SET
@@ -118,9 +140,9 @@ func (r *PostgresRepository) UpdateIntegration(ctx context.Context, orgID, key u
 			updated_at = NOW()
 		WHERE org_id = $1 AND key = $2 AND state != 'deleted'
 		RETURNING `+integrationColumns,
-		orgID, key, patch.APIKey, patch.State,
+		orgID, key, encryptedKey, patch.State,
 	)
-	i, err := scanIntegration(row)
+	i, err := r.rowToIntegration(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Integration{}, ErrNotFound
@@ -139,7 +161,7 @@ func (r *PostgresRepository) SoftDeleteIntegration(ctx context.Context, orgID, k
 		RETURNING `+integrationColumns,
 		orgID, key,
 	)
-	i, err := scanIntegration(row)
+	i, err := r.rowToIntegration(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Integration{}, ErrNotFound

@@ -12,25 +12,25 @@ import (
 	"github.com/datagill/datagill-core/models"
 )
 
-func TestEnsureOrg(t *testing.T) {
+func TestCreateOrg(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 
 	orgID := uuid.New()
 	// First call creates the row.
-	if err := repo.EnsureOrg(ctx, orgID, "ext-"+orgID.String()[:8]); err != nil {
-		t.Fatalf("EnsureOrg failed: %v", err)
+	if err := repo.CreateOrg(ctx, orgID, "ext-"+orgID.String()[:8]); err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
 	}
 	// Second call is a no-op — must not error.
-	if err := repo.EnsureOrg(ctx, orgID, "ext-"+orgID.String()[:8]); err != nil {
-		t.Fatalf("EnsureOrg (idempotent) failed: %v", err)
+	if err := repo.CreateOrg(ctx, orgID, "ext-"+orgID.String()[:8]); err != nil {
+		t.Fatalf("CreateOrg (idempotent) failed: %v", err)
 	}
 }
 
 func TestCreateIntegration(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -56,11 +56,14 @@ func TestCreateIntegration(t *testing.T) {
 	if created.Config.EnvironmentKey != "production" {
 		t.Errorf("expected environment_key production, got %s", created.Config.EnvironmentKey)
 	}
+	if created.APIKey != "api-key-123" {
+		t.Errorf("expected api key to round-trip through encrypt/decrypt, got %q", created.APIKey)
+	}
 }
 
 func TestGetIntegration(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -79,7 +82,7 @@ func TestGetIntegration(t *testing.T) {
 
 func TestGetIntegration_NotFound(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -93,7 +96,7 @@ func TestGetIntegration_NotFound(t *testing.T) {
 
 func TestGetIntegration_WrongOrg(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -110,7 +113,7 @@ func TestGetIntegration_WrongOrg(t *testing.T) {
 
 func TestListIntegrations_ActiveAndPaused(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -118,12 +121,21 @@ func TestListIntegrations_ActiveAndPaused(t *testing.T) {
 	orgID := setupTestOrg(ctx, t, pool)
 	activeKey := setupTestIntegration(ctx, t, pool, orgID)
 
+	encryptedPausedKey, err := encryptAPIKey(testEncryptionKey, "paused-key")
+	if err != nil {
+		t.Fatalf("encrypt paused api key: %v", err)
+	}
+	encryptedDeletedKey, err := encryptAPIKey(testEncryptionKey, "deleted-key")
+	if err != nil {
+		t.Fatalf("encrypt deleted api key: %v", err)
+	}
+
 	// Insert a paused integration.
 	pausedKey := uuid.New()
-	_, err := pool.Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, '{}', 'paused', NOW(), NOW())
-	`, pausedKey, orgID, models.SourceLaunchDarkly, "paused-key")
+	`, pausedKey, orgID, models.SourceLaunchDarkly, encryptedPausedKey)
 	if err != nil {
 		t.Fatalf("insert paused integration: %v", err)
 	}
@@ -132,7 +144,7 @@ func TestListIntegrations_ActiveAndPaused(t *testing.T) {
 	_, err = pool.Exec(ctx, `
 		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, '{}', 'deleted', NOW(), NOW())
-	`, uuid.New(), orgID, models.SourceLaunchDarkly, "deleted-key")
+	`, uuid.New(), orgID, models.SourceLaunchDarkly, encryptedDeletedKey)
 	if err != nil {
 		t.Fatalf("insert deleted integration: %v", err)
 	}
@@ -152,7 +164,7 @@ func TestListIntegrations_ActiveAndPaused(t *testing.T) {
 
 func TestUpdateIntegration(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -172,7 +184,7 @@ func TestUpdateIntegration(t *testing.T) {
 
 func TestUpdateIntegration_NotFound(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
@@ -186,7 +198,7 @@ func TestUpdateIntegration_NotFound(t *testing.T) {
 
 func TestSoftDeleteIntegration(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := NewPostgresRepository(ctx, testConnString)
+	repo, _ := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()

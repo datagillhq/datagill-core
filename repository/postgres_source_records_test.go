@@ -15,7 +15,7 @@ import (
 
 func TestSaveSourceRecord(t *testing.T) {
 	ctx := context.Background()
-	repo, err := NewPostgresRepository(ctx, testConnString)
+	repo, err := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}

@@ -43,7 +43,7 @@ type Repository interface {
 	// SoftDeleteIntegration sets state = deleted on the integration, scoped to the org.
 	SoftDeleteIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 
-	// EnsureOrg inserts an org row if one does not already exist. Safe to call
+	// CreateOrg inserts an org row if one does not already exist. Safe to call
 	// multiple times — uses INSERT ... ON CONFLICT DO NOTHING.
-	EnsureOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
+	CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
 }

@@ -60,7 +60,7 @@ func (r *mockRepository) SoftDeleteIntegration(_ context.Context, _, _ uuid.UUID
 	return models.Integration{}, nil
 }
 
-func (r *mockRepository) EnsureOrg(_ context.Context, _ uuid.UUID, _ string) error {
+func (r *mockRepository) CreateOrg(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
 
