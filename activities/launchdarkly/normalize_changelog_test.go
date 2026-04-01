@@ -88,6 +88,63 @@ func TestNormalizeChangelog_NonFlagKind(t *testing.T) {
 	}
 }
 
+func TestNormalizeChangelog_ActorName(t *testing.T) {
+	tests := []struct {
+		name       string
+		member     *models.LDAuditMember
+		wantEmail  string
+		wantName   string
+	}{
+		{
+			name:      "first and last name joined",
+			member:    &models.LDAuditMember{Email: "jane@example.com", FirstName: "Jane", LastName: "Smith"},
+			wantEmail: "jane@example.com",
+			wantName:  "Jane Smith",
+		},
+		{
+			name:      "first name only",
+			member:    &models.LDAuditMember{Email: "jane@example.com", FirstName: "Jane"},
+			wantEmail: "jane@example.com",
+			wantName:  "Jane",
+		},
+		{
+			name:      "no member gives empty actor",
+			member:    nil,
+			wantEmail: "",
+			wantName:  "",
+		},
+	}
+
+	acts := New(mustNewClient(t, "test-key"), newMockRepository())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := acts.NormalizeChangelog(context.Background(), NormalizeChangelogInput{
+				Entry: models.LDAuditEntry{
+					ID:   "audit-actor",
+					Kind: "flag",
+					Date: time.Now().UnixMilli(),
+					Accesses: []models.LDAccess{
+						{Action: "updateOn", Resource: "proj/p:env/production:flag/f"},
+					},
+					Member: tt.member,
+				},
+				IntegrationKey: uuid.New(),
+				OrgID:          uuid.New(),
+				ProjectKey:     "p",
+			})
+			if err != nil {
+				t.Fatalf("NormalizeChangelog failed: %v", err)
+			}
+			if out.Data.Actor.Email != tt.wantEmail {
+				t.Errorf("email: got %q, want %q", out.Data.Actor.Email, tt.wantEmail)
+			}
+			if out.Data.Actor.Name != tt.wantName {
+				t.Errorf("name: got %q, want %q", out.Data.Actor.Name, tt.wantName)
+			}
+		})
+	}
+}
+
 func TestNormalizeChangelog_TokenActor(t *testing.T) {
 	entry := models.LDAuditEntry{
 		ID:   "audit-token",

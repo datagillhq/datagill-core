@@ -24,7 +24,10 @@ func (a *Activities) NormalizeFlagDetail(_ context.Context, input NormalizeFlagD
 
 	environments := make(map[string]models.FlagEnvironment, len(flag.Environments))
 	for key, env := range flag.Environments {
-		environments[key] = models.FlagEnvironment{Enabled: env.On}
+		environments[key] = models.FlagEnvironment{
+			Enabled:           env.On,
+			RolloutPercentage: extractRolloutPercentage(flag, env),
+		}
 	}
 
 	return models.FeatureFlag{
@@ -102,6 +105,35 @@ func extractLifecycle(flag models.LDFlagDetail) models.FlagLifecycle {
 	}
 
 	return models.FlagLifecycle{Purpose: purpose, State: state}
+}
+
+// extractRolloutPercentage derives what percentage of traffic is being served the
+// "on" variation for this environment.
+//
+//   - Off (env.On = false)                         → 0%
+//   - On, fallthrough points to a specific variation → 100%
+//   - On, fallthrough is a percentage rollout        → weight of the on-variation / 1000
+//     (LD weights are out of 100 000; requires flag.Defaults to identify the on-variation)
+//   - Can't determine                               → nil
+func extractRolloutPercentage(flag models.LDFlagDetail, env models.LDFlagEnv) *float64 {
+	pct := func(v float64) *float64 { return &v }
+
+	if !env.On {
+		return pct(0)
+	}
+	if env.Fallthrough == nil || env.Fallthrough.Rollout == nil {
+		return pct(100)
+	}
+	if flag.Defaults == nil {
+		return nil
+	}
+	onVariation := flag.Defaults.OnVariation
+	for _, v := range env.Fallthrough.Rollout.Variations {
+		if v.Variation == onVariation {
+			return pct(float64(v.Weight) / 1000.0)
+		}
+	}
+	return nil
 }
 
 func creationDate(flag models.LDFlagDetail) *time.Time {
