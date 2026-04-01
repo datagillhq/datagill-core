@@ -41,6 +41,13 @@ func (a *app) router() http.Handler {
 		r.Get("/flags/{flag_key}", a.flagDetailHandler)
 		r.Get("/flags/{flag_key}/history", a.flagHistoryHandler)
 		r.Get("/timeline", a.timelineHandler)
+
+		// Integrations API
+		r.Get("/v1/integrations/providers", a.providersHandler)
+		r.Post("/v1/integrations", a.createIntegrationHandler)
+		r.Get("/v1/integrations", a.listIntegrationsHandler)
+		r.Put("/v1/integrations/{key}", a.updateIntegrationHandler)
+		r.Delete("/v1/integrations/{key}", a.deleteIntegrationHandler)
 	})
 
 	return r
