@@ -6,17 +6,21 @@ import (
 )
 
 type app struct {
-	config     config
-	logger     zerolog.Logger
-	repository SearchRepository
-	jwtKeyfunc jwt.Keyfunc
+	config       config
+	logger       zerolog.Logger
+	repository   SearchRepository
+	integrations IntegrationsRepository
+	validator    IntegrationValidator
+	jwtKeyfunc   jwt.Keyfunc
 }
 
-func newApp(cfg config, logger zerolog.Logger, repo SearchRepository, jwtKeyfunc jwt.Keyfunc) *app {
+func newApp(cfg config, logger zerolog.Logger, repo SearchRepository, integrations IntegrationsRepository, validator IntegrationValidator, jwtKeyfunc jwt.Keyfunc) *app {
 	return &app{
-		config:     cfg,
-		logger:     logger,
-		repository: repo,
-		jwtKeyfunc: jwtKeyfunc,
+		config:       cfg,
+		logger:       logger,
+		repository:   repo,
+		integrations: integrations,
+		validator:    validator,
+		jwtKeyfunc:   jwtKeyfunc,
 	}
 }

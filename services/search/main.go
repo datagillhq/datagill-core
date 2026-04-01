@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/datagill/datagill-core/repository"
 )
 
 const serviceName = "search"
@@ -29,6 +31,9 @@ func main() {
 	if cfg.AuthURL == "" {
 		logger.Fatal().Msg("AUTH_URL is required")
 	}
+	if len(cfg.EncryptionKey) != 32 {
+		logger.Fatal().Msg("ENCRYPTION_KEY must be a 64-character hex string (32 bytes)")
+	}
 
 	ctx := context.Background()
 
@@ -43,9 +48,15 @@ func main() {
 	}
 	defer repo.Close()
 
+	integrationsRepo, err := repository.NewPostgresRepository(ctx, cfg.DatabaseURL, cfg.EncryptionKey)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to connect integrations repository")
+	}
+	defer integrationsRepo.Close()
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo, jwtKeyfunc).router(),
+		Handler:           newApp(cfg, logger, repo, integrationsRepo, newLDValidator(), jwtKeyfunc).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 

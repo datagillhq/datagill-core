@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 // testRSAKey is generated once per test binary run and used to sign all test JWTs.
@@ -76,10 +79,56 @@ var testClient = &http.Client{Timeout: 5 * time.Second}
 // repoErr is a generic repository error for error-path tests.
 var repoErr = errors.New("repository unavailable")
 
+// stubIntegrationsRepo is a configurable stub for IntegrationsRepository.
+type stubIntegrationsRepo struct {
+	integrations []models.Integration
+	integrErr    error
+	createErr    error
+	getErr       error
+	updateResult models.Integration
+	updateErr    error
+	deleteResult models.Integration
+	deleteErr    error
+}
+
+func (s *stubIntegrationsRepo) CreateOrg(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (s *stubIntegrationsRepo) CreateIntegration(_ context.Context, i models.Integration) (models.Integration, error) {
+	if s.createErr != nil {
+		return models.Integration{}, s.createErr
+	}
+	i.Key = uuid.New()
+	i.State = models.IntegrationStateActive
+	return i, nil
+}
+func (s *stubIntegrationsRepo) GetIntegration(_ context.Context, _, _ uuid.UUID) (models.Integration, error) {
+	return models.Integration{}, s.getErr
+}
+func (s *stubIntegrationsRepo) ListIntegrations(_ context.Context, _ uuid.UUID) ([]models.Integration, error) {
+	return s.integrations, s.integrErr
+}
+func (s *stubIntegrationsRepo) UpdateIntegration(_ context.Context, _, _ uuid.UUID, _ models.IntegrationPatch) (models.Integration, error) {
+	return s.updateResult, s.updateErr
+}
+func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, _ uuid.UUID) (models.Integration, error) {
+	return s.deleteResult, s.deleteErr
+}
+
+// stubValidator is a configurable stub for IntegrationValidator.
+type stubValidator struct{ err error }
+
+func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) error { return s.err }
+
 func newTestServer(t *testing.T, repo SearchRepository) *httptest.Server {
 	t.Helper()
+	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubValidator{})
+}
+
+func newTestServerFull(t *testing.T, repo SearchRepository, integrations IntegrationsRepository, validator IntegrationValidator) *httptest.Server {
+	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, repo, testJWTKeyfunc)
+	testApp := newApp(loadConfig(), logger, repo, integrations, validator, testJWTKeyfunc)
 	return httptest.NewServer(testApp.router())
 }
 
