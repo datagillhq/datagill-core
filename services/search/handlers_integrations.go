@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/models"
-	repoerr "github.com/datagill/datagill-core/repository"
+	"github.com/datagill/datagill-core/repository"
 )
 
 type integrationResponse struct {
@@ -149,7 +149,7 @@ func (a *app) updateIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	if req.APIKey != nil {
 		existing, err := a.integrationsRepo.GetIntegration(r.Context(), orgID, key)
 		if err != nil {
-			if errors.Is(err, repoerr.ErrNotFound) {
+			if errors.Is(err, repository.ErrNotFound) {
 				writeCode(w, http.StatusNotFound, "INTEGRATION_NOT_FOUND")
 				return
 			}
@@ -172,7 +172,7 @@ func (a *app) updateIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		State:  req.State,
 	})
 	if err != nil {
-		if errors.Is(err, repoerr.ErrNotFound) {
+		if errors.Is(err, repository.ErrNotFound) {
 			writeCode(w, http.StatusNotFound, "INTEGRATION_NOT_FOUND")
 			return
 		}
@@ -200,7 +200,7 @@ func (a *app) deleteIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 
 	deleted, err := a.integrationsRepo.SoftDeleteIntegration(r.Context(), orgID, key)
 	if err != nil {
-		if errors.Is(err, repoerr.ErrNotFound) {
+		if errors.Is(err, repository.ErrNotFound) {
 			writeCode(w, http.StatusNotFound, "INTEGRATION_NOT_FOUND")
 			return
 		}

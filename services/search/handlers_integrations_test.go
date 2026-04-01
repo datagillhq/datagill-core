@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/datagill/datagill-core/models"
-	repoerr "github.com/datagill/datagill-core/repository"
+	"github.com/datagill/datagill-core/repository"
 )
 
 // requestWithToken sends a method+body request with a JWT for testOrgID/testUserID.
@@ -146,13 +146,23 @@ func TestUpdateIntegrationHandler(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		integrationsRepo := &stubIntegrationsRepo{updateErr: repoerr.ErrNotFound}
+		integrationsRepo := &stubIntegrationsRepo{updateErr: repository.ErrNotFound}
 		srv := newTestServerFull(t, &stubRepo{}, integrationsRepo, &stubOrgRepo{}, &stubValidator{})
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"state": "paused"})
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("invalid api key on update", func(t *testing.T) {
+		srv := newTestServerFull(t, &stubRepo{}, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrInvalidAPIKey})
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"api_key": "bad-key"})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
 		}
 	})
 }
@@ -174,7 +184,7 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		integrationsRepo := &stubIntegrationsRepo{deleteErr: repoerr.ErrNotFound}
+		integrationsRepo := &stubIntegrationsRepo{deleteErr: repository.ErrNotFound}
 		srv := newTestServerFull(t, &stubRepo{}, integrationsRepo, &stubOrgRepo{}, &stubValidator{})
 		defer srv.Close()
 
@@ -185,7 +195,7 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 	})
 
 	t.Run("wrong org returns 404 not 403", func(t *testing.T) {
-		integrationsRepo := &stubIntegrationsRepo{deleteErr: repoerr.ErrNotFound}
+		integrationsRepo := &stubIntegrationsRepo{deleteErr: repository.ErrNotFound}
 		srv := newTestServerFull(t, &stubRepo{}, integrationsRepo, &stubOrgRepo{}, &stubValidator{})
 		defer srv.Close()
 
