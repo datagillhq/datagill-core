@@ -21,6 +21,9 @@ type IntegrationValidator interface {
 	Validate(ctx context.Context, provider models.Source, apiKey string) error
 }
 
+// Compile-time check that ValidatorRegistry satisfies IntegrationValidator.
+var _ IntegrationValidator = (*ValidatorRegistry)(nil)
+
 // ValidatorRegistry dispatches validation to the provider-specific implementation.
 // Register a new provider by adding it to newValidatorRegistry.
 type ValidatorRegistry struct {
