@@ -140,6 +140,84 @@ func TestNormalizeFlagDetail_TeamMaintainer(t *testing.T) {
 	}
 }
 
+func TestExtractRolloutPercentage(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name     string
+		flag     models.LDFlagDetail
+		env      models.LDFlagEnv
+		expected *float64
+	}{
+		{
+			name:     "off env is 0%",
+			env:      models.LDFlagEnv{On: false},
+			expected: ptr(0),
+		},
+		{
+			name:     "on with no fallthrough is 100%",
+			env:      models.LDFlagEnv{On: true},
+			expected: ptr(100),
+		},
+		{
+			name: "on with specific variation fallthrough is 100%",
+			env: models.LDFlagEnv{
+				On:          true,
+				Fallthrough: &models.LDFallthrough{Variation: func() *int { v := 0; return &v }()},
+			},
+			expected: ptr(100),
+		},
+		{
+			name: "on with rollout and defaults returns on-variation weight",
+			flag: models.LDFlagDetail{
+				Defaults: &models.LDFlagDefaults{OnVariation: 1},
+			},
+			env: models.LDFlagEnv{
+				On: true,
+				Fallthrough: &models.LDFallthrough{
+					Rollout: &models.LDRollout{
+						Variations: []models.LDWeightedVar{
+							{Variation: 0, Weight: 10000},
+							{Variation: 1, Weight: 90000},
+						},
+					},
+				},
+			},
+			expected: ptr(90),
+		},
+		{
+			name: "on with rollout but no defaults returns nil",
+			env: models.LDFlagEnv{
+				On: true,
+				Fallthrough: &models.LDFallthrough{
+					Rollout: &models.LDRollout{
+						Variations: []models.LDWeightedVar{{Variation: 0, Weight: 100000}},
+					},
+				},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractRolloutPercentage(tt.flag, tt.env)
+			if tt.expected == nil {
+				if got != nil {
+					t.Errorf("expected nil, got %v", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected %v, got nil", *tt.expected)
+			}
+			if *got != *tt.expected {
+				t.Errorf("expected %v, got %v", *tt.expected, *got)
+			}
+		})
+	}
+}
+
 func TestComputeFlagState(t *testing.T) {
 	tests := []struct {
 		name     string

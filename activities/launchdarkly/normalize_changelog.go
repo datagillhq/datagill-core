@@ -100,7 +100,8 @@ func extractEnvironments(entry models.LDAuditEntry) []string {
 
 func extractActor(entry models.LDAuditEntry) models.ChangelogActor {
 	if entry.Member != nil {
-		return models.ChangelogActor{Email: entry.Member.Email}
+		name := strings.TrimSpace(entry.Member.FirstName + " " + entry.Member.LastName)
+		return models.ChangelogActor{Email: entry.Member.Email, Name: name}
 	}
 	return models.ChangelogActor{}
 }

@@ -93,7 +93,8 @@ type FlagLifecycle struct {
 
 // FlagEnvironment holds the per-environment enabled state of a flag.
 type FlagEnvironment struct {
-	Enabled bool `json:"enabled"`
+	Enabled           bool     `json:"enabled"`
+	RolloutPercentage *float64 `json:"rollout_percentage,omitempty"`
 }
 
 // FeatureFlag maps to the feature_flags table.
@@ -121,6 +122,7 @@ type ChangelogData struct {
 // ChangelogActor identifies who made a change.
 type ChangelogActor struct {
 	Email string `json:"email,omitempty"`
+	Name  string `json:"name,omitempty"`
 }
 
 // RecordState is the soft-delete state of a database record.
