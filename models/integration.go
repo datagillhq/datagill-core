@@ -25,11 +25,10 @@ const (
 )
 
 // IntegrationConfig holds provider-specific configuration stored in integrations.config JSONB.
+// Poll interval and backfill window are owned internally by DataGill and are not
+// client-configurable. Project context lives at the feature flag level, not here.
 type IntegrationConfig struct {
-	ProjectKey          string `json:"project_key"`
-	EnvironmentKey      string `json:"environment_key"`
-	PollIntervalMinutes int    `json:"poll_interval_minutes"`
-	BackfillDays        int    `json:"backfill_days"`
+	EnvironmentKey string `json:"environment_key"`
 }
 
 // Integration maps to the integrations table.
