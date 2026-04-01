@@ -91,9 +91,6 @@ type stubIntegrationsRepo struct {
 	deleteErr    error
 }
 
-func (s *stubIntegrationsRepo) CreateOrg(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
 func (s *stubIntegrationsRepo) CreateIntegration(_ context.Context, i models.Integration) (models.Integration, error) {
 	if s.createErr != nil {
 		return models.Integration{}, s.createErr
@@ -115,6 +112,11 @@ func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, _ uui
 	return s.deleteResult, s.deleteErr
 }
 
+// stubOrgRepo is a no-op stub for OrgRepository.
+type stubOrgRepo struct{}
+
+func (s *stubOrgRepo) CreateOrg(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+
 // stubValidator is a configurable stub for IntegrationValidator.
 type stubValidator struct{ err error }
 
@@ -122,13 +124,13 @@ func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) e
 
 func newTestServer(t *testing.T, repo SearchRepository) *httptest.Server {
 	t.Helper()
-	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubValidator{})
+	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{})
 }
 
-func newTestServerFull(t *testing.T, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, validator IntegrationValidator) *httptest.Server {
+func newTestServerFull(t *testing.T, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, searchRepo, integrationsRepo, validator, testJWTKeyfunc)
+	testApp := newApp(loadConfig(), logger, searchRepo, integrationsRepo, orgRepo, validator, testJWTKeyfunc)
 	return httptest.NewServer(testApp.router())
 }
 

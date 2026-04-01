@@ -58,7 +58,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc).router(),
+		Handler:           newApp(cfg, logger, repo, integrationsRepo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 

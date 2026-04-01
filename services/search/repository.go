@@ -12,13 +12,16 @@ import (
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("not found")
 
+// OrgRepository handles org row lifecycle.
+// Org rows are created lazily on first integration — there is no explicit
+// org registration endpoint.
+type OrgRepository interface {
+	CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
+}
+
 // IntegrationsRepository is the data access interface for integration CRUD.
 // repository.PostgresRepository satisfies this interface.
-//
-// CreateOrg is included here because org rows are created lazily on first
-// integration — there is no explicit org registration endpoint.
 type IntegrationsRepository interface {
-	CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
 	CreateIntegration(ctx context.Context, i models.Integration) (models.Integration, error)
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 	ListIntegrations(ctx context.Context, orgID uuid.UUID) ([]models.Integration, error)
