@@ -21,11 +21,36 @@ type IntegrationValidator interface {
 	Validate(ctx context.Context, provider models.Source, apiKey string) error
 }
 
+// ValidatorRegistry dispatches validation to the provider-specific implementation.
+// Register a new provider by adding it to newValidatorRegistry.
+type ValidatorRegistry struct {
+	validators map[models.Source]IntegrationValidator
+}
+
+// newValidatorRegistry returns a registry pre-loaded with all supported providers.
+func newValidatorRegistry() *ValidatorRegistry {
+	return &ValidatorRegistry{
+		validators: map[models.Source]IntegrationValidator{
+			models.SourceLaunchDarkly: newLDValidator(),
+		},
+	}
+}
+
+// Validate dispatches to the provider-specific validator.
+// Returns ErrProviderUnreachable if the provider has no registered validator.
+func (r *ValidatorRegistry) Validate(ctx context.Context, provider models.Source, apiKey string) error {
+	v, ok := r.validators[provider]
+	if !ok {
+		return fmt.Errorf("%w: unknown provider %q", ErrProviderUnreachable, provider)
+	}
+	return v.Validate(ctx, provider, apiKey)
+}
+
+// ldValidator validates LaunchDarkly API keys.
 type ldValidator struct {
 	client *http.Client
 }
 
-// newLDValidator returns an IntegrationValidator that probes the LaunchDarkly API.
 func newLDValidator() IntegrationValidator {
 	return &ldValidator{client: &http.Client{Timeout: 5 * time.Second}}
 }

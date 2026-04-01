@@ -31,8 +31,10 @@ func main() {
 	if cfg.AuthURL == "" {
 		logger.Fatal().Msg("AUTH_URL is required")
 	}
+	// EncryptionKey is nil when ENCRYPTION_KEY is unset or not valid hex;
+	// either way the length check catches it with a clear error.
 	if len(cfg.EncryptionKey) != 32 {
-		logger.Fatal().Msg("ENCRYPTION_KEY must be a 64-character hex string (32 bytes)")
+		logger.Fatal().Msg("ENCRYPTION_KEY must be a 64-character hex string (32 bytes) — generate with: openssl rand -hex 32")
 	}
 
 	ctx := context.Background()
@@ -56,7 +58,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo, integrationsRepo, newLDValidator(), jwtKeyfunc).router(),
+		Handler:           newApp(cfg, logger, repo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 

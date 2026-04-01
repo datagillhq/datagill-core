@@ -14,6 +14,9 @@ var ErrNotFound = errors.New("not found")
 
 // IntegrationsRepository is the data access interface for integration CRUD.
 // repository.PostgresRepository satisfies this interface.
+//
+// CreateOrg is included here because org rows are created lazily on first
+// integration — there is no explicit org registration endpoint.
 type IntegrationsRepository interface {
 	CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
 	CreateIntegration(ctx context.Context, i models.Integration) (models.Integration, error)

@@ -30,7 +30,7 @@ func (a *app) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := a.repository.Search(r.Context(), SearchRequest{
+	results, err := a.searchRepo.Search(r.Context(), SearchRequest{
 		OrgID: orgID,
 		Query: query,
 		Limit: limit,
@@ -53,7 +53,7 @@ func (a *app) flagsHandler(w http.ResponseWriter, r *http.Request) {
 	log := zerolog.Ctx(r.Context())
 	orgID := orgIDFromCtx(r)
 
-	flags, err := a.repository.ListFlags(r.Context(), orgID, FlagFilters{
+	flags, err := a.searchRepo.ListFlags(r.Context(), orgID, FlagFilters{
 		Source:      r.URL.Query().Get("source"),
 		Environment: r.URL.Query().Get("environment"),
 	})
@@ -75,7 +75,7 @@ func (a *app) flagDetailHandler(w http.ResponseWriter, r *http.Request) {
 	orgID := orgIDFromCtx(r)
 	flagKey := chi.URLParam(r, "flag_key")
 
-	flag, err := a.repository.GetFlag(r.Context(), orgID, flagKey)
+	flag, err := a.searchRepo.GetFlag(r.Context(), orgID, flagKey)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "flag not found")
@@ -105,7 +105,7 @@ func (a *app) flagHistoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := a.repository.GetFlagHistory(r.Context(), orgID, flagKey, Pagination{Page: page, Limit: limit})
+	entries, err := a.searchRepo.GetFlagHistory(r.Context(), orgID, flagKey, Pagination{Page: page, Limit: limit})
 	if err != nil {
 		log.Error().Err(err).Str("flag_key", flagKey).Msg("get flag history failed")
 		writeError(w, http.StatusInternalServerError, "failed to get flag history")
@@ -136,7 +136,7 @@ func (a *app) timelineHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := a.repository.GetTimeline(r.Context(), orgID, Pagination{Page: page, Limit: limit})
+	entries, err := a.searchRepo.GetTimeline(r.Context(), orgID, Pagination{Page: page, Limit: limit})
 	if err != nil {
 		log.Error().Err(err).Msg("get timeline failed")
 		writeError(w, http.StatusInternalServerError, "failed to get timeline")

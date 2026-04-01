@@ -125,10 +125,10 @@ func newTestServer(t *testing.T, repo SearchRepository) *httptest.Server {
 	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubValidator{})
 }
 
-func newTestServerFull(t *testing.T, repo SearchRepository, integrations IntegrationsRepository, validator IntegrationValidator) *httptest.Server {
+func newTestServerFull(t *testing.T, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, validator IntegrationValidator) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, repo, integrations, validator, testJWTKeyfunc)
+	testApp := newApp(loadConfig(), logger, searchRepo, integrationsRepo, validator, testJWTKeyfunc)
 	return httptest.NewServer(testApp.router())
 }
 
