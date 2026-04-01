@@ -2,6 +2,11 @@ module github.com/datagill/datagill-core/services/search
 
 go 1.26
 
+replace (
+	github.com/datagill/datagill-core/models => ../../models
+	github.com/datagill/datagill-core/repository => ../../repository
+)
+
 require (
 	github.com/datagill/datagill-core/models v0.0.0
 	github.com/datagill/datagill-core/repository v0.0.0

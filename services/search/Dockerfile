@@ -1,7 +1,8 @@
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
 
-COPY shared/ ./shared/
+COPY models/ ./models/
+COPY repository/ ./repository/
 COPY services/search/ ./services/search/
 ENV GOWORK=off
 WORKDIR /app/services/search

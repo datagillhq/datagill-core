@@ -34,7 +34,7 @@ func (a *app) providersHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 type createIntegrationRequest struct {
-	Provider models.Source            `json:"provider"`
+	Provider models.Source            `json:"source"`
 	APIKey   string                   `json:"api_key"`
 	Config   models.IntegrationConfig `json:"config"`
 }
