@@ -4,7 +4,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,103 +12,198 @@ import (
 	"github.com/datagill/datagill-core/models"
 )
 
-func TestGetIntegration(t *testing.T) {
+func TestEnsureOrg(t *testing.T) {
 	ctx := context.Background()
-	repo, err := NewPostgresRepository(ctx, testConnString)
-	if err != nil {
-		t.Fatalf("failed to create repository: %v", err)
-	}
+	repo, _ := NewPostgresRepository(ctx, testConnString)
 	defer repo.Close()
 
+	orgID := uuid.New()
+	// First call creates the row.
+	if err := repo.EnsureOrg(ctx, orgID, "ext-"+orgID.String()[:8]); err != nil {
+		t.Fatalf("EnsureOrg failed: %v", err)
+	}
+	// Second call is a no-op — must not error.
+	if err := repo.EnsureOrg(ctx, orgID, "ext-"+orgID.String()[:8]); err != nil {
+		t.Fatalf("EnsureOrg (idempotent) failed: %v", err)
+	}
+}
+
+func TestCreateIntegration(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := NewPostgresRepository(ctx, testConnString)
+	defer repo.Close()
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
 
-	orgKey := setupTestOrg(ctx, t, pool)
-	integrationKey := setupTestIntegration(ctx, t, pool, orgKey)
+	orgID := setupTestOrg(ctx, t, pool)
+	i := models.Integration{
+		OrgID:  orgID,
+		Source: models.SourceLaunchDarkly,
+		APIKey: "api-key-123",
+		Config: models.IntegrationConfig{EnvironmentKey: "production"},
+	}
 
-	// Fetch integration
-	integration, err := repo.GetIntegration(ctx, integrationKey)
+	created, err := repo.CreateIntegration(ctx, i)
+	if err != nil {
+		t.Fatalf("CreateIntegration failed: %v", err)
+	}
+	if created.Key == uuid.Nil {
+		t.Error("expected non-nil key")
+	}
+	if created.State != models.IntegrationStateActive {
+		t.Errorf("expected state active, got %s", created.State)
+	}
+	if created.Config.EnvironmentKey != "production" {
+		t.Errorf("expected environment_key production, got %s", created.Config.EnvironmentKey)
+	}
+}
+
+func TestGetIntegration(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := NewPostgresRepository(ctx, testConnString)
+	defer repo.Close()
+	pool, _ := pgxpool.New(ctx, testConnString)
+	defer pool.Close()
+
+	orgID := setupTestOrg(ctx, t, pool)
+	key := setupTestIntegration(ctx, t, pool, orgID)
+
+	got, err := repo.GetIntegration(ctx, orgID, key)
 	if err != nil {
 		t.Fatalf("GetIntegration failed: %v", err)
 	}
-
-	// Verify fields
-	if integration.Key != integrationKey {
-		t.Errorf("expected key %s, got %s", integrationKey, integration.Key)
-	}
-	if integration.OrgID != orgKey {
-		t.Errorf("expected org_id %s, got %s", orgKey, integration.OrgID)
-	}
-	if integration.Source != models.SourceLaunchDarkly {
-		t.Errorf("expected source launchdarkly, got %s", integration.Source)
-	}
-	if integration.State != models.IntegrationStateActive {
-		t.Errorf("expected state active, got %s", integration.State)
-	}
-	if integration.Config.ProjectKey != "test-project" {
-		t.Errorf("expected project_key test-project, got %s", integration.Config.ProjectKey)
+	if got.Key != key {
+		t.Errorf("expected key %s, got %s", key, got.Key)
 	}
 }
 
 func TestGetIntegration_NotFound(t *testing.T) {
 	ctx := context.Background()
-	repo, err := NewPostgresRepository(ctx, testConnString)
-	if err != nil {
-		t.Fatalf("failed to create repository: %v", err)
-	}
+	repo, _ := NewPostgresRepository(ctx, testConnString)
 	defer repo.Close()
+	pool, _ := pgxpool.New(ctx, testConnString)
+	defer pool.Close()
 
-	// Query for non-existent integration
-	_, err = repo.GetIntegration(ctx, uuid.New())
+	orgID := setupTestOrg(ctx, t, pool)
+	_, err := repo.GetIntegration(ctx, orgID, uuid.New())
 	if err != ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
-func TestListIntegrations(t *testing.T) {
+func TestGetIntegration_WrongOrg(t *testing.T) {
 	ctx := context.Background()
-	repo, err := NewPostgresRepository(ctx, testConnString)
-	if err != nil {
-		t.Fatalf("failed to create repository: %v", err)
-	}
+	repo, _ := NewPostgresRepository(ctx, testConnString)
 	defer repo.Close()
-
 	pool, _ := pgxpool.New(ctx, testConnString)
 	defer pool.Close()
 
-	orgKey := setupTestOrg(ctx, t, pool)
+	orgID := setupTestOrg(ctx, t, pool)
+	key := setupTestIntegration(ctx, t, pool, orgID)
+	otherOrg := setupTestOrg(ctx, t, pool)
 
-	// Create an active integration
-	activeKey := setupTestIntegration(ctx, t, pool, orgKey)
-
-	// Create a paused integration
-	pausedKey := uuid.New()
-	config := models.IntegrationConfig{
-		ProjectKey:          "paused-project",
-		EnvironmentKey:      "production",
-		PollIntervalMinutes: 5,
-		BackfillDays:        30,
+	_, err := repo.GetIntegration(ctx, otherOrg, key)
+	if err != ErrNotFound {
+		t.Errorf("expected ErrNotFound for wrong org, got %v", err)
 	}
-	configJSON, _ := json.Marshal(config)
+}
+
+func TestListIntegrations_ActiveAndPaused(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := NewPostgresRepository(ctx, testConnString)
+	defer repo.Close()
+	pool, _ := pgxpool.New(ctx, testConnString)
+	defer pool.Close()
+
+	orgID := setupTestOrg(ctx, t, pool)
+	activeKey := setupTestIntegration(ctx, t, pool, orgID)
+
+	// Insert a paused integration.
+	pausedKey := uuid.New()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, '{}', 'paused', NOW(), NOW())
+	`, pausedKey, orgID, models.SourceLaunchDarkly, "paused-key")
+	if err != nil {
+		t.Fatalf("insert paused integration: %v", err)
+	}
+
+	// Insert a deleted integration — should not appear.
 	_, err = pool.Exec(ctx, `
 		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-	`, pausedKey, orgKey, models.SourceLaunchDarkly, "paused-api-key", configJSON, models.IntegrationStatePaused)
+		VALUES ($1, $2, $3, $4, '{}', 'deleted', NOW(), NOW())
+	`, uuid.New(), orgID, models.SourceLaunchDarkly, "deleted-key")
 	if err != nil {
-		t.Fatalf("failed to create paused integration: %v", err)
+		t.Fatalf("insert deleted integration: %v", err)
 	}
 
-	// List integrations - should only return active
-	integrations, err := repo.ListIntegrations(ctx, orgKey)
+	list, err := repo.ListIntegrations(ctx, orgID)
 	if err != nil {
 		t.Fatalf("ListIntegrations failed: %v", err)
 	}
-
-	if len(integrations) != 1 {
-		t.Fatalf("expected 1 integration, got %d", len(integrations))
+	if len(list) != 2 {
+		t.Fatalf("expected 2 integrations, got %d", len(list))
 	}
+	keys := map[uuid.UUID]bool{list[0].Key: true, list[1].Key: true}
+	if !keys[activeKey] || !keys[pausedKey] {
+		t.Errorf("expected active and paused keys, got %v", keys)
+	}
+}
 
-	if integrations[0].Key != activeKey {
-		t.Errorf("expected active integration key %s, got %s", activeKey, integrations[0].Key)
+func TestUpdateIntegration(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := NewPostgresRepository(ctx, testConnString)
+	defer repo.Close()
+	pool, _ := pgxpool.New(ctx, testConnString)
+	defer pool.Close()
+
+	orgID := setupTestOrg(ctx, t, pool)
+	key := setupTestIntegration(ctx, t, pool, orgID)
+
+	newState := models.IntegrationStatePaused
+	updated, err := repo.UpdateIntegration(ctx, orgID, key, models.IntegrationPatch{State: &newState})
+	if err != nil {
+		t.Fatalf("UpdateIntegration failed: %v", err)
+	}
+	if updated.State != models.IntegrationStatePaused {
+		t.Errorf("expected state paused, got %s", updated.State)
+	}
+}
+
+func TestUpdateIntegration_NotFound(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := NewPostgresRepository(ctx, testConnString)
+	defer repo.Close()
+	pool, _ := pgxpool.New(ctx, testConnString)
+	defer pool.Close()
+
+	orgID := setupTestOrg(ctx, t, pool)
+	_, err := repo.UpdateIntegration(ctx, orgID, uuid.New(), models.IntegrationPatch{})
+	if err != ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestSoftDeleteIntegration(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := NewPostgresRepository(ctx, testConnString)
+	defer repo.Close()
+	pool, _ := pgxpool.New(ctx, testConnString)
+	defer pool.Close()
+
+	orgID := setupTestOrg(ctx, t, pool)
+	key := setupTestIntegration(ctx, t, pool, orgID)
+
+	deleted, err := repo.SoftDeleteIntegration(ctx, orgID, key)
+	if err != nil {
+		t.Fatalf("SoftDeleteIntegration failed: %v", err)
+	}
+	if deleted.State != models.IntegrationStateDeleted {
+		t.Errorf("expected state deleted, got %s", deleted.State)
+	}
+	// Should not appear in GetIntegration after deletion.
+	_, err = repo.GetIntegration(ctx, orgID, key)
+	if err != ErrNotFound {
+		t.Errorf("expected ErrNotFound after soft delete, got %v", err)
 	}
 }

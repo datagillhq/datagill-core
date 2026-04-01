@@ -31,6 +31,13 @@ type IntegrationConfig struct {
 	EnvironmentKey string `json:"environment_key"`
 }
 
+// IntegrationPatch carries optional fields for a partial integration update.
+// Only non-nil fields are applied; nil means "leave unchanged".
+type IntegrationPatch struct {
+	APIKey *string
+	State  *IntegrationState
+}
+
 // Integration maps to the integrations table.
 type Integration struct {
 	ID        int64

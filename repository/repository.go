@@ -27,9 +27,23 @@ type Repository interface {
 	// Upserts on feature_flag_changelog.key.
 	SaveChangelog(ctx context.Context, c models.FeatureFlagChangelog) error
 
-	// GetIntegration returns a single integration by its key.
-	GetIntegration(ctx context.Context, integrationKey uuid.UUID) (models.Integration, error)
+	// GetIntegration returns a single non-deleted integration by key, scoped to the org.
+	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 
-	// ListIntegrations returns all active integrations for an org.
+	// ListIntegrations returns all active and paused integrations for an org.
 	ListIntegrations(ctx context.Context, orgID uuid.UUID) ([]models.Integration, error)
+
+	// CreateIntegration inserts a new integration and returns it with DB-assigned fields.
+	CreateIntegration(ctx context.Context, i models.Integration) (models.Integration, error)
+
+	// UpdateIntegration applies a partial update scoped to the org. Only non-nil
+	// patch fields are written; the rest are left unchanged.
+	UpdateIntegration(ctx context.Context, orgID, key uuid.UUID, patch models.IntegrationPatch) (models.Integration, error)
+
+	// SoftDeleteIntegration sets state = deleted on the integration, scoped to the org.
+	SoftDeleteIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
+
+	// EnsureOrg inserts an org row if one does not already exist. Safe to call
+	// multiple times — uses INSERT ... ON CONFLICT DO NOTHING.
+	EnsureOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
 }

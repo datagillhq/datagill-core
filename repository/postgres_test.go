@@ -104,12 +104,7 @@ func setupTestOrg(ctx context.Context, t *testing.T, pool *pgxpool.Pool) uuid.UU
 func setupTestIntegration(ctx context.Context, t *testing.T, pool *pgxpool.Pool, orgKey uuid.UUID) uuid.UUID {
 	t.Helper()
 	integrationKey := uuid.New()
-	config := models.IntegrationConfig{
-		ProjectKey:          "test-project",
-		EnvironmentKey:      "production",
-		PollIntervalMinutes: 5,
-		BackfillDays:        30,
-	}
+	config := models.IntegrationConfig{EnvironmentKey: "production"}
 	configJSON, _ := json.Marshal(config)
 
 	_, err := pool.Exec(ctx, `

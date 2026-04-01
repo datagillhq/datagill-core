@@ -35,7 +35,7 @@ func (r *mockRepository) SaveChangelog(_ context.Context, c models.FeatureFlagCh
 	return nil
 }
 
-func (r *mockRepository) GetIntegration(_ context.Context, key uuid.UUID) (models.Integration, error) {
+func (r *mockRepository) GetIntegration(_ context.Context, _ uuid.UUID, key uuid.UUID) (models.Integration, error) {
 	return r.integrations[key], nil
 }
 
@@ -45,4 +45,20 @@ func (r *mockRepository) ListIntegrations(_ context.Context, _ uuid.UUID) ([]mod
 		result = append(result, i)
 	}
 	return result, nil
+}
+
+func (r *mockRepository) CreateIntegration(_ context.Context, i models.Integration) (models.Integration, error) {
+	return i, nil
+}
+
+func (r *mockRepository) UpdateIntegration(_ context.Context, _, _ uuid.UUID, _ models.IntegrationPatch) (models.Integration, error) {
+	return models.Integration{}, nil
+}
+
+func (r *mockRepository) SoftDeleteIntegration(_ context.Context, _, _ uuid.UUID) (models.Integration, error) {
+	return models.Integration{}, nil
+}
+
+func (r *mockRepository) EnsureOrg(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
 }
