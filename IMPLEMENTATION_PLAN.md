@@ -66,6 +66,11 @@ Local dev keeps the self-hosted stack (Prometheus + Grafana + Loki via Docker Co
 
 AWS Secrets Manager costs $0.40/secret/month. SSM Parameter Store **Standard** tier is free for up to 10,000 parameters. Use SSM for all secrets at MVP. Secrets Manager is only worth it for automatic rotation — a feature we don't need until we have customers with compliance requirements.
 
+**Pre-production checklist — secrets:**
+- `ENCRYPTION_KEY` (32 cryptographically random bytes, base64-encoded) must be provisioned in SSM before any environment goes live. This key encrypts all integration API keys at rest via AES-256-GCM. Losing it means losing access to every stored integration credential.
+- All secrets (`DATABASE_URL`, `AUTH_URL`, `ENCRYPTION_KEY`) must be sourced from SSM at deploy time — never committed to `.env` files or baked into images.
+- Define a key rotation runbook before staging: re-encrypt all `integrations.api_key` rows with the new key, then swap the env var. No code change required — only a one-off migration script.
+
 ### Compute — start with one host
 
 At MVP, all application services (Worker + Temporal server + Search Service) run on a single EC2 instance or ECS Fargate task. Split onto separate hosts only when resource contention is observed or independent scaling is needed.

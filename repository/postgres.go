@@ -16,10 +16,13 @@ var ErrNotFound = errors.New("not found")
 
 // PostgresRepository implements Repository using PostgreSQL via pgx.
 type PostgresRepository struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	encryptionKey []byte // 32-byte AES-256 key for API key encryption
 }
 
 // NewPostgresRepository creates a new PostgresRepository with a connection pool.
+// encryptionKey must be exactly 32 bytes (AES-256).
+//
 // Pool settings can be configured via connection string parameters:
 //   - pool_max_conns (default: 4)
 //   - pool_min_conns (default: 0)
@@ -28,7 +31,10 @@ type PostgresRepository struct {
 //   - pool_health_check_period (e.g., "1m")
 //
 // Example: postgres://user:pass@host/db?pool_max_conns=20&pool_min_conns=2
-func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRepository, error) {
+func NewPostgresRepository(ctx context.Context, connString string, encryptionKey []byte) (*PostgresRepository, error) {
+	if len(encryptionKey) != 32 {
+		return nil, fmt.Errorf("encryptionKey must be 32 bytes, got %d", len(encryptionKey))
+	}
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
 		return nil, fmt.Errorf("create pool: %w", err)
@@ -39,7 +45,7 @@ func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRep
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 
-	return &PostgresRepository{pool: pool}, nil
+	return &PostgresRepository{pool: pool, encryptionKey: encryptionKey}, nil
 }
 
 // Close closes the connection pool.

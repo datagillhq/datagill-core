@@ -15,7 +15,7 @@ import (
 
 func TestSaveChangelog(t *testing.T) {
 	ctx := context.Background()
-	repo, err := NewPostgresRepository(ctx, testConnString)
+	repo, err := NewPostgresRepository(ctx, testConnString, testEncryptionKey)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestSaveChangelog(t *testing.T) {
 		IntegrationID:   integrationKey,
 		OrgID:           orgKey,
 		EventType:       models.EventTypeToggled,
-		State:           models.FlagStateOn,
+		State:           models.RecordStateActive,
 		OccurredAt:      now,
 		Data: models.ChangelogData{
 			Description: "Turned on the flag",
