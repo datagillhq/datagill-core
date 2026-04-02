@@ -30,6 +30,13 @@ func (s *stubLaunchedWinsRepo) QueryAuditLog(_ context.Context, _ uuid.UUID, _, 
 	return repository.AuditLogResult{}, nil
 }
 
+func TestLaunchedWinsPlugin_ResponseType(t *testing.T) {
+	p := analytics.NewLaunchedWinsPlugin(&stubLaunchedWinsRepo{})
+	if _, ok := p.ResponseType().(analytics.LaunchedWinsResponse); !ok {
+		t.Errorf("expected ResponseType to return LaunchedWinsResponse, got %T", p.ResponseType())
+	}
+}
+
 func TestLaunchedWinsPlugin(t *testing.T) {
 	flagKey := uuid.New()
 	now := time.Now()

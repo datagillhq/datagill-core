@@ -12,6 +12,7 @@ type stubPlugin struct{ name string }
 
 func (s *stubPlugin) Metric() string                                            { return s.name }
 func (s *stubPlugin) Execute(_ context.Context, _ analytics.Query) (any, error) { return nil, nil }
+func (s *stubPlugin) ResponseType() any                                         { return nil }
 
 func TestRegistry_GetRegistered(t *testing.T) {
 	r := analytics.NewRegistry()

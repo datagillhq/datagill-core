@@ -31,7 +31,8 @@ func NewLaunchedWinsPlugin(repo AnalyticsRepository) Plugin {
 	return &launchedWinsPlugin{repo: repo}
 }
 
-func (p *launchedWinsPlugin) Metric() string { return "launched_wins" }
+func (p *launchedWinsPlugin) Metric() string    { return "launched_wins" }
+func (p *launchedWinsPlugin) ResponseType() any { return LaunchedWinsResponse{} }
 
 func (p *launchedWinsPlugin) Execute(ctx context.Context, q Query) (any, error) {
 	res, err := p.repo.QueryLaunchedWins(ctx, q.OrgID, q.From, q.To, q.Team, q.Actor)
