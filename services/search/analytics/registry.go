@@ -5,6 +5,9 @@ import "fmt"
 // ErrUnknownMetric is returned when a metric name has no registered plugin.
 var ErrUnknownMetric = fmt.Errorf("unknown metric")
 
+// ErrDuplicateMetric is returned when registering a metric name that is already registered.
+var ErrDuplicateMetric = fmt.Errorf("duplicate metric")
+
 // Registry holds the set of registered metric plugins.
 type Registry struct {
 	plugins map[string]Plugin
@@ -15,12 +18,14 @@ func NewRegistry() *Registry {
 	return &Registry{plugins: make(map[string]Plugin)}
 }
 
-// Register adds a plugin to the registry. Panics on duplicate metric names.
-func (r *Registry) Register(p Plugin) {
+// Register adds a plugin to the registry. Returns ErrDuplicateMetric if the
+// metric name is already registered.
+func (r *Registry) Register(p Plugin) error {
 	if _, exists := r.plugins[p.Metric()]; exists {
-		panic(fmt.Sprintf("analytics: duplicate metric %q", p.Metric()))
+		return fmt.Errorf("%w: %q", ErrDuplicateMetric, p.Metric())
 	}
 	r.plugins[p.Metric()] = p
+	return nil
 }
 
 // Get returns the plugin for the given metric name, or ErrUnknownMetric.

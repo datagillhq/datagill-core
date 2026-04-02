@@ -15,7 +15,9 @@ func (s *stubPlugin) Execute(_ context.Context, _ analytics.Query) (any, error) 
 
 func TestRegistry_GetRegistered(t *testing.T) {
 	r := analytics.NewRegistry()
-	r.Register(&stubPlugin{"launched_wins"})
+	if err := r.Register(&stubPlugin{"launched_wins"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	p, err := r.Get("launched_wins")
 	if err != nil {
@@ -35,13 +37,13 @@ func TestRegistry_GetUnknown(t *testing.T) {
 	}
 }
 
-func TestRegistry_DuplicatePanics(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic on duplicate metric registration")
-		}
-	}()
+func TestRegistry_DuplicateReturnsError(t *testing.T) {
 	r := analytics.NewRegistry()
-	r.Register(&stubPlugin{"launched_wins"})
-	r.Register(&stubPlugin{"launched_wins"}) // should panic
+	if err := r.Register(&stubPlugin{"launched_wins"}); err != nil {
+		t.Fatalf("unexpected error on first register: %v", err)
+	}
+	err := r.Register(&stubPlugin{"launched_wins"})
+	if !errors.Is(err, analytics.ErrDuplicateMetric) {
+		t.Fatalf("got %v, want ErrDuplicateMetric", err)
+	}
 }
