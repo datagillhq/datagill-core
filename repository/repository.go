@@ -5,6 +5,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -46,4 +47,18 @@ type Repository interface {
 	// CreateOrg inserts an org row if one does not already exist. Safe to call
 	// multiple times — uses INSERT ... ON CONFLICT DO NOTHING.
 	CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
+
+	// QueryLaunchedWins returns flags that had a changelog event in [from, to]
+	// and have at least one environment at 100% rollout.
+	QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) ([]LaunchedWin, error)
+
+	// QueryTopTeams returns teams ranked by changelog activity in [from, to].
+	QueryTopTeams(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]TopTeam, error)
+
+	// QueryVelocity returns the average minutes from flag creation to 100% rollout
+	// for flags that hit 100% within [from, to].
+	QueryVelocity(ctx context.Context, orgID uuid.UUID, from, to time.Time) (VelocityResult, error)
+
+	// QueryAuditLog returns a paginated changelog scoped to org and date range.
+	QueryAuditLog(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string, page, limit int) (AuditLogResult, error)
 }
