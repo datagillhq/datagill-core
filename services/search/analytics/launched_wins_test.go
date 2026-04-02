@@ -50,26 +50,26 @@ func TestLaunchedWinsPlugin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		entries := out.([]analytics.LaunchedWinEntry)
-		if len(entries) != 1 {
-			t.Fatalf("expected 1 entry, got %d", len(entries))
+		resp := out.(analytics.LaunchedWinsResponse)
+		if len(resp.Wins) != 1 {
+			t.Fatalf("expected 1 win, got %d", len(resp.Wins))
 		}
-		if entries[0].FlagKey != flagKey {
-			t.Errorf("unexpected flag key: %v", entries[0].FlagKey)
+		if resp.Wins[0].FlagKey != flagKey {
+			t.Errorf("unexpected flag key: %v", resp.Wins[0].FlagKey)
 		}
-		if entries[0].RolloutPercentage != 100 {
-			t.Errorf("expected rollout 100, got %v", entries[0].RolloutPercentage)
+		if resp.Wins[0].RolloutPercentage != 100 {
+			t.Errorf("expected rollout 100, got %v", resp.Wins[0].RolloutPercentage)
 		}
 	})
 
-	t.Run("empty result returns empty slice", func(t *testing.T) {
+	t.Run("empty result returns empty wins slice", func(t *testing.T) {
 		p := analytics.NewLaunchedWinsPlugin(&stubLaunchedWinsRepo{})
 		out, err := p.Execute(context.Background(), q)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(out.([]analytics.LaunchedWinEntry)) != 0 {
-			t.Error("expected empty slice")
+		if len(out.(analytics.LaunchedWinsResponse).Wins) != 0 {
+			t.Error("expected empty wins slice")
 		}
 	})
 

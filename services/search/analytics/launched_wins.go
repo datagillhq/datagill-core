@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// LaunchedWinEntry is a single item in the launched_wins metric response.
+// LaunchedWinEntry is a single flag that reached 100% rollout in the window.
 type LaunchedWinEntry struct {
 	FlagKey           uuid.UUID `json:"flagKey"`
 	FlagName          string    `json:"flagName"`
@@ -15,6 +15,13 @@ type LaunchedWinEntry struct {
 	ActorName         string    `json:"actorName"`
 	RolloutPercentage float64   `json:"rolloutPercentage"`
 	OccurredAt        time.Time `json:"occurredAt"`
+}
+
+// LaunchedWinsResponse is the launched_wins plugin response envelope.
+// Wrapping in a struct (rather than returning a bare array) keeps the shape
+// extensible — new fields can be added without a breaking change.
+type LaunchedWinsResponse struct {
+	Wins []LaunchedWinEntry `json:"wins"`
 }
 
 type launchedWinsPlugin struct{ repo AnalyticsRepository }
@@ -42,5 +49,5 @@ func (p *launchedWinsPlugin) Execute(ctx context.Context, q Query) (any, error) 
 			OccurredAt:        w.OccurredAt,
 		})
 	}
-	return entries, nil
+	return LaunchedWinsResponse{Wins: entries}, nil
 }
