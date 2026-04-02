@@ -52,14 +52,18 @@ func TestAnalyticsHandler(t *testing.T) {
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			t.Fatalf("decode error: %v", err)
 		}
-		if body["metric"] != "launched_wins" {
-			t.Errorf("expected metric=launched_wins in envelope, got %v", body["metric"])
-		}
 		if body["orgId"] == nil {
 			t.Error("expected orgId in envelope")
 		}
-		if body["data"] == nil {
-			t.Error("expected data in envelope")
+		if body["metric"] != nil {
+			t.Error("top-level metric field should not be present")
+		}
+		data, ok := body["data"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected data to be a map, got %T", body["data"])
+		}
+		if data["launched_wins"] == nil {
+			t.Error("expected data[launched_wins] to be present")
 		}
 	})
 

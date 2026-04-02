@@ -107,10 +107,9 @@ func (a *app) analyticsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"orgId":  orgID,
-		"metric": req.metric,
-		"from":   req.query.From,
-		"to":     req.query.To,
-		"data":   result,
+		"orgId": orgID,
+		"from":  req.query.From,
+		"to":    req.query.To,
+		"data":  map[string]any{req.metric: result},
 	})
 }
