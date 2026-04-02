@@ -60,6 +60,13 @@ type AuditLogResult struct {
 // QueryLaunchedWins returns flags that had a changelog event in [from, to] and
 // currently have at least one environment at 100% rollout.
 // Optional team and actor filters AND together when both are non-empty.
+//
+// TODO: this is an approximation — it checks the flag's current rollout_percentage,
+// not whether the rollout *changed to* 100% in the queried event. A flag launched
+// months ago with a description change today will appear as a win; a flag rolled back
+// after reaching 100% will not appear. To fix this properly, store rollout_percentage
+// in the changelog data JSONB during ETL normalization so we can filter on the
+// per-event snapshot rather than current state.
 func (r *PostgresRepository) QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) (LaunchedWinsResult, error) {
 	const q = `
 		SELECT
