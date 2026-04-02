@@ -28,4 +28,8 @@ type Plugin interface {
 	Metric() string
 	// Execute runs the metric query and returns the result payload.
 	Execute(ctx context.Context, q Query) (any, error)
+	// ResponseType returns a zero value of the plugin's response type.
+	// Used for documentation and tooling — enforces that every plugin
+	// explicitly declares its response shape alongside its implementation.
+	ResponseType() any
 }
