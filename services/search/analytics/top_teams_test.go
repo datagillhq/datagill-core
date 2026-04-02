@@ -12,29 +12,11 @@ import (
 	"github.com/datagill/datagill-core/services/search/analytics"
 )
 
-type stubTopTeamsRepo struct {
-	result repository.TopTeamsResult
-	err    error
-}
-
-func (s *stubTopTeamsRepo) QueryLaunchedWins(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string) (repository.LaunchedWinsResult, error) {
-	return repository.LaunchedWinsResult{}, nil
-}
-func (s *stubTopTeamsRepo) QueryTopTeams(_ context.Context, _ uuid.UUID, _, _ time.Time) (repository.TopTeamsResult, error) {
-	return s.result, s.err
-}
-func (s *stubTopTeamsRepo) QueryVelocity(_ context.Context, _ uuid.UUID, _, _ time.Time) (repository.VelocityResult, error) {
-	return repository.VelocityResult{}, nil
-}
-func (s *stubTopTeamsRepo) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string, _, _ int) (repository.AuditLogResult, error) {
-	return repository.AuditLogResult{}, nil
-}
-
 func TestTopTeamsPlugin(t *testing.T) {
 	q := analytics.Query{OrgID: uuid.New(), From: time.Now().Add(-24 * time.Hour), To: time.Now()}
 
 	t.Run("returns teams ordered by change count", func(t *testing.T) {
-		repo := &stubTopTeamsRepo{result: repository.TopTeamsResult{
+		repo := &fakeAnalyticsRepo{topTeams: repository.TopTeamsResult{
 			Teams: []repository.TopTeam{
 				{TeamName: "alpha", ChangeCount: 5},
 				{TeamName: "beta", ChangeCount: 2},
@@ -59,7 +41,7 @@ func TestTopTeamsPlugin(t *testing.T) {
 	})
 
 	t.Run("empty result returns empty teams slice", func(t *testing.T) {
-		p := analytics.NewTopTeamsPlugin(&stubTopTeamsRepo{})
+		p := analytics.NewTopTeamsPlugin(&fakeAnalyticsRepo{})
 		out, err := p.Execute(context.Background(), q)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -70,14 +52,14 @@ func TestTopTeamsPlugin(t *testing.T) {
 	})
 
 	t.Run("repo error propagates", func(t *testing.T) {
-		p := analytics.NewTopTeamsPlugin(&stubTopTeamsRepo{err: errors.New("db error")})
+		p := analytics.NewTopTeamsPlugin(&fakeAnalyticsRepo{err: errors.New("db error")})
 		if _, err := p.Execute(context.Background(), q); err == nil {
 			t.Error("expected error, got nil")
 		}
 	})
 
 	t.Run("ResponseType returns TopTeamsResponse", func(t *testing.T) {
-		p := analytics.NewTopTeamsPlugin(&stubTopTeamsRepo{})
+		p := analytics.NewTopTeamsPlugin(&fakeAnalyticsRepo{})
 		if _, ok := p.ResponseType().(analytics.TopTeamsResponse); !ok {
 			t.Errorf("expected TopTeamsResponse, got %T", p.ResponseType())
 		}
