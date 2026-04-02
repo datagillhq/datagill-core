@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/models"
+	"github.com/datagill/datagill-core/services/search/analytics"
 )
 
 // testRSAKey is generated once per test binary run and used to sign all test JWTs.
@@ -124,13 +125,13 @@ func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) e
 
 func newTestServer(t *testing.T, repo SearchRepository) *httptest.Server {
 	t.Helper()
-	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{})
+	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
 }
 
-func newTestServerFull(t *testing.T, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator) *httptest.Server {
+func newTestServerFull(t *testing.T, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, searchRepo, integrationsRepo, orgRepo, validator, testJWTKeyfunc)
+	testApp := newApp(loadConfig(), logger, searchRepo, integrationsRepo, orgRepo, validator, testJWTKeyfunc, analyticsRegistry)
 	return httptest.NewServer(testApp.router())
 }
 

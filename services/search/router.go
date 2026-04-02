@@ -48,6 +48,9 @@ func (a *app) router() http.Handler {
 		r.Get("/v1/integrations", a.listIntegrationsHandler)
 		r.Put("/v1/integrations/{key}", a.updateIntegrationHandler)
 		r.Delete("/v1/integrations/{key}", a.deleteIntegrationHandler)
+
+		// Analytics API
+		r.Get("/v1/analytics", a.analyticsHandler)
 	})
 
 	return r
