@@ -56,7 +56,7 @@ func TestLaunchedWinsPlugin(t *testing.T) {
 	})
 
 	t.Run("repo error propagates", func(t *testing.T) {
-		p := analytics.NewLaunchedWinsPlugin(&fakeAnalyticsRepo{err: errors.New("db error")})
+		p := analytics.NewLaunchedWinsPlugin(&fakeAnalyticsRepo{launchedWinsErr: errors.New("db error")})
 		if _, err := p.Execute(context.Background(), q); err == nil {
 			t.Error("expected error, got nil")
 		}

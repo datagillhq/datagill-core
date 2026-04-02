@@ -52,7 +52,7 @@ func TestTopTeamsPlugin(t *testing.T) {
 	})
 
 	t.Run("repo error propagates", func(t *testing.T) {
-		p := analytics.NewTopTeamsPlugin(&fakeAnalyticsRepo{err: errors.New("db error")})
+		p := analytics.NewTopTeamsPlugin(&fakeAnalyticsRepo{topTeamsErr: errors.New("db error")})
 		if _, err := p.Execute(context.Background(), q); err == nil {
 			t.Error("expected error, got nil")
 		}

@@ -12,7 +12,7 @@ type stubPlugin struct{ name string }
 
 func (s *stubPlugin) Metric() string                                            { return s.name }
 func (s *stubPlugin) Execute(_ context.Context, _ analytics.Query) (any, error) { return nil, nil }
-func (s *stubPlugin) ResponseType() any                                         { return nil }
+func (s *stubPlugin) ResponseType() any                                         { return struct{}{} }
 
 func TestRegistry_GetRegistered(t *testing.T) {
 	r := analytics.NewRegistry()
@@ -46,5 +46,16 @@ func TestRegistry_DuplicateReturnsError(t *testing.T) {
 	err := r.Register(&stubPlugin{"launched_wins"})
 	if !errors.Is(err, analytics.ErrDuplicateMetric) {
 		t.Fatalf("got %v, want ErrDuplicateMetric", err)
+	}
+}
+
+func TestRegistry_ResponseTypeIsNonNil(t *testing.T) {
+	r := analytics.NewRegistry()
+	if err := r.Register(&stubPlugin{"launched_wins"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	p, _ := r.Get("launched_wins")
+	if p.ResponseType() == nil {
+		t.Error("ResponseType() must not return nil — every plugin must declare its response shape")
 	}
 }
