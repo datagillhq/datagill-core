@@ -12,38 +12,13 @@ import (
 	"github.com/datagill/datagill-core/services/search/analytics"
 )
 
-type stubLaunchedWinsRepo struct {
-	result repository.LaunchedWinsResult
-	err    error
-}
-
-func (s *stubLaunchedWinsRepo) QueryLaunchedWins(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string) (repository.LaunchedWinsResult, error) {
-	return s.result, s.err
-}
-func (s *stubLaunchedWinsRepo) QueryTopTeams(_ context.Context, _ uuid.UUID, _, _ time.Time) (repository.TopTeamsResult, error) {
-	return repository.TopTeamsResult{}, nil
-}
-func (s *stubLaunchedWinsRepo) QueryVelocity(_ context.Context, _ uuid.UUID, _, _ time.Time) (repository.VelocityResult, error) {
-	return repository.VelocityResult{}, nil
-}
-func (s *stubLaunchedWinsRepo) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string, _, _ int) (repository.AuditLogResult, error) {
-	return repository.AuditLogResult{}, nil
-}
-
-func TestLaunchedWinsPlugin_ResponseType(t *testing.T) {
-	p := analytics.NewLaunchedWinsPlugin(&stubLaunchedWinsRepo{})
-	if _, ok := p.ResponseType().(analytics.LaunchedWinsResponse); !ok {
-		t.Errorf("expected ResponseType to return LaunchedWinsResponse, got %T", p.ResponseType())
-	}
-}
-
 func TestLaunchedWinsPlugin(t *testing.T) {
 	flagKey := uuid.New()
 	now := time.Now()
 	q := analytics.Query{OrgID: uuid.New(), From: now.Add(-24 * time.Hour), To: now, Page: 1, Limit: 25}
 
 	t.Run("returns entries with rollout percentage 100", func(t *testing.T) {
-		repo := &stubLaunchedWinsRepo{result: repository.LaunchedWinsResult{
+		repo := &fakeAnalyticsRepo{launchedWins: repository.LaunchedWinsResult{
 			Wins: []repository.LaunchedWin{
 				{FlagKey: flagKey, FlagName: "my-flag", ActorEmail: "a@b.com", ActorName: "Alice", OccurredAt: now},
 			},
@@ -70,7 +45,7 @@ func TestLaunchedWinsPlugin(t *testing.T) {
 	})
 
 	t.Run("empty result returns empty wins slice", func(t *testing.T) {
-		p := analytics.NewLaunchedWinsPlugin(&stubLaunchedWinsRepo{})
+		p := analytics.NewLaunchedWinsPlugin(&fakeAnalyticsRepo{})
 		out, err := p.Execute(context.Background(), q)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -81,9 +56,16 @@ func TestLaunchedWinsPlugin(t *testing.T) {
 	})
 
 	t.Run("repo error propagates", func(t *testing.T) {
-		p := analytics.NewLaunchedWinsPlugin(&stubLaunchedWinsRepo{err: errors.New("db error")})
+		p := analytics.NewLaunchedWinsPlugin(&fakeAnalyticsRepo{launchedWinsErr: errors.New("db error")})
 		if _, err := p.Execute(context.Background(), q); err == nil {
 			t.Error("expected error, got nil")
 		}
 	})
+}
+
+func TestLaunchedWinsPlugin_ResponseType(t *testing.T) {
+	p := analytics.NewLaunchedWinsPlugin(&fakeAnalyticsRepo{})
+	if _, ok := p.ResponseType().(analytics.LaunchedWinsResponse); !ok {
+		t.Errorf("expected ResponseType to return LaunchedWinsResponse, got %T", p.ResponseType())
+	}
 }
