@@ -82,28 +82,28 @@ func TestQueryLaunchedWins(t *testing.T) {
 		map[string]models.FlagEnvironment{"production": {Enabled: true, RolloutPercentage: ptr(50.0)}}, "")
 	setupTestChangelog(ctx, t, pool, orgID, intID, flag50, now, "bob@example.com", "Bob", []string{"production"})
 
-	wins, err := repo.QueryLaunchedWins(ctx, orgID, window[0], window[1], "", "")
+	res, err := repo.QueryLaunchedWins(ctx, orgID, window[0], window[1], "", "")
 	if err != nil {
 		t.Fatalf("QueryLaunchedWins: %v", err)
 	}
-	if len(wins) != 1 {
-		t.Fatalf("expected 1 win, got %d", len(wins))
+	if len(res.Wins) != 1 {
+		t.Fatalf("expected 1 win, got %d", len(res.Wins))
 	}
-	if wins[0].FlagKey != flagAt100 {
-		t.Errorf("unexpected flag key: %v", wins[0].FlagKey)
+	if res.Wins[0].FlagKey != flagAt100 {
+		t.Errorf("unexpected flag key: %v", res.Wins[0].FlagKey)
 	}
-	if wins[0].ActorEmail != "alice@example.com" {
-		t.Errorf("unexpected actor email: %s", wins[0].ActorEmail)
+	if res.Wins[0].ActorEmail != "alice@example.com" {
+		t.Errorf("unexpected actor email: %s", res.Wins[0].ActorEmail)
 	}
 
 	// Team filter: "team-alpha" returns result; "team-beta" does not.
-	wins, err = repo.QueryLaunchedWins(ctx, orgID, window[0], window[1], "team-alpha", "")
-	if err != nil || len(wins) != 1 {
-		t.Errorf("team filter team-alpha: err=%v, count=%d", err, len(wins))
+	res, err = repo.QueryLaunchedWins(ctx, orgID, window[0], window[1], "team-alpha", "")
+	if err != nil || len(res.Wins) != 1 {
+		t.Errorf("team filter team-alpha: err=%v, count=%d", err, len(res.Wins))
 	}
-	wins, err = repo.QueryLaunchedWins(ctx, orgID, window[0], window[1], "team-beta", "")
-	if err != nil || len(wins) != 0 {
-		t.Errorf("team filter team-beta: err=%v, count=%d", err, len(wins))
+	res, err = repo.QueryLaunchedWins(ctx, orgID, window[0], window[1], "team-beta", "")
+	if err != nil || len(res.Wins) != 0 {
+		t.Errorf("team filter team-beta: err=%v, count=%d", err, len(res.Wins))
 	}
 }
 
@@ -131,18 +131,18 @@ func TestQueryTopTeams(t *testing.T) {
 	setupTestChangelog(ctx, t, pool, orgID, intID, flag3, now, "b@b.com", "", nil)
 	setupTestChangelog(ctx, t, pool, orgID, intID, flag4, now, "c@c.com", "", nil)
 
-	teams, err := repo.QueryTopTeams(ctx, orgID, window[0], window[1])
+	res, err := repo.QueryTopTeams(ctx, orgID, window[0], window[1])
 	if err != nil {
 		t.Fatalf("QueryTopTeams: %v", err)
 	}
-	if len(teams) != 2 {
-		t.Fatalf("expected 2 teams, got %d", len(teams))
+	if len(res.Teams) != 2 {
+		t.Fatalf("expected 2 teams, got %d", len(res.Teams))
 	}
-	if teams[0].TeamName != "alpha" || teams[0].ChangeCount != 2 {
-		t.Errorf("top team: got %+v", teams[0])
+	if res.Teams[0].TeamName != "alpha" || res.Teams[0].ChangeCount != 2 {
+		t.Errorf("top team: got %+v", res.Teams[0])
 	}
-	if teams[1].TeamName != "beta" || teams[1].ChangeCount != 1 {
-		t.Errorf("second team: got %+v", teams[1])
+	if res.Teams[1].TeamName != "beta" || res.Teams[1].ChangeCount != 1 {
+		t.Errorf("second team: got %+v", res.Teams[1])
 	}
 }
 

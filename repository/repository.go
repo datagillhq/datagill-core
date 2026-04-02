@@ -50,10 +50,10 @@ type Repository interface {
 
 	// QueryLaunchedWins returns flags that had a changelog event in [from, to]
 	// and have at least one environment at 100% rollout.
-	QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) ([]LaunchedWin, error)
+	QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) (LaunchedWinsResult, error)
 
 	// QueryTopTeams returns teams ranked by changelog activity in [from, to].
-	QueryTopTeams(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]TopTeam, error)
+	QueryTopTeams(ctx context.Context, orgID uuid.UUID, from, to time.Time) (TopTeamsResult, error)
 
 	// QueryVelocity returns the average minutes from flag creation to 100% rollout
 	// for flags that hit 100% within [from, to].

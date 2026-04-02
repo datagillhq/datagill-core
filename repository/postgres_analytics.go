@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// LaunchedWin represents a flag that reached 100% rollout in a query window.
+// LaunchedWin is a single flag that reached 100% rollout within a query window.
 type LaunchedWin struct {
 	FlagKey    uuid.UUID
 	FlagName   string
@@ -18,13 +18,23 @@ type LaunchedWin struct {
 	OccurredAt time.Time
 }
 
-// TopTeam represents a team ranked by number of flag changes in a query window.
+// LaunchedWinsResult is the response from QueryLaunchedWins.
+type LaunchedWinsResult struct {
+	Wins []LaunchedWin
+}
+
+// TopTeam is a single team entry ranked by changelog activity.
 type TopTeam struct {
 	TeamName    string
 	ChangeCount int
 }
 
-// VelocityResult holds the average time-to-full-rollout across a query window.
+// TopTeamsResult is the response from QueryTopTeams.
+type TopTeamsResult struct {
+	Teams []TopTeam
+}
+
+// VelocityResult is the response from QueryVelocity.
 type VelocityResult struct {
 	AverageMinutes float64
 	SampleSize     int
@@ -50,7 +60,7 @@ type AuditLogResult struct {
 // QueryLaunchedWins returns flags that had a changelog event in [from, to] and
 // currently have at least one environment at 100% rollout.
 // Optional team and actor filters AND together when both are non-empty.
-func (r *PostgresRepository) QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) ([]LaunchedWin, error) {
+func (r *PostgresRepository) QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) (LaunchedWinsResult, error) {
 	const q = `
 		SELECT
 			ff.key,
@@ -73,26 +83,26 @@ func (r *PostgresRepository) QueryLaunchedWins(ctx context.Context, orgID uuid.U
 
 	rows, err := r.pool.Query(ctx, q, orgID, from, to, team, actor)
 	if err != nil {
-		return nil, fmt.Errorf("QueryLaunchedWins: %w", err)
+		return LaunchedWinsResult{}, fmt.Errorf("QueryLaunchedWins: %w", err)
 	}
 	defer rows.Close()
 
-	var wins []LaunchedWin
+	var res LaunchedWinsResult
 	for rows.Next() {
 		var w LaunchedWin
 		if err := rows.Scan(&w.FlagKey, &w.FlagName, &w.ActorEmail, &w.ActorName, &w.OccurredAt); err != nil {
-			return nil, fmt.Errorf("QueryLaunchedWins scan: %w", err)
+			return LaunchedWinsResult{}, fmt.Errorf("QueryLaunchedWins scan: %w", err)
 		}
-		wins = append(wins, w)
+		res.Wins = append(res.Wins, w)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("QueryLaunchedWins rows: %w", err)
+		return LaunchedWinsResult{}, fmt.Errorf("QueryLaunchedWins rows: %w", err)
 	}
-	return wins, nil
+	return res, nil
 }
 
 // QueryTopTeams returns teams ranked by number of flag changelog events in [from, to].
-func (r *PostgresRepository) QueryTopTeams(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]TopTeam, error) {
+func (r *PostgresRepository) QueryTopTeams(ctx context.Context, orgID uuid.UUID, from, to time.Time) (TopTeamsResult, error) {
 	const q = `
 		SELECT
 			ff.data->'maintainer'->'team'->>'name' AS team_name,
@@ -108,22 +118,22 @@ func (r *PostgresRepository) QueryTopTeams(ctx context.Context, orgID uuid.UUID,
 
 	rows, err := r.pool.Query(ctx, q, orgID, from, to)
 	if err != nil {
-		return nil, fmt.Errorf("QueryTopTeams: %w", err)
+		return TopTeamsResult{}, fmt.Errorf("QueryTopTeams: %w", err)
 	}
 	defer rows.Close()
 
-	var teams []TopTeam
+	var res TopTeamsResult
 	for rows.Next() {
 		var t TopTeam
 		if err := rows.Scan(&t.TeamName, &t.ChangeCount); err != nil {
-			return nil, fmt.Errorf("QueryTopTeams scan: %w", err)
+			return TopTeamsResult{}, fmt.Errorf("QueryTopTeams scan: %w", err)
 		}
-		teams = append(teams, t)
+		res.Teams = append(res.Teams, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("QueryTopTeams rows: %w", err)
+		return TopTeamsResult{}, fmt.Errorf("QueryTopTeams rows: %w", err)
 	}
-	return teams, nil
+	return res, nil
 }
 
 // QueryVelocity returns the average time (minutes) from flag creation to reaching
