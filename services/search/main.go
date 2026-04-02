@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/repository"
+	"github.com/datagill/datagill-core/services/search/analytics"
 )
 
 const serviceName = "search"
@@ -56,9 +57,14 @@ func main() {
 	}
 	defer integrationsRepo.Close()
 
+	analyticsRegistry := analytics.NewRegistry()
+	if err := analytics.RegisterAll(analyticsRegistry, integrationsRepo); err != nil {
+		logger.Fatal().Err(err).Msg("failed to register analytics plugins")
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo, integrationsRepo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc).router(),
+		Handler:           newApp(cfg, logger, repo, integrationsRepo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc, analyticsRegistry).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 
