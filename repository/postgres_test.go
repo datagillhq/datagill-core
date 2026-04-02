@@ -76,6 +76,7 @@ func runMigrations(ctx context.Context, connString string) error {
 	migrations := []string{
 		"001_initialize.up.sql",
 		"002_indexes.up.sql",
+		"003_analytics_indexes.up.sql",
 	}
 
 	for _, mig := range migrations {
