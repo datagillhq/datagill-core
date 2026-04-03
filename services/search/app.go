@@ -10,7 +10,6 @@ import (
 type app struct {
 	config            config
 	logger            zerolog.Logger
-	searchRepo        SearchRepository
 	integrationsRepo  IntegrationsRepository
 	orgRepo           OrgRepository
 	validator         IntegrationValidator
@@ -18,11 +17,10 @@ type app struct {
 	analyticsRegistry *analytics.Registry
 }
 
-func newApp(cfg config, logger zerolog.Logger, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, jwtKeyfunc jwt.Keyfunc, analyticsRegistry *analytics.Registry) *app {
+func newApp(cfg config, logger zerolog.Logger, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, jwtKeyfunc jwt.Keyfunc, analyticsRegistry *analytics.Registry) *app {
 	return &app{
 		config:            cfg,
 		logger:            logger,
-		searchRepo:        searchRepo,
 		integrationsRepo:  integrationsRepo,
 		orgRepo:           orgRepo,
 		validator:         validator,

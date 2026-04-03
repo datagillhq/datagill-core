@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,44 +40,14 @@ func makeToken(orgID, userID string) string {
 	return signed
 }
 
-// stubRepo lets each test configure exactly the data and errors it needs.
-type stubRepo struct {
-	searchResults []SearchResult
-	searchErr     error
-	flags         []FlagSummary
-	flagsErr      error
-	flagDetail    FlagDetail
-	flagDetailErr error
-	history       []ChangelogEntry
-	historyErr    error
-	timeline      []ChangelogEntry
-	timelineErr   error
-}
-
-func (s *stubRepo) Search(_ context.Context, _ SearchRequest) ([]SearchResult, error) {
-	return s.searchResults, s.searchErr
-}
-func (s *stubRepo) ListFlags(_ context.Context, _ string, _ FlagFilters) ([]FlagSummary, error) {
-	return s.flags, s.flagsErr
-}
-func (s *stubRepo) GetFlag(_ context.Context, _, _ string) (FlagDetail, error) {
-	return s.flagDetail, s.flagDetailErr
-}
-func (s *stubRepo) GetFlagHistory(_ context.Context, _, _ string, _ Pagination) ([]ChangelogEntry, error) {
-	return s.history, s.historyErr
-}
-func (s *stubRepo) GetTimeline(_ context.Context, _ string, _ Pagination) ([]ChangelogEntry, error) {
-	return s.timeline, s.timelineErr
-}
-
 // testOrgID is a valid UUID used as the org ID in handler tests.
 const testOrgID = "00000000-0000-0000-0000-000000000001"
 
+// testUserID is a stable user ID used alongside testOrgID in handler tests.
+const testUserID = "00000000-0000-0000-0000-000000000002"
+
 // testClient has an explicit timeout so tests fail fast rather than hanging.
 var testClient = &http.Client{Timeout: 5 * time.Second}
-
-// repoErr is a generic repository error for error-path tests.
-var repoErr = errors.New("repository unavailable")
 
 // stubIntegrationsRepo is a configurable stub for IntegrationsRepository.
 type stubIntegrationsRepo struct {
@@ -123,15 +92,15 @@ type stubValidator struct{ err error }
 
 func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) error { return s.err }
 
-func newTestServer(t *testing.T, repo SearchRepository) *httptest.Server {
+func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	return newTestServerFull(t, repo, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
 }
 
-func newTestServerFull(t *testing.T, searchRepo SearchRepository, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
+func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, searchRepo, integrationsRepo, orgRepo, validator, testJWTKeyfunc, analyticsRegistry)
+	testApp := newApp(loadConfig(), logger, integrationsRepo, orgRepo, validator, testJWTKeyfunc, analyticsRegistry)
 	return httptest.NewServer(testApp.router())
 }
 
@@ -147,9 +116,6 @@ func get(t *testing.T, url string) *http.Response {
 	}
 	return resp
 }
-
-// testUserID is a stable user ID used alongside testOrgID in handler tests.
-const testUserID = "00000000-0000-0000-0000-000000000002"
 
 func getWithToken(t *testing.T, url, orgID, userID string) *http.Response {
 	t.Helper()

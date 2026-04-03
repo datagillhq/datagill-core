@@ -28,14 +28,3 @@ type IntegrationsRepository interface {
 	UpdateIntegration(ctx context.Context, orgID, key uuid.UUID, patch models.IntegrationPatch) (models.Integration, error)
 	SoftDeleteIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 }
-
-// SearchRepository is the data access interface for the search service.
-// The concrete implementation (PostgresSearchRepository) is wired up in
-// Phase 2B.
-type SearchRepository interface {
-	Search(ctx context.Context, req SearchRequest) ([]SearchResult, error)
-	ListFlags(ctx context.Context, orgID string, filters FlagFilters) ([]FlagSummary, error)
-	GetFlag(ctx context.Context, orgID, flagKey string) (FlagDetail, error)
-	GetFlagHistory(ctx context.Context, orgID, flagKey string, p Pagination) ([]ChangelogEntry, error)
-	GetTimeline(ctx context.Context, orgID string, p Pagination) ([]ChangelogEntry, error)
-}

@@ -10,7 +10,7 @@ import (
 )
 
 func TestRequestIDHeaderIsSet(t *testing.T) {
-	srv := newTestServer(t, &stubRepo{})
+	srv := newTestServer(t)
 	defer srv.Close()
 	resp := get(t, srv.URL+"/healthz")
 	defer resp.Body.Close()
@@ -20,9 +20,9 @@ func TestRequestIDHeaderIsSet(t *testing.T) {
 }
 
 func TestJWTMiddleware_MissingToken(t *testing.T) {
-	srv := newTestServer(t, &stubRepo{})
+	srv := newTestServer(t)
 	defer srv.Close()
-	resp := get(t, srv.URL+"/flags")
+	resp := get(t, srv.URL+"/v1/integrations")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
@@ -30,9 +30,9 @@ func TestJWTMiddleware_MissingToken(t *testing.T) {
 }
 
 func TestJWTMiddleware_ValidToken(t *testing.T) {
-	srv := newTestServer(t, &stubRepo{})
+	srv := newTestServer(t)
 	defer srv.Close()
-	resp := getWithToken(t, srv.URL+"/flags", testOrgID, testUserID)
+	resp := getWithToken(t, srv.URL+"/v1/integrations", testOrgID, testUserID)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -40,7 +40,7 @@ func TestJWTMiddleware_ValidToken(t *testing.T) {
 }
 
 func TestJWTMiddleware_ExpiredToken(t *testing.T) {
-	srv := newTestServer(t, &stubRepo{})
+	srv := newTestServer(t)
 	defer srv.Close()
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -50,7 +50,7 @@ func TestJWTMiddleware_ExpiredToken(t *testing.T) {
 	})
 	signed, _ := token.SignedString(testRSAKey)
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/flags", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/integrations", nil)
 	req.Header.Set("Authorization", "Bearer "+signed)
 	resp, err := testClient.Do(req)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestJWTMiddleware_ExpiredToken(t *testing.T) {
 }
 
 func TestJWTMiddleware_MissingOrgIDClaim(t *testing.T) {
-	srv := newTestServer(t, &stubRepo{})
+	srv := newTestServer(t)
 	defer srv.Close()
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -72,7 +72,7 @@ func TestJWTMiddleware_MissingOrgIDClaim(t *testing.T) {
 	})
 	signed, _ := token.SignedString(testRSAKey)
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/flags", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/integrations", nil)
 	req.Header.Set("Authorization", "Bearer "+signed)
 	resp, err := testClient.Do(req)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestJWTMiddleware_MissingOrgIDClaim(t *testing.T) {
 }
 
 func TestMetricsEndpoint(t *testing.T) {
-	srv := newTestServer(t, &stubRepo{})
+	srv := newTestServer(t)
 	defer srv.Close()
 	resp := get(t, srv.URL+"/metrics")
 	defer resp.Body.Close()

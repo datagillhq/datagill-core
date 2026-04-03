@@ -17,10 +17,4 @@ var (
 		Help:    "HTTP request duration in seconds.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "handler"})
-
-	dbQueryDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "datagill_db_query_duration_seconds",
-		Help:    "Database query duration in seconds.",
-		Buckets: prometheus.DefBuckets,
-	}, []string{"query_name", "status"})
 )

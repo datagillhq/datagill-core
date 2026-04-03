@@ -45,12 +45,6 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to fetch JWKS")
 	}
 
-	repo, err := NewPostgresSearchRepository(ctx, cfg.DatabaseURL)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to connect to database")
-	}
-	defer repo.Close()
-
 	integrationsRepo, err := repository.NewPostgresRepository(ctx, cfg.DatabaseURL, cfg.EncryptionKey)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to connect integrations repository")
@@ -64,7 +58,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, repo, integrationsRepo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc, analyticsRegistry).router(),
+		Handler:           newApp(cfg, logger, integrationsRepo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc, analyticsRegistry).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 
