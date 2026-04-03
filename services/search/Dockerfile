@@ -7,7 +7,7 @@ COPY services/search/ ./services/search/
 ENV GOWORK=off
 WORKDIR /app/services/search
 
-RUN go build -o /search ./...
+RUN go build -o /search .
 
 FROM alpine:3.21
 RUN apk --no-cache add ca-certificates
