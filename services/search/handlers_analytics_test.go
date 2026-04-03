@@ -31,7 +31,7 @@ func newAnalyticsTestServer(t *testing.T, plugin analytics.Plugin) *httptest.Ser
 	if err := reg.Register(plugin); err != nil {
 		t.Fatal(err)
 	}
-	return newTestServerFull(t, &stubRepo{}, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, reg)
+	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, reg)
 }
 
 const validDateRange = "from=2025-01-01T00:00:00Z&to=2025-02-01T00:00:00Z"
@@ -68,47 +68,35 @@ func TestAnalyticsHandler(t *testing.T) {
 	})
 
 	t.Run("missing metric returns 400", func(t *testing.T) {
-		srv := newTestServer(t, &stubRepo{})
+		srv := newTestServer(t)
 		defer srv.Close()
 
 		resp := getWithToken(t, srv.URL+"/v1/analytics?"+validDateRange, testOrgID, testUserID)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		assertCode(t, resp, "ANALYTICS_MISSING_METRIC")
+		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_MISSING_METRIC")
 	})
 
 	t.Run("missing from/to returns 400", func(t *testing.T) {
-		srv := newTestServer(t, &stubRepo{})
+		srv := newTestServer(t)
 		defer srv.Close()
 
 		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=launched_wins", testOrgID, testUserID)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		assertCode(t, resp, "ANALYTICS_MISSING_DATE_RANGE")
+		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_MISSING_DATE_RANGE")
 	})
 
 	t.Run("invalid date format returns 400", func(t *testing.T) {
-		srv := newTestServer(t, &stubRepo{})
+		srv := newTestServer(t)
 		defer srv.Close()
 
 		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=launched_wins&from=not-a-date&to=also-not", testOrgID, testUserID)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		assertCode(t, resp, "ANALYTICS_INVALID_DATE_FORMAT")
+		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_INVALID_DATE_FORMAT")
 	})
 
 	t.Run("unknown metric returns 400", func(t *testing.T) {
-		srv := newTestServer(t, &stubRepo{})
+		srv := newTestServer(t)
 		defer srv.Close()
 
 		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=does_not_exist&"+validDateRange, testOrgID, testUserID)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		assertCode(t, resp, "ANALYTICS_UNKNOWN_METRIC")
+		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_UNKNOWN_METRIC")
 	})
 
 	t.Run("plugin execute error returns 500", func(t *testing.T) {
@@ -125,7 +113,7 @@ func TestAnalyticsHandler(t *testing.T) {
 	})
 
 	t.Run("no auth returns 401", func(t *testing.T) {
-		srv := newTestServer(t, &stubRepo{})
+		srv := newTestServer(t)
 		defer srv.Close()
 
 		resp := get(t, srv.URL+"/v1/analytics?metric=velocity&"+validDateRange)
@@ -135,12 +123,10 @@ func TestAnalyticsHandler(t *testing.T) {
 	})
 
 	t.Run("limit capped at MaxLimit", func(t *testing.T) {
-		executed := false
 		srv := newAnalyticsTestServer(t, &stubPlugin{
 			metric: "audit_log",
 			result: analytics.AuditLogResponse{},
 		})
-		_ = executed
 		defer srv.Close()
 
 		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=audit_log&limit=9999&"+validDateRange, testOrgID, testUserID)
@@ -150,14 +136,17 @@ func TestAnalyticsHandler(t *testing.T) {
 	})
 }
 
-// assertCode decodes the response body and asserts the "code" field matches expected.
-func assertCode(t *testing.T, resp *http.Response, expected string) {
+// assertCode checks the HTTP status and the "code" field in the JSON body.
+func assertCode(t *testing.T, resp *http.Response, status int, code string) {
 	t.Helper()
+	if resp.StatusCode != status {
+		t.Fatalf("expected status %d, got %d", status, resp.StatusCode)
+	}
 	var body map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode error: %v", err)
 	}
-	if body["code"] != expected {
-		t.Errorf("expected code %q, got %q", expected, body["code"])
+	if body["code"] != code {
+		t.Errorf("expected code %q, got %q", code, body["code"])
 	}
 }

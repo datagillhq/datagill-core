@@ -36,11 +36,6 @@ func (a *app) router() http.Handler {
 	// API routes — JWT required.
 	r.Group(func(r chi.Router) {
 		r.Use(a.jwtMiddleware)
-		r.Get("/search", a.searchHandler)
-		r.Get("/flags", a.flagsHandler)
-		r.Get("/flags/{flag_key}", a.flagDetailHandler)
-		r.Get("/flags/{flag_key}/history", a.flagHistoryHandler)
-		r.Get("/timeline", a.timelineHandler)
 
 		// Integrations API
 		r.Get("/v1/integrations/providers", a.providersHandler)
