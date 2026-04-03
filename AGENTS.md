@@ -886,6 +886,18 @@ High-frequency events (per-audit-log-entry, per-Temporal-activity) must be logge
 
 ---
 
+### 11.7 Git Workflow
+
+**Never push directly to `main`.** Every change — including single-line fixes — must go through a branch and pull request. There are no exceptions.
+
+- Branch naming: `ku/<short-description>` (e.g. `ku/fix-dockerfile-build`)
+- Every PR must pass tests and lint before merging
+- A passing CI check is not a substitute for a PR — the PR is where review, context, and history live
+
+**Why:** A single-line change can cause an incident. Direct pushes to `main` bypass review, skip the audit trail, and cannot be reverted cleanly if the branch was never created.
+
+---
+
 ### 11.6 DDIA Principles
 
 *Designing Data-Intensive Applications* (Kleppmann) is the primary architectural reference for all storage, consistency, and data flow decisions. When a design decision is not covered by this document, consult the relevant DDIA chapter and add the decision to AGENTS.md Section 7.
