@@ -84,7 +84,7 @@ DataGill is a **business intelligence platform for engineering teams**. It conne
 | Frontend | Next.js (App Router) + shadcn/ui | Best-in-class SSR; accessible components we own |
 | Backend | Go + Chi | Goroutines fit ETL concurrency; Chi is lightweight and stdlib-compatible |
 | Database | PostgreSQL 16 + pgvector | ACID, JSONB, vector search. Two instances: one for Temporal state, one for app data |
-| Auth | Clerk | JWT issuance + org management; Go validates via JWKS |
+| Auth | TBD (Clerk vs Better Auth under evaluation) | Need org model, JWT / session strategy, frontend / backend integration plan, and hosting tradeoff review |
 | Embeddings | OpenAI text-embedding-3-small / Ollama nomic-embed-text | Post-MVP. Swappable via EmbedProvider interface |
 | Orchestration | Self-hosted Temporal | Replaces queues. Durable state, retry, scheduling in one primitive |
 | Migrations | golang-migrate | Run at startup or as a separate job |
@@ -100,6 +100,7 @@ DataGill is a **business intelligence platform for engineering teams**. It conne
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
 | Hosting / compute | Railway, Fly.io, GCP Cloud Run, VPS | Cost analysis |
 | Frontend data fetching | TanStack Query, SWR, RSC-only | LLD session |
+| Auth provider | Clerk, Better Auth | Frontend / backend auth architecture review |
 | Provider auth V2 | OAuth (no manual key management) | Post-MVP |
 
 ---
