@@ -72,7 +72,9 @@ func (v *ldValidator) Validate(ctx context.Context, _ models.Source, apiKey stri
 	switch resp.StatusCode {
 	case http.StatusOK:
 		return nil
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		// LaunchDarkly returns 404 ("synthetic-404-with-tarpit") for invalid keys
+		// on the projects endpoint, in addition to the expected 401/403.
 		return ErrInvalidAPIKey
 	default:
 		return ErrProviderUnreachable

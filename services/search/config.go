@@ -15,6 +15,7 @@ type config struct {
 	Environment   string
 	DatabaseURL   string
 	AuthURL       string
+	AllowedOrigin string // CORS allowed origin for the browser UI
 	EncryptionKey []byte // 32 bytes decoded from ENCRYPTION_KEY (hex)
 }
 
@@ -37,11 +38,17 @@ func loadConfig() config {
 		}
 	}
 
+	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:3001"
+	}
+
 	return config{
 		Port:          port,
 		Environment:   environment,
 		DatabaseURL:   os.Getenv("APP_DATABASE_URL"),
 		AuthURL:       os.Getenv("AUTH_URL"),
+		AllowedOrigin: allowedOrigin,
 		EncryptionKey: encryptionKey,
 	}
 }
