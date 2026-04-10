@@ -71,6 +71,31 @@ Notes:
 - If you want to run the search service with `go run`, you still need `.env`
   loaded because `APP_DATABASE_URL` is required.
 
+### Seeding demo data
+
+After signing up and creating an org, run the seed script to populate feature flags and changelog events so the dashboard has data to show:
+
+```bash
+go run ./cmd/seed \
+  --db-url "postgres://datagill:secret@localhost:5432/datagill" \
+  --org-id  "<uuid from your org>" \
+  --integration-id "<uuid from your integration>"
+```
+
+Find the UUIDs in the database:
+
+```bash
+# org ID — use the org you created during onboarding
+psql postgres://datagill:secret@localhost:5432/datagill \
+  -c "SELECT id, name FROM organizations;"
+
+# integration ID — created when you connect LaunchDarkly
+psql postgres://datagill:secret@localhost:5432/datagill \
+  -c "SELECT key, source FROM feature_flag_integrations;"
+```
+
+The script is idempotent — safe to run multiple times.
+
 ---
 
 > See [`AGENTS.md`](./AGENTS.md) for the full architecture, product requirements, and open questions.
