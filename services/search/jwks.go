@@ -45,7 +45,8 @@ func fetchJWKSKeyfunc(jwksURL string) (jwt.Keyfunc, error) {
 	keyMap := make(map[string]*rsa.PublicKey, len(body.Keys))
 	var fallback *rsa.PublicKey
 	for _, k := range body.Keys {
-		if k.Kty != "RSA" || k.Use != "sig" {
+		// Accept keys with use="sig" or no use field (some providers omit it).
+		if k.Kty != "RSA" || (k.Use != "" && k.Use != "sig") {
 			continue
 		}
 		pub, err := parseRSAPublicKey(k)

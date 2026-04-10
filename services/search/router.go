@@ -9,6 +9,24 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// corsMiddleware sets CORS headers and short-circuits OPTIONS preflight requests.
+// allowedOrigin is the exact origin the browser UI runs on (e.g. http://localhost:3001).
+func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Vary", "Origin")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (a *app) router() http.Handler {
 	r := chi.NewRouter()
 
@@ -20,6 +38,9 @@ func (a *app) router() http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
+
+	// CORS must run before JWT so preflight OPTIONS requests are never blocked.
+	r.Use(corsMiddleware(a.config.AllowedOrigin))
 
 	// Middleware order per IMPLEMENTATION_PLAN.md §1C.2.
 	r.Use(middleware.RequestID)
