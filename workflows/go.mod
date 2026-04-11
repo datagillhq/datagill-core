@@ -14,6 +14,7 @@ require (
 	github.com/datagill/datagill-core/models v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
+	go.temporal.io/api v1.62.2
 	go.temporal.io/sdk v1.41.1
 )
 
@@ -48,8 +49,7 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	go.opentelemetry.io/otel v1.41.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.41.0 // indirect
-	go.temporal.io/api v1.62.2 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
