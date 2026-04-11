@@ -50,8 +50,6 @@ func main() {
 
 	w.RegisterWorkflow(workflows.FeatureFlagETLWorkflow)
 	w.RegisterWorkflow(ldworkflows.LaunchDarklyExtractWorkflow)
-	w.RegisterWorkflow(ldworkflows.LaunchDarklyChangelogTransformWorkflow)
-	w.RegisterWorkflow(ldworkflows.LaunchDarklyFlagTransformWorkflow)
 
 	log.Printf("worker starting on task queue %q → temporal %s", taskQueue, temporalAddr)
 	if err := w.Run(worker.InterruptCh()); err != nil {

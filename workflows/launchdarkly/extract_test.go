@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/datagill/datagill-core/activities"
 	ldactivities "github.com/datagill/datagill-core/activities/launchdarkly"
 	"github.com/datagill/datagill-core/models"
 	ldworkflows "github.com/datagill/datagill-core/workflows/launchdarkly"
@@ -48,10 +49,16 @@ func TestExtractWorkflow_HappyPath(t *testing.T) {
 		Return(scrollOut, nil)
 	env.OnActivity((*ldactivities.Activities).GetFlagDetail, mock.Anything, mock.Anything, mock.Anything).
 		Return(flagDetailOut, nil)
+	env.OnActivity((*ldactivities.Activities).NormalizeChangelog, mock.Anything, mock.Anything, mock.Anything).
+		Return(models.FeatureFlagChangelog{Key: uuid.New(), OrgID: integration.OrgID}, nil)
+	env.OnActivity((*activities.SharedActivities).SaveChangelog, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil)
+	env.OnActivity((*ldactivities.Activities).NormalizeFlagDetail, mock.Anything, mock.Anything, mock.Anything).
+		Return(models.FeatureFlag{Key: uuid.New(), OrgID: integration.OrgID}, nil)
+	env.OnActivity((*activities.SharedActivities).SaveFeatureFlag, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil)
 	env.OnActivity((*ldactivities.Activities).UpdateLastSyncedAt, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil)
-	env.OnWorkflow(ldworkflows.LaunchDarklyChangelogTransformWorkflow, mock.Anything, mock.Anything).Return(nil)
-	env.OnWorkflow(ldworkflows.LaunchDarklyFlagTransformWorkflow, mock.Anything, mock.Anything).Return(nil)
 
 	env.ExecuteWorkflow(ldworkflows.LaunchDarklyExtractWorkflow, ldworkflows.ExtractInput{
 		Integration: integration,
@@ -78,7 +85,7 @@ func TestExtractWorkflow_SkipsNonFlagEntries(t *testing.T) {
 		Return(scrollOut, nil)
 	env.OnActivity((*ldactivities.Activities).UpdateLastSyncedAt, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil)
-	// No GetFlagDetail, no changelog/flag transforms — nothing to deduplicate from non-flag entries.
+	// No transform activities — non-flag entries are skipped entirely.
 
 	env.ExecuteWorkflow(ldworkflows.LaunchDarklyExtractWorkflow, ldworkflows.ExtractInput{
 		Integration: integration,
@@ -110,12 +117,16 @@ func TestExtractWorkflow_FlagDetailNotFoundSkipped(t *testing.T) {
 
 	env.OnActivity((*ldactivities.Activities).ScrollAuditLogs, mock.Anything, mock.Anything, mock.Anything).
 		Return(scrollOut, nil)
-	// GetFlagDetail returns non-retryable error (flag deleted) — workflow must skip, not fail.
+	// Flag detail returns non-retryable error (deleted) — workflow must skip, not fail.
 	env.OnActivity((*ldactivities.Activities).GetFlagDetail, mock.Anything, mock.Anything, mock.Anything).
 		Return(ldactivities.GetFlagDetailOutput{}, temporal.NewNonRetryableApplicationError("not found", "NotFound", nil))
+	// Changelog transform still runs for the deletion audit entry.
+	env.OnActivity((*ldactivities.Activities).NormalizeChangelog, mock.Anything, mock.Anything, mock.Anything).
+		Return(models.FeatureFlagChangelog{Key: uuid.New(), OrgID: integration.OrgID}, nil)
+	env.OnActivity((*activities.SharedActivities).SaveChangelog, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil)
 	env.OnActivity((*ldactivities.Activities).UpdateLastSyncedAt, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil)
-	env.OnWorkflow(ldworkflows.LaunchDarklyChangelogTransformWorkflow, mock.Anything, mock.Anything).Return(nil)
 
 	env.ExecuteWorkflow(ldworkflows.LaunchDarklyExtractWorkflow, ldworkflows.ExtractInput{
 		Integration: integration,
@@ -137,7 +148,6 @@ func TestExtractWorkflow_IncrementalSync(t *testing.T) {
 
 	scrollOut := ldactivities.ScrollAuditLogsOutput{Entries: nil}
 
-	// Verify ScrollAuditLogs is called (After will be set from LastSyncedAt internally).
 	env.OnActivity((*ldactivities.Activities).ScrollAuditLogs, mock.Anything, mock.Anything, mock.Anything).
 		Return(scrollOut, nil)
 	env.OnActivity((*ldactivities.Activities).UpdateLastSyncedAt, mock.Anything, mock.Anything, mock.Anything).
