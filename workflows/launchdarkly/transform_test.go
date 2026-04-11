@@ -45,7 +45,6 @@ func TestChangelogTransformWorkflow(t *testing.T) {
 		Entry:          entry,
 		IntegrationKey: integrationKey,
 		OrgID:          orgID,
-		ProjectKey:     "my-project",
 	})
 
 	if err := env.GetWorkflowError(); err != nil {

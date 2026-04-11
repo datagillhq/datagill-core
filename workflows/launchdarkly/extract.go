@@ -2,6 +2,7 @@ package launchdarkly
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -14,11 +15,18 @@ import (
 const (
 	scrollAuditLogsTimeout = 10 * time.Minute
 	flagDetailTimeout      = 30 * time.Second
+	updateSyncTimeout      = 10 * time.Second
 )
 
 // ExtractInput is the input for LaunchDarklyExtractWorkflow.
 type ExtractInput struct {
 	Integration models.Integration
+}
+
+// flagRef holds the project and flag key parsed from an audit log resource string.
+type flagRef struct {
+	ProjectKey string
+	FlagKey    string
 }
 
 // LaunchDarklyExtractWorkflow orchestrates the full ETL extract for one LaunchDarkly integration.
@@ -27,29 +35,48 @@ type ExtractInput struct {
 func LaunchDarklyExtractWorkflow(ctx workflow.Context, input ExtractInput) error {
 	integration := input.Integration
 
+	// Capture the time before scrolling so we record an accurate watermark.
+	now := workflow.Now(ctx)
+
 	// --- Step 1: scroll all audit log pages via a single activity call ---
 	scrollInput := ldactivities.ScrollAuditLogsInput{
 		IntegrationKey: integration.Key,
 		OrgID:          integration.OrgID,
-		ProjectKey:     integration.Config.ProjectKey,
 	}
-	if integration.Config.BackfillDays > 0 {
-		scrollInput.After = workflow.Now(ctx).AddDate(0, 0, -integration.Config.BackfillDays)
+	if integration.Config.LastSyncedAt != nil {
+		// Incremental run: fetch only entries since the last successful sync.
+		scrollInput.After = *integration.Config.LastSyncedAt
+	} else if integration.Config.BackfillDays > 0 {
+		// First run with backfill configured: fetch entries within the backfill window.
+		scrollInput.After = now.AddDate(0, 0, -integration.Config.BackfillDays)
 	}
+	// If neither is set, no After filter — fetch all available history.
 
 	scrollCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: scrollAuditLogsTimeout,
 	})
 	var scrollOut ldactivities.ScrollAuditLogsOutput
+	// Activity retries are handled by Temporal before .Get() returns; wrapping with %w is safe.
 	if err := workflow.ExecuteActivity(scrollCtx, (*ldactivities.Activities).ScrollAuditLogs, scrollInput).Get(ctx, &scrollOut); err != nil {
 		return fmt.Errorf("LaunchDarklyExtractWorkflow: scroll audit logs: %w", err)
 	}
 
-	// --- Step 2: deduplicate flag keys ---
-	flagKeys := uniqueFlagKeys(scrollOut.Entries)
+	// --- Step 1b: record the sync watermark so subsequent runs are incremental ---
+	updateCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: updateSyncTimeout,
+	})
+	if err := workflow.ExecuteActivity(updateCtx, (*ldactivities.Activities).UpdateLastSyncedAt, ldactivities.UpdateLastSyncedAtInput{
+		IntegrationKey: integration.Key,
+		SyncedAt:       now,
+	}).Get(ctx, nil); err != nil {
+		return fmt.Errorf("LaunchDarklyExtractWorkflow: update last synced at: %w", err)
+	}
+
+	// --- Step 2: deduplicate (project, flag) pairs from audit entries ---
+	flagRefs := uniqueFlagRefs(scrollOut.Entries)
 
 	// --- Step 3: fetch flag details in parallel ---
-	flagDetails := fetchFlagDetails(ctx, integration, flagKeys)
+	flagDetails, failedKeys := fetchFlagDetails(ctx, integration, flagRefs)
 
 	// --- Step 4: fan-out changelog transforms (fire-and-forget + ack) ---
 	for _, entry := range scrollOut.Entries {
@@ -68,29 +95,49 @@ func LaunchDarklyExtractWorkflow(ctx workflow.Context, input ExtractInput) error
 		}
 	}
 
+	// Fail the workflow if any flag detail fetches exhausted all retries — the operator
+	// should retry the workflow to re-attempt those flags.
+	if len(failedKeys) > 0 {
+		return fmt.Errorf("LaunchDarklyExtractWorkflow: failed to fetch details for %d flag(s): %s",
+			len(failedKeys), strings.Join(failedKeys, ", "))
+	}
 	return nil
 }
 
-// uniqueFlagKeys returns the deduplicated flag keys referenced in the audit entries.
-func uniqueFlagKeys(entries []models.LDAuditEntry) []string {
+// uniqueFlagRefs returns deduplicated (project, flag) pairs referenced in the audit entries.
+func uniqueFlagRefs(entries []models.LDAuditEntry) []flagRef {
 	seen := make(map[string]bool)
-	var keys []string
+	var refs []flagRef
 	for _, e := range entries {
 		for _, access := range e.Accesses {
-			if key := flagKeyFromResource(access.Resource); key != "" && !seen[key] {
-				seen[key] = true
-				keys = append(keys, key)
+			proj := projectKeyFromResource(access.Resource)
+			flag := flagKeyFromResource(access.Resource)
+			if proj != "" && flag != "" {
+				key := proj + "/" + flag
+				if !seen[key] {
+					seen[key] = true
+					refs = append(refs, flagRef{ProjectKey: proj, FlagKey: flag})
+				}
 			}
 		}
 	}
-	return keys
+	return refs
 }
 
 // flagKeyFromResource parses "proj/p:env/e:flag/my-flag" and returns "my-flag".
 func flagKeyFromResource(resource string) string {
-	// reuse the same segment-parsing logic as normalize_changelog
 	for _, part := range splitResource(resource) {
 		if before, after, ok := cutPair(part, '/'); ok && before == "flag" {
+			return after
+		}
+	}
+	return ""
+}
+
+// projectKeyFromResource parses "proj/my-project:env/e:flag/f" and returns "my-project".
+func projectKeyFromResource(resource string) string {
+	for _, part := range splitResource(resource) {
+		if before, after, ok := cutPair(part, '/'); ok && before == "proj" {
 			return after
 		}
 	}
@@ -120,21 +167,22 @@ func cutPair(s string, sep byte) (string, string, bool) {
 
 // fetchFlagDetails fetches all flag details in parallel using workflow.Go goroutines.
 // Non-retryable errors (e.g. flag deleted) are skipped silently.
-func fetchFlagDetails(ctx workflow.Context, integration models.Integration, flagKeys []string) []ldactivities.GetFlagDetailOutput {
+// Retryable errors that exhaust all Temporal retries are collected and returned as failedKeys.
+func fetchFlagDetails(ctx workflow.Context, integration models.Integration, refs []flagRef) ([]ldactivities.GetFlagDetailOutput, []string) {
 	type result struct {
 		out ldactivities.GetFlagDetailOutput
 		err error
 	}
 
-	results := make([]result, len(flagKeys))
+	results := make([]result, len(refs))
 	wg := workflow.NewWaitGroup(ctx)
 
 	flagCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: flagDetailTimeout,
 	})
 
-	for i, key := range flagKeys {
-		i, key := i, key
+	for i, ref := range refs {
+		i, ref := i, ref
 		wg.Add(1)
 		workflow.Go(ctx, func(gCtx workflow.Context) {
 			defer wg.Done()
@@ -142,8 +190,8 @@ func fetchFlagDetails(ctx workflow.Context, integration models.Integration, flag
 			err := workflow.ExecuteActivity(flagCtx, (*ldactivities.Activities).GetFlagDetail, ldactivities.GetFlagDetailInput{
 				IntegrationKey: integration.Key,
 				OrgID:          integration.OrgID,
-				ProjectKey:     integration.Config.ProjectKey,
-				FlagKey:        key,
+				ProjectKey:     ref.ProjectKey,
+				FlagKey:        ref.FlagKey,
 			}).Get(gCtx, &out)
 			results[i] = result{out: out, err: err}
 		})
@@ -151,19 +199,20 @@ func fetchFlagDetails(ctx workflow.Context, integration models.Integration, flag
 	wg.Wait(ctx)
 
 	var details []ldactivities.GetFlagDetailOutput
-	for _, r := range results {
+	var failedKeys []string
+	for i, r := range results {
 		if r.err != nil {
 			if isNonRetryable(r.err) {
 				// Flag was deleted or otherwise permanently unavailable — skip.
 				continue
 			}
-			// Retryable errors would have been retried by Temporal before reaching here.
-			// If we reach this point it means retries were exhausted; skip to avoid blocking.
+			// All Temporal retries exhausted for this flag — caller will fail the workflow.
+			failedKeys = append(failedKeys, refs[i].ProjectKey+"/"+refs[i].FlagKey)
 			continue
 		}
 		details = append(details, r.out)
 	}
-	return details
+	return details, failedKeys
 }
 
 // spawnChangelogTransform fires off a ChangelogTransformWorkflow and waits for it to start (ack).
@@ -176,7 +225,6 @@ func spawnChangelogTransform(ctx workflow.Context, integration models.Integratio
 		Entry:          entry,
 		IntegrationKey: integration.Key,
 		OrgID:          integration.OrgID,
-		ProjectKey:     integration.Config.ProjectKey,
 	}
 	future := workflow.ExecuteChildWorkflow(childCtx, LaunchDarklyChangelogTransformWorkflow, input)
 	if err := future.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
@@ -196,7 +244,7 @@ func spawnFlagTransform(ctx workflow.Context, integration models.Integration, de
 		SourceRecordKey: detail.SourceRecordKey,
 		IntegrationKey:  integration.Key,
 		OrgID:           integration.OrgID,
-		ProjectKey:      integration.Config.ProjectKey,
+		ProjectKey:      detail.ProjectKey,
 	}
 	future := workflow.ExecuteChildWorkflow(childCtx, LaunchDarklyFlagTransformWorkflow, input)
 	if err := future.GetChildWorkflowExecution().Get(ctx, nil); err != nil {

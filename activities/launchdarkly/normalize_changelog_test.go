@@ -26,7 +26,6 @@ func TestNormalizeChangelog_Created(t *testing.T) {
 		Entry:          entry,
 		IntegrationKey: uuid.New(),
 		OrgID:          uuid.New(),
-		ProjectKey:     "my-project",
 	})
 	if err != nil {
 		t.Fatalf("NormalizeChangelog failed: %v", err)
@@ -58,7 +57,6 @@ func TestNormalizeChangelog_Toggled(t *testing.T) {
 		},
 		IntegrationKey: uuid.New(),
 		OrgID:          uuid.New(),
-		ProjectKey:     "my-project",
 	})
 	if err != nil {
 		t.Fatalf("NormalizeChangelog failed: %v", err)
@@ -81,7 +79,6 @@ func TestNormalizeChangelog_NonFlagKind(t *testing.T) {
 		},
 		IntegrationKey: uuid.New(),
 		OrgID:          uuid.New(),
-		ProjectKey:     "my-project",
 	})
 	if err == nil {
 		t.Fatal("expected error for non-flag kind")
@@ -104,7 +101,6 @@ func TestNormalizeChangelog_TokenActor(t *testing.T) {
 		Entry:          entry,
 		IntegrationKey: uuid.New(),
 		OrgID:          uuid.New(),
-		ProjectKey:     "my-project",
 	})
 	if err != nil {
 		t.Fatalf("NormalizeChangelog failed: %v", err)
@@ -125,7 +121,6 @@ func TestNormalizeChangelog_NoFlagKeyInAccesses(t *testing.T) {
 		},
 		IntegrationKey: uuid.New(),
 		OrgID:          uuid.New(),
-		ProjectKey:     "my-project",
 	})
 	if err == nil {
 		t.Fatal("expected error when flag key cannot be extracted")

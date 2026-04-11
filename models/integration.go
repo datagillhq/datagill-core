@@ -26,10 +26,10 @@ const (
 
 // IntegrationConfig holds provider-specific configuration stored in integrations.config JSONB.
 type IntegrationConfig struct {
-	ProjectKey          string `json:"project_key"`
-	EnvironmentKey      string `json:"environment_key"`
-	PollIntervalMinutes int    `json:"poll_interval_minutes"`
-	BackfillDays        int    `json:"backfill_days"`
+	EnvironmentKey      string     `json:"environment_key"`
+	PollIntervalMinutes int        `json:"poll_interval_minutes"`
+	BackfillDays        int        `json:"backfill_days"`
+	LastSyncedAt        *time.Time `json:"last_synced_at,omitempty"`
 }
 
 // Integration maps to the integrations table.

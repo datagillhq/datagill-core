@@ -21,7 +21,6 @@ type ChangelogTransformInput struct {
 	Entry          models.LDAuditEntry
 	IntegrationKey uuid.UUID
 	OrgID          uuid.UUID
-	ProjectKey     string
 }
 
 // FlagTransformInput is the input for LaunchDarklyFlagTransformWorkflow.
@@ -45,7 +44,6 @@ func LaunchDarklyChangelogTransformWorkflow(ctx workflow.Context, input Changelo
 		Entry:          input.Entry,
 		IntegrationKey: input.IntegrationKey,
 		OrgID:          input.OrgID,
-		ProjectKey:     input.ProjectKey,
 	}
 	if err := workflow.ExecuteActivity(ctx, (*ldactivities.Activities).NormalizeChangelog, normalizeInput).Get(ctx, &changelog); err != nil {
 		return fmt.Errorf("LaunchDarklyChangelogTransformWorkflow: normalize: %w", err)

@@ -3,6 +3,7 @@ package launchdarkly
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -46,6 +47,10 @@ func (r *mockRepository) ListIntegrations(_ context.Context, _ uuid.UUID) ([]mod
 		result = append(result, i)
 	}
 	return result, nil
+}
+
+func (r *mockRepository) UpdateIntegrationLastSyncedAt(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
 }
 
 func mustNewClient(t *testing.T, apiKey string, opts ...ClientOption) *Client {

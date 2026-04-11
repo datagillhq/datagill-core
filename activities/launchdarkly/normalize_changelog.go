@@ -16,7 +16,6 @@ type NormalizeChangelogInput struct {
 	Entry          models.LDAuditEntry
 	IntegrationKey uuid.UUID
 	OrgID          uuid.UUID
-	ProjectKey     string
 }
 
 // NormalizeChangelog transforms a LaunchDarkly audit entry into a canonical changelog entry.
@@ -32,10 +31,15 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 		return models.FeatureFlagChangelog{}, fmt.Errorf("audit entry %s has no flag key in accesses", entry.ID)
 	}
 
+	projectKey := extractProjectKey(entry)
+	if projectKey == "" {
+		return models.FeatureFlagChangelog{}, fmt.Errorf("audit entry %s has no project key in accesses", entry.ID)
+	}
+
 	changelog := models.FeatureFlagChangelog{
-		Key:             models.ComputeChangelogKey(input.OrgID, models.SourceLaunchDarkly, input.ProjectKey, entry.ID),
+		Key:             models.ComputeChangelogKey(input.OrgID, models.SourceLaunchDarkly, projectKey, entry.ID),
 		SourceRecordKey: models.ComputeSourceRecordKey(input.OrgID, models.SourceLaunchDarkly, models.SourceTypeAuditLog, entry.ID),
-		FeatureFlagKey:  models.ComputeFlagKey(input.OrgID, models.SourceLaunchDarkly, input.ProjectKey, flagKey),
+		FeatureFlagKey:  models.ComputeFlagKey(input.OrgID, models.SourceLaunchDarkly, projectKey, flagKey),
 		IntegrationID:   input.IntegrationKey,
 		OrgID:           input.OrgID,
 		EventType:       mapActionToEventType(firstAction(entry)),
@@ -49,7 +53,7 @@ func (a *Activities) NormalizeChangelog(_ context.Context, input NormalizeChange
 			Source: models.FlagSource{
 				Key:      flagKey,
 				Provider: models.SourceLaunchDarkly,
-				Project:  models.FlagProject{ID: input.ProjectKey},
+				Project:  models.FlagProject{ID: projectKey},
 			},
 		},
 	}
@@ -96,6 +100,15 @@ func extractEnvironments(entry models.LDAuditEntry) []string {
 		}
 	}
 	return envs
+}
+
+func extractProjectKey(entry models.LDAuditEntry) string {
+	for _, access := range entry.Accesses {
+		if key := resourceSegment(access.Resource, "proj"); key != "" {
+			return key
+		}
+	}
+	return ""
 }
 
 func extractActor(entry models.LDAuditEntry) models.ChangelogActor {

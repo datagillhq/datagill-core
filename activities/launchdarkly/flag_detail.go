@@ -22,6 +22,7 @@ type GetFlagDetailInput struct {
 type GetFlagDetailOutput struct {
 	Flag            models.LDFlagDetail
 	SourceRecordKey uuid.UUID
+	ProjectKey      string
 }
 
 // GetFlagDetail fetches a flag's full configuration and saves it as a source record.
@@ -52,5 +53,5 @@ func (a *Activities) GetFlagDetail(ctx context.Context, input GetFlagDetailInput
 		return GetFlagDetailOutput{}, fmt.Errorf("save source record %s: %w", sourceKey, err)
 	}
 
-	return GetFlagDetailOutput{Flag: flag, SourceRecordKey: recordKey}, nil
+	return GetFlagDetailOutput{Flag: flag, SourceRecordKey: recordKey, ProjectKey: input.ProjectKey}, nil
 }

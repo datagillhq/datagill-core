@@ -28,7 +28,7 @@ func TestFeatureFlagETLWorkflow_RoutesLaunchDarkly(t *testing.T) {
 		Key:    integrationKey,
 		OrgID:  uuid.New(),
 		Source: models.SourceLaunchDarkly,
-		Config: models.IntegrationConfig{ProjectKey: "my-project"},
+		Config: models.IntegrationConfig{},
 	}
 
 	// Use bound method value so the testsuite does not need to deserialize the receiver.
