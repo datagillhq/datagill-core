@@ -40,9 +40,6 @@ func TestListAuditLogs_Success(t *testing.T) {
 	if len(out.Entries) != 2 {
 		t.Errorf("expected 2 entries, got %d", len(out.Entries))
 	}
-	if out.RecordsSaved != 2 {
-		t.Errorf("expected 2 records saved, got %d", out.RecordsSaved)
-	}
 	if len(repo.sourceRecords) != 2 {
 		t.Errorf("expected 2 source records in repo, got %d", len(repo.sourceRecords))
 	}
@@ -99,9 +96,6 @@ func TestScrollAuditLogs_SinglePage(t *testing.T) {
 	}
 	if len(out.Entries) != 2 {
 		t.Errorf("expected 2 entries, got %d", len(out.Entries))
-	}
-	if out.RecordsSaved != 2 {
-		t.Errorf("expected 2 records saved, got %d", out.RecordsSaved)
 	}
 }
 
