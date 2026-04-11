@@ -144,3 +144,19 @@ func TestSharedActivities_SaveChangelog_Error(t *testing.T) {
 		t.Fatal("expected error when repository fails")
 	}
 }
+
+func TestSharedActivities_GetIntegration_Success(t *testing.T) {
+	repo := newMockRepository()
+	orgID := uuid.New()
+	key := uuid.New()
+	repo.integrations[key] = models.Integration{Key: key, OrgID: orgID, Source: models.SourceLaunchDarkly}
+	acts := NewSharedActivities(repo)
+
+	integration, err := acts.GetIntegration(context.Background(), orgID, key)
+	if err != nil {
+		t.Fatalf("GetIntegration failed: %v", err)
+	}
+	if integration.Key != key {
+		t.Errorf("expected key %s, got %s", key, integration.Key)
+	}
+}

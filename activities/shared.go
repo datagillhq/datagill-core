@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/repository"
 )
@@ -44,4 +46,13 @@ func (a *SharedActivities) SaveChangelog(ctx context.Context, c models.FeatureFl
 		return fmt.Errorf("save changelog: %w", err)
 	}
 	return nil
+}
+
+// GetIntegration returns the integration for the given org and key.
+func (a *SharedActivities) GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error) {
+	integration, err := a.repo.GetIntegration(ctx, orgID, key)
+	if err != nil {
+		return models.Integration{}, fmt.Errorf("get integration: %w", err)
+	}
+	return integration, nil
 }
