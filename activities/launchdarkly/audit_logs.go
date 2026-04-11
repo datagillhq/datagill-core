@@ -17,7 +17,6 @@ import (
 type ListAuditLogsInput struct {
 	IntegrationKey uuid.UUID
 	OrgID          uuid.UUID
-	ProjectKey     string
 	Before         time.Time // optional: only return entries before this time
 	After          time.Time // optional: only return entries after this time
 	NextURL        string    // optional: if set, fetches this page directly (overrides Before/After/Limit)
@@ -26,10 +25,9 @@ type ListAuditLogsInput struct {
 
 // ListAuditLogsOutput is the output from the ListAuditLogs activity.
 type ListAuditLogsOutput struct {
-	Entries      []models.LDAuditEntry
-	NextURL      string // non-empty means more pages exist; pass as input.NextURL in the next call
-	HasMore      bool
-	RecordsSaved int
+	Entries []models.LDAuditEntry
+	NextURL string // non-empty means more pages exist; pass as input.NextURL in the next call
+	HasMore bool
 }
 
 // ListAuditLogs fetches one page of audit log entries from LaunchDarkly and saves them as source records.
@@ -50,10 +48,57 @@ func (a *Activities) ListAuditLogs(ctx context.Context, input ListAuditLogsInput
 		if err := a.saveAuditEntry(ctx, entry, input); err != nil {
 			return ListAuditLogsOutput{}, err
 		}
-		output.RecordsSaved++
 	}
 
 	return output, nil
+}
+
+// ScrollAuditLogsInput is the input for the ScrollAuditLogs activity.
+// ScrollAuditLogs fetches all pages within the given time range — no limit or pagination needed.
+type ScrollAuditLogsInput struct {
+	IntegrationKey uuid.UUID
+	OrgID          uuid.UUID
+	Before         time.Time // optional upper bound
+	After          time.Time // optional lower bound
+}
+
+// ScrollAuditLogsOutput is the output from the ScrollAuditLogs activity.
+type ScrollAuditLogsOutput struct {
+	Entries []models.LDAuditEntry
+}
+
+// ScrollAuditLogs fetches all pages of audit log entries within the given time range,
+// saves each entry as a source record, and returns all entries concatenated.
+func (a *Activities) ScrollAuditLogs(ctx context.Context, input ScrollAuditLogsInput) (ScrollAuditLogsOutput, error) {
+	var allEntries []models.LDAuditEntry
+
+	pageInput := ListAuditLogsInput{
+		IntegrationKey: input.IntegrationKey,
+		OrgID:          input.OrgID,
+		Before:         input.Before,
+		After:          input.After,
+	}
+
+	for {
+		out, err := a.ListAuditLogs(ctx, pageInput)
+		if err != nil {
+			return ScrollAuditLogsOutput{}, err
+		}
+
+		allEntries = append(allEntries, out.Entries...)
+
+		if !out.HasMore {
+			break
+		}
+
+		pageInput = ListAuditLogsInput{
+			IntegrationKey: input.IntegrationKey,
+			OrgID:          input.OrgID,
+			NextURL:        out.NextURL,
+		}
+	}
+
+	return ScrollAuditLogsOutput{Entries: allEntries}, nil
 }
 
 func (a *Activities) fetchPage(ctx context.Context, input ListAuditLogsInput) ([]models.LDAuditEntry, string, error) {
