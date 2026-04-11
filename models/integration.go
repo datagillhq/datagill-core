@@ -40,13 +40,14 @@ type IntegrationPatch struct {
 
 // Integration maps to the integrations table.
 type Integration struct {
-	ID        int64
-	Key       uuid.UUID
-	OrgID     uuid.UUID
-	Source    Source
-	APIKey    string // AES-256-GCM encrypted at rest
-	Config    IntegrationConfig
-	State     IntegrationState
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           int64
+	Key          uuid.UUID
+	OrgID        uuid.UUID
+	Source       Source
+	APIKey       string // AES-256-GCM encrypted at rest
+	Config       IntegrationConfig
+	State        IntegrationState
+	LastSyncedAt *time.Time // nil means never synced; triggers full backfill
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

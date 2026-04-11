@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,14 +13,14 @@ import (
 	"github.com/datagill/datagill-core/models"
 )
 
-const integrationColumns = `id, key, org_id, source, api_key, config, state, created_at, updated_at`
+const integrationColumns = `id, key, org_id, source, api_key, config, state, last_synced_at, created_at, updated_at`
 
 // rowToIntegration scans a pgx.Row into an Integration, decrypting the API key.
 func (r *PostgresRepository) rowToIntegration(row pgx.Row) (models.Integration, error) {
 	var i models.Integration
 	var configJSON []byte
 	var encryptedAPIKey string
-	err := row.Scan(&i.ID, &i.Key, &i.OrgID, &i.Source, &encryptedAPIKey, &configJSON, &i.State, &i.CreatedAt, &i.UpdatedAt)
+	err := row.Scan(&i.ID, &i.Key, &i.OrgID, &i.Source, &encryptedAPIKey, &configJSON, &i.State, &i.LastSyncedAt, &i.CreatedAt, &i.UpdatedAt)
 	if err != nil {
 		return models.Integration{}, fmt.Errorf("scan: %w", err)
 	}
@@ -32,6 +33,19 @@ func (r *PostgresRepository) rowToIntegration(row pgx.Row) (models.Integration, 
 	}
 	i.APIKey = apiKey
 	return i, nil
+}
+
+// UpdateIntegrationLastSyncedAt records the high-water mark after a successful sync.
+func (r *PostgresRepository) UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE integrations
+		SET last_synced_at = $2, updated_at = NOW()
+		WHERE key = $1 AND state != 'deleted'
+	`, key, syncedAt)
+	if err != nil {
+		return fmt.Errorf("UpdateIntegrationLastSyncedAt: %w", err)
+	}
+	return nil
 }
 
 // CreateOrg inserts an org row if one does not already exist.

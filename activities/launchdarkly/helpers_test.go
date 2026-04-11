@@ -82,6 +82,10 @@ func (r *mockRepository) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time
 	return repository.AuditLogResult{}, nil
 }
 
+func (r *mockRepository) UpdateIntegrationLastSyncedAt(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
+}
+
 func mustNewClient(t *testing.T, apiKey string, opts ...ClientOption) *Client {
 	t.Helper()
 	client, err := NewClient(apiKey, opts...)
