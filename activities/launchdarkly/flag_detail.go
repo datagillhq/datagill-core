@@ -26,7 +26,11 @@ type GetFlagDetailOutput struct {
 
 // GetFlagDetail fetches a flag's full configuration and saves it as a source record.
 func (a *Activities) GetFlagDetail(ctx context.Context, input GetFlagDetailInput) (GetFlagDetailOutput, error) {
-	flag, err := a.client.GetFlagDetail(ctx, input.ProjectKey, input.FlagKey)
+	c, err := a.clientFor(ctx, input.OrgID, input.IntegrationKey)
+	if err != nil {
+		return GetFlagDetailOutput{}, err
+	}
+	flag, err := c.GetFlagDetail(ctx, input.ProjectKey, input.FlagKey)
 	if err != nil {
 		return GetFlagDetailOutput{}, toServiceError(err)
 	}
