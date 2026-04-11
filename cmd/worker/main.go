@@ -1,7 +1,68 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"encoding/hex"
+	"log"
+	"os"
+
+	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
+
+	"github.com/datagill/datagill-core/activities"
+	ldactivities "github.com/datagill/datagill-core/activities/launchdarkly"
+	"github.com/datagill/datagill-core/repository"
+	"github.com/datagill/datagill-core/workflows"
+	ldworkflows "github.com/datagill/datagill-core/workflows/launchdarkly"
+)
+
+const taskQueue = "etl"
 
 func main() {
-	fmt.Println("TODO: Temporal worker (Phase 2A)")
+	dbURL := mustEnv("APP_DATABASE_URL")
+	temporalAddr := mustEnv("TEMPORAL_ADDRESS")
+	encKeyHex := mustEnv("ENCRYPTION_KEY")
+
+	encKey, err := hex.DecodeString(encKeyHex)
+	if err != nil || len(encKey) != 32 {
+		log.Fatalf("ENCRYPTION_KEY must be a 64-char hex string (32 bytes): %v", err)
+	}
+
+	repo, err := repository.NewPostgresRepository(context.Background(), dbURL, encKey)
+	if err != nil {
+		log.Fatalf("connect to postgres: %v", err)
+	}
+
+	tc, err := client.Dial(client.Options{HostPort: temporalAddr})
+	if err != nil {
+		log.Fatalf("dial temporal: %v", err)
+	}
+	defer tc.Close()
+
+	w := worker.New(tc, taskQueue, worker.Options{})
+
+	// Shared activities (SaveSourceRecord, SaveFeatureFlag, SaveChangelog, GetIntegration).
+	w.RegisterActivity(activities.NewSharedActivities(repo))
+
+	// LaunchDarkly activities. client=nil means each activity fetches the integration's
+	// API key from the repo at runtime — supports multiple integrations on one worker.
+	w.RegisterActivity(ldactivities.New(nil, repo))
+
+	w.RegisterWorkflow(workflows.FeatureFlagETLWorkflow)
+	w.RegisterWorkflow(ldworkflows.LaunchDarklyExtractWorkflow)
+	w.RegisterWorkflow(ldworkflows.LaunchDarklyChangelogTransformWorkflow)
+	w.RegisterWorkflow(ldworkflows.LaunchDarklyFlagTransformWorkflow)
+
+	log.Printf("worker starting on task queue %q → temporal %s", taskQueue, temporalAddr)
+	if err := w.Run(worker.InterruptCh()); err != nil {
+		log.Fatalf("worker error: %v", err)
+	}
+}
+
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("required env var %s is not set", key)
+	}
+	return v
 }

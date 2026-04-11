@@ -102,10 +102,14 @@ func (a *Activities) ScrollAuditLogs(ctx context.Context, input ScrollAuditLogsI
 }
 
 func (a *Activities) fetchPage(ctx context.Context, input ListAuditLogsInput) ([]models.LDAuditEntry, string, error) {
-	if input.NextURL != "" {
-		return a.client.ListAuditLogPage(ctx, input.NextURL)
+	c, err := a.clientFor(ctx, input.OrgID, input.IntegrationKey)
+	if err != nil {
+		return nil, "", err
 	}
-	return a.client.ListAuditLog(ctx, input.Before, input.After, input.Limit)
+	if input.NextURL != "" {
+		return c.ListAuditLogPage(ctx, input.NextURL)
+	}
+	return c.ListAuditLog(ctx, input.Before, input.After, input.Limit)
 }
 
 func (a *Activities) saveAuditEntry(ctx context.Context, entry models.LDAuditEntry, input ListAuditLogsInput) error {
