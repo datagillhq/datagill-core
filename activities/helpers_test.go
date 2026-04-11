@@ -2,10 +2,12 @@ package activities
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/datagill/datagill-core/models"
+	"github.com/datagill/datagill-core/repository"
 )
 
 // mockRepository implements repository.Repository for testing.
@@ -61,4 +63,20 @@ func (r *mockRepository) SoftDeleteIntegration(_ context.Context, _, _ uuid.UUID
 
 func (r *mockRepository) CreateOrg(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
+}
+
+func (r *mockRepository) QueryLaunchedWins(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string) (repository.LaunchedWinsResult, error) {
+	return repository.LaunchedWinsResult{}, nil
+}
+
+func (r *mockRepository) QueryTopTeams(_ context.Context, _ uuid.UUID, _, _ time.Time) (repository.TopTeamsResult, error) {
+	return repository.TopTeamsResult{}, nil
+}
+
+func (r *mockRepository) QueryVelocity(_ context.Context, _ uuid.UUID, _, _ time.Time) (repository.VelocityResult, error) {
+	return repository.VelocityResult{}, nil
+}
+
+func (r *mockRepository) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string, _, _ int) (repository.AuditLogResult, error) {
+	return repository.AuditLogResult{}, nil
 }
