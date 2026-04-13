@@ -82,6 +82,11 @@ func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, _ uui
 	return s.deleteResult, s.deleteErr
 }
 
+// stubScheduler is a no-op Scheduler for tests.
+type stubScheduler struct{}
+
+func (stubScheduler) Create(_ context.Context, _ models.Integration) error { return nil }
+
 // stubOrgRepo is a no-op stub for OrgRepository.
 type stubOrgRepo struct{}
 
@@ -100,7 +105,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, integrationsRepo, orgRepo, validator, testJWTKeyfunc, analyticsRegistry)
+	testApp := newApp(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry)
 	return httptest.NewServer(testApp.router())
 }
 

@@ -95,6 +95,12 @@ func (a *app) createIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := a.scheduler.Create(r.Context(), created); err != nil {
+		log.Error().Err(err).Str("integration_key", created.Key.String()).Msg("create schedule failed")
+		writeCode(w, http.StatusInternalServerError, "INTERNAL_ERROR")
+		return
+	}
+
 	writeJSON(w, http.StatusCreated, toIntegrationResponse(created))
 }
 
