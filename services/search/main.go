@@ -32,6 +32,9 @@ func main() {
 	if cfg.AuthURL == "" {
 		logger.Fatal().Msg("AUTH_URL is required")
 	}
+	if cfg.TemporalAddress == "" {
+		logger.Fatal().Msg("TEMPORAL_ADDRESS is required")
+	}
 	// EncryptionKey is nil when ENCRYPTION_KEY is unset or not valid hex;
 	// either way the length check catches it with a clear error.
 	if len(cfg.EncryptionKey) != 32 {
@@ -56,9 +59,15 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to register analytics plugins")
 	}
 
+	tc, err := newTemporalClient(cfg.TemporalAddress)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to dial Temporal")
+	}
+	defer tc.Close()
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, integrationsRepo, integrationsRepo, newValidatorRegistry(), jwtKeyfunc, analyticsRegistry).router(),
+		Handler:           newApp(cfg, logger, integrationsRepo, integrationsRepo, newValidatorRegistry(), newTemporalScheduler(tc), jwtKeyfunc, analyticsRegistry).router(),
 		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
 	}
 

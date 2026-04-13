@@ -13,17 +13,19 @@ type app struct {
 	integrationsRepo  IntegrationsRepository
 	orgRepo           OrgRepository
 	validator         IntegrationValidator
+	scheduler         Scheduler
 	jwtKeyfunc        jwt.Keyfunc
 	analyticsRegistry *analytics.Registry
 }
 
-func newApp(cfg config, logger zerolog.Logger, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, jwtKeyfunc jwt.Keyfunc, analyticsRegistry *analytics.Registry) *app {
+func newApp(cfg config, logger zerolog.Logger, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, scheduler Scheduler, jwtKeyfunc jwt.Keyfunc, analyticsRegistry *analytics.Registry) *app {
 	return &app{
 		config:            cfg,
 		logger:            logger,
 		integrationsRepo:  integrationsRepo,
 		orgRepo:           orgRepo,
 		validator:         validator,
+		scheduler:         scheduler,
 		jwtKeyfunc:        jwtKeyfunc,
 		analyticsRegistry: analyticsRegistry,
 	}
