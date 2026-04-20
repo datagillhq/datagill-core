@@ -2,7 +2,6 @@ go 1.26
 
 use (
 	./activities
-	./cmd/auth-dev
 	./cmd/seed
 	./cmd/worker
 	./models
