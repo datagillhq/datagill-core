@@ -15,4 +15,3 @@ cmd/worker/worker
 .env.local
 .env.*.local
 .env.swp
-auth-dev
