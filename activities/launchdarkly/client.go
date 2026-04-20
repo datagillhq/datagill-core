@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -96,9 +97,16 @@ func (c *Client) ListAuditLogPage(ctx context.Context, pageURL string) ([]models
 	return c.fetchAuditLogPage(ctx, pageURL)
 }
 
-func (c *Client) fetchAuditLogPage(ctx context.Context, url string) ([]models.LDAuditEntry, string, error) {
+func (c *Client) fetchAuditLogPage(ctx context.Context, pageURL string) ([]models.LDAuditEntry, string, error) {
+	// LD returns relative paths in _links.next.href (e.g. "/api/v2/auditlog?before=...").
+	// Resolve against the base URL so the HTTP client gets a fully-qualified URL.
+	if u, err := url.Parse(pageURL); err == nil && !u.IsAbs() {
+		base, _ := url.Parse(c.baseURL)
+		pageURL = base.ResolveReference(u).String()
+	}
+
 	var resp auditLogResponse
-	if err := c.doRequest(ctx, url, &resp); err != nil {
+	if err := c.doRequest(ctx, pageURL, &resp); err != nil {
 		return nil, "", fmt.Errorf("ListAuditLog: %w", err)
 	}
 
