@@ -1,19 +1,12 @@
 # Local Development Setup
 
-This guide gets a fresh machine running the full DataGill stack in under 10 minutes.
+This guide gets `datagill-core` running locally and notes the one cross-repo dependency on `datagill-ui`.
 
-## Architecture overview
+## Dependency note
 
-| Service | Repo | Port | Notes |
-|---------|------|------|-------|
-| Frontend (Next.js) | `datagill-ui` | 3001 | Also serves BetterAuth |
-| Backend (search API) | `datagill-core` | 8082 | Go + Chi |
-| App Postgres | `datagill-core` | 5432 | Feature flag data |
-| Auth Postgres | `datagill-ui` | 5433 | BetterAuth sessions/users |
-| Temporal | `datagill-core` | 7233 | Workflow orchestration |
-| Temporal UI | `datagill-core` | 8080 | Optional, useful for debugging |
+Run `datagill-ui` first, then start `datagill-core`. The backend fetches JWKS from BetterAuth on startup.
 
-**Start order:** frontend first — the backend fetches JWKS from BetterAuth at startup.
+For UI setup, see [datagill-ui/LOCALSETUP.md](../datagill-ui/LOCALSETUP.md).
 
 ---
 
@@ -28,53 +21,22 @@ This guide gets a fresh machine running the full DataGill stack in under 10 minu
 
 ---
 
-## 1. Frontend (`datagill-ui`)
+## Quick start
 
-### 1a. Environment
-
-Copy the example env file:
+If you have already completed the one-time setup, use these commands:
 
 ```bash
-cp .env.example apps/app/.env.local
+# 1. Start the full backend stack in Docker
+make docker-up
 ```
 
-Fill in the required values in `apps/app/.env.local`:
-
-```bash
-# Generate a secret:
-openssl rand -base64 32
-# Paste the output as BETTER_AUTH_SECRET
-```
-
-The other values can stay as the defaults from `.env.example` for local dev.
-
-### 1b. Start the auth database
-
-```bash
-docker compose up -d auth-db
-```
-
-This starts a Postgres instance on port **5433** for BetterAuth. BetterAuth
-auto-migrates its schema on first boot — no separate migration step needed.
-
-### 1c. Install dependencies and start
-
-```bash
-npm install
-npm run dev
-```
-
-The app is now at **http://localhost:3001**.
-
-Create an account and an organisation through the UI before starting the backend.
+Make sure `datagill-ui` is already running before starting the backend.
 
 ---
 
-## 2. Backend (`datagill-core`)
+## First-time setup
 
-### 2a. Environment
-
-Copy the example env file:
+### 1. Create the local env file
 
 ```bash
 cp .env.example .env
@@ -94,8 +56,7 @@ Set `AUTH_URL` to the BetterAuth base path served by the frontend:
 AUTH_URL=http://localhost:3001/api/auth
 ```
 
-
-### 2b. Start infrastructure
+### 2. Start the backend stack
 
 ```bash
 make docker-up
@@ -106,34 +67,27 @@ This brings up:
 - `temporal` + `temporal-postgres` on port **7233**
 - `temporal-ui` on port **8080**
 - Prometheus / Loki / Grafana (observability stack)
+- `search` on port **8082**
+- `worker` for the `etl` task queue
 
 Auth is handled by BetterAuth in `datagill-ui` — there is no auth service in this repo.
 
-### 2c. Run migrations
+### 3. Run migrations
+
+If you do not already have the `migrate` CLI installed:
 
 ```bash
-make migrate
+brew install golang-migrate
 ```
 
-Requires `APP_DATABASE_URL` to be set (it is, after sourcing `.env`):
-
-```bash
-set -a && source .env && set +a
-make migrate
-```
-
-### 2d. Start the backend
+Export `.env` first so `APP_DATABASE_URL` is available to the `Makefile`, then run:
 
 ```bash
 set -a && source .env && set +a
-TEMPORAL_ADDRESS=localhost:7233 go run ./services/search/...
+make migrate
 ```
 
-> `TEMPORAL_ADDRESS` is not in `.env` because the compose network uses the
-> `temporal` hostname internally. Override it to `localhost:7233` when running
-> the service directly with `go run`.
-
-The API is now at **http://localhost:8082**. Verify with:
+### 4. Verify the API
 
 ```bash
 curl http://localhost:8082/healthz
@@ -159,20 +113,42 @@ docker compose down
 Services do not auto-start. Each session:
 
 ```bash
-# Terminal 1 — frontend
-cd datagill-ui
-docker compose up -d auth-db
-npm run dev
+# datagill-ui must already be running before the backend starts
 
-# Terminal 2 — backend infra
+# Terminal 1 — backend
 cd datagill-core
 make docker-up
+```
 
-# Terminal 3 — backend service
-cd datagill-core
+---
+
+## Optional: local Go dev mode
+
+If you want faster edit/run/debug loops for backend code, run only infrastructure in Docker and start the API and worker locally.
+
+### Start infrastructure only
+
+```bash
+docker compose up -d app-postgres temporal-postgres temporal temporal-ui prometheus loki alloy grafana
+```
+
+### Start the API service locally
+
+```bash
 set -a && source .env && set +a
 TEMPORAL_ADDRESS=localhost:7233 go run ./services/search/...
 ```
+
+### Start the worker locally
+
+Run this in a separate terminal:
+
+```bash
+set -a && source .env && set +a
+TEMPORAL_ADDRESS=localhost:7233 go run ./cmd/worker/...
+```
+
+`TEMPORAL_ADDRESS` is not in `.env` because the compose network uses the `temporal` hostname internally. Override it to `localhost:7233` when running services directly with `go run`.
 
 ---
 
@@ -190,4 +166,7 @@ Set it inline: `TEMPORAL_ADDRESS=localhost:7233 go run ./services/search/...`
 Generate one: `openssl rand -hex 32`
 
 ### Postgres connection refused
-Run `make docker-up` and wait a few seconds for the healthcheck to pass before retrying.
+Run the infrastructure containers and wait a few seconds for the healthchecks to pass before retrying.
+
+### `listen tcp :8082: bind: address already in use`
+If you are using local Go dev mode, do not run `make docker-up`. That target also starts the containerized `search` service on port `8082`.

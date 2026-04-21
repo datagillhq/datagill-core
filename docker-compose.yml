@@ -153,7 +153,7 @@ services:
     environment:
       PORT: "8082"
       APP_DATABASE_URL: postgres://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@app-postgres:5432/${APP_POSTGRES_DB}?sslmode=disable
-      AUTH_URL: ${AUTH_URL}
+      AUTH_URL: ${DOCKER_AUTH_URL:-http://host.docker.internal:3001/api/auth}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       TEMPORAL_ADDRESS: temporal:7233
     ports:
@@ -173,6 +173,7 @@ services:
       dockerfile: cmd/worker/Dockerfile
     environment:
       APP_DATABASE_URL: postgres://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@app-postgres:5432/${APP_POSTGRES_DB}?sslmode=disable
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       TEMPORAL_ADDRESS: temporal:7233
     depends_on:
       app-postgres:
