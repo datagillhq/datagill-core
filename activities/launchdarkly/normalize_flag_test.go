@@ -12,13 +12,14 @@ import (
 
 func TestNormalizeFlagDetail_AllOn(t *testing.T) {
 	acts := New(mustNewClient(t, "test-key"), newMockRepository())
+	creationDate := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
 	out, err := acts.NormalizeFlagDetail(context.Background(), NormalizeFlagDetailInput{
 		Flag: models.LDFlagDetail{
 			Key:          "feature-x",
 			Name:         "Feature X",
 			Description:  "A test feature",
 			Kind:         "boolean",
-			CreationDate: time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC).UnixMilli(),
+			CreationDate: creationDate.UnixMilli(),
 			Temporary:    true,
 			Maintainer:   &models.LDFlagMaintainer{Email: "owner@example.com"},
 			Environments: map[string]models.LDFlagEnv{
@@ -48,6 +49,15 @@ func TestNormalizeFlagDetail_AllOn(t *testing.T) {
 	}
 	if out.Data.Maintainer.Person.Email != "owner@example.com" {
 		t.Errorf("expected maintainer email 'owner@example.com', got %q", out.Data.Maintainer.Person.Email)
+	}
+	if !out.CreatedAt.Equal(creationDate) {
+		t.Errorf("expected created_at %s, got %s", creationDate, out.CreatedAt)
+	}
+	if out.Data.Source.CreatedAt == nil || !out.Data.Source.CreatedAt.Equal(creationDate) {
+		t.Fatalf("expected source.created_at %s, got %v", creationDate, out.Data.Source.CreatedAt)
+	}
+	if out.UpdatedAt.IsZero() {
+		t.Error("expected updated_at to be populated")
 	}
 }
 
@@ -137,6 +147,34 @@ func TestNormalizeFlagDetail_TeamMaintainer(t *testing.T) {
 	}
 	if out.Data.Maintainer.Team.Name != "Platform Team" {
 		t.Errorf("expected team name 'Platform Team', got %q", out.Data.Maintainer.Team.Name)
+	}
+}
+
+func TestNormalizeFlagDetail_MissingCreationDateFallsBackToNow(t *testing.T) {
+	acts := New(mustNewClient(t, "test-key"), newMockRepository())
+	before := time.Now().UTC().Add(-1 * time.Second)
+	out, err := acts.NormalizeFlagDetail(context.Background(), NormalizeFlagDetailInput{
+		Flag: models.LDFlagDetail{
+			Key:  "missing-created-at",
+			Name: "Missing Created At",
+		},
+		SourceRecordKey: uuid.New(),
+		IntegrationKey:  uuid.New(),
+		OrgID:           uuid.New(),
+		ProjectKey:      "my-project",
+	})
+	after := time.Now().UTC().Add(1 * time.Second)
+	if err != nil {
+		t.Fatalf("NormalizeFlagDetail failed: %v", err)
+	}
+	if out.Data.Source.CreatedAt != nil {
+		t.Fatalf("expected source.created_at to be nil, got %v", out.Data.Source.CreatedAt)
+	}
+	if out.CreatedAt.Before(before) || out.CreatedAt.After(after) {
+		t.Errorf("expected created_at fallback between %s and %s, got %s", before, after, out.CreatedAt)
+	}
+	if out.UpdatedAt.Before(before) || out.UpdatedAt.After(after) {
+		t.Errorf("expected updated_at between %s and %s, got %s", before, after, out.UpdatedAt)
 	}
 }
 

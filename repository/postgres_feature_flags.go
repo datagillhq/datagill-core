@@ -22,6 +22,7 @@ func (r *PostgresRepository) SaveFeatureFlag(ctx context.Context, f models.Featu
 			source_record_key = EXCLUDED.source_record_key,
 			state = EXCLUDED.state,
 			data = EXCLUDED.data,
+			created_at = EXCLUDED.created_at,
 			updated_at = EXCLUDED.updated_at
 	`
 

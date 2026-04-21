@@ -21,6 +21,8 @@ type NormalizeFlagDetailInput struct {
 // NormalizeFlagDetail transforms a LaunchDarkly flag into a canonical feature flag.
 func (a *Activities) NormalizeFlagDetail(_ context.Context, input NormalizeFlagDetailInput) (models.FeatureFlag, error) {
 	flag := input.Flag
+	now := time.Now().UTC()
+	createdAt := normalizedFlagCreatedAt(flag, now)
 
 	environments := make(map[string]models.FlagEnvironment, len(flag.Environments))
 	for key, env := range flag.Environments {
@@ -36,6 +38,8 @@ func (a *Activities) NormalizeFlagDetail(_ context.Context, input NormalizeFlagD
 		IntegrationID:   input.IntegrationKey,
 		OrgID:           input.OrgID,
 		State:           computeFlagState(flag),
+		CreatedAt:       createdAt,
+		UpdatedAt:       now,
 		Data: models.FeatureFlagData{
 			Name:        flag.Name,
 			Description: flag.Description,
@@ -43,7 +47,7 @@ func (a *Activities) NormalizeFlagDetail(_ context.Context, input NormalizeFlagD
 				Key:       flag.Key,
 				Provider:  models.SourceLaunchDarkly,
 				Project:   models.FlagProject{ID: input.ProjectKey},
-				CreatedAt: creationDate(flag),
+				CreatedAt: sourceCreationDate(flag),
 			},
 			Maintainer:   extractMaintainer(flag),
 			Lifecycle:    extractLifecycle(flag),
@@ -136,10 +140,17 @@ func extractRolloutPercentage(flag models.LDFlagDetail, env models.LDFlagEnv) *f
 	return nil
 }
 
-func creationDate(flag models.LDFlagDetail) *time.Time {
+func sourceCreationDate(flag models.LDFlagDetail) *time.Time {
 	if flag.CreationDate <= 0 {
 		return nil
 	}
 	t := time.UnixMilli(flag.CreationDate)
 	return &t
+}
+
+func normalizedFlagCreatedAt(flag models.LDFlagDetail, fallback time.Time) time.Time {
+	if createdAt := sourceCreationDate(flag); createdAt != nil {
+		return *createdAt
+	}
+	return fallback
 }
