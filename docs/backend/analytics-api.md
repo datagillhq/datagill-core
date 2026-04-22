@@ -78,12 +78,12 @@ This pattern keeps metric implementations isolated and independently testable.
 
 ### `metric=launched_wins`
 
-Flags that reached **100% production rollout** within the timeframe.
+Flags that reached a **non-zero production rollout** within the timeframe.
 
-- "Launched" = `rollout_percentage = 100` in the production environment
-- 1–99% = partial rollout (included with a different status label)
+- "Launched" = `rollout_percentage > 0` in the production environment
+- 1–99% = partial rollout
 - 0% = off (excluded)
-- One row per flag — take the most recent 100% event if multiple exist in the window
+- One row per flag — take the most recent qualifying production rollout event if multiple exist in the window
 - Ordered by `occurredAt DESC`
 
 **Prerequisite:** `rollout_percentage` in `ChangelogData` (see data model changes below).
