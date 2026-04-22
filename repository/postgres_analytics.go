@@ -11,11 +11,12 @@ import (
 
 // LaunchedWin is a single flag that reached 100% rollout within a query window.
 type LaunchedWin struct {
-	FlagKey    uuid.UUID
-	FlagName   string
-	ActorEmail string
-	ActorName  string
-	OccurredAt time.Time
+	FlagKey           uuid.UUID
+	FlagName          string
+	ActorEmail        string
+	ActorName         string
+	RolloutPercentage float64
+	OccurredAt        time.Time
 }
 
 // LaunchedWinsResult is the response from QueryLaunchedWins.
@@ -57,36 +58,62 @@ type AuditLogResult struct {
 	Entries []AuditEntry
 }
 
-// QueryLaunchedWins returns flags that had a changelog event in [from, to] and
-// currently have at least one environment at 100% rollout.
+// QueryLaunchedWins returns one deduped production rollout event per flag in [from, to].
+// "Launched" means the event-specific rollout was greater than 0%.
 // Optional team and actor filters AND together when both are non-empty.
-//
-// TODO: this is an approximation — it checks the flag's current rollout_percentage,
-// not whether the rollout *changed to* 100% in the queried event. A flag launched
-// months ago with a description change today will appear as a win; a flag rolled back
-// after reaching 100% will not appear. To fix this properly, store rollout_percentage
-// in the changelog data JSONB during ETL normalization so we can filter on the
-// per-event snapshot rather than current state.
 func (r *PostgresRepository) QueryLaunchedWins(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string) (LaunchedWinsResult, error) {
 	const q = `
+		WITH candidate_events AS (
+			SELECT
+				ff.key AS flag_key,
+				ff.data->>'name' AS flag_name,
+				COALESCE(ffc.data->'actor'->>'email', '') AS actor_email,
+				COALESCE(ffc.data->'actor'->>'name',  '') AS actor_name,
+				ffc.occurred_at,
+				CASE
+					WHEN sr.data->>'titleVerb' = 'turned on the flag' THEN 100::float8
+					WHEN sr.data->>'titleVerb' = 'turned off the flag' THEN 0::float8
+					WHEN COALESCE(ffc.data->>'description', '') ~* 'to\\s+[^[:alnum:]]*true[^[:alnum:]]*$' THEN 100::float8
+					WHEN COALESCE(ffc.data->>'description', '') ~* 'to\\s+[^[:alnum:]]*false[^[:alnum:]]*$' THEN 0::float8
+					WHEN substring(COALESCE(ffc.data->>'description', '') FROM '([0-9]+(?:\.[0-9]+)?)%[^%]*$') IS NOT NULL
+						THEN substring(COALESCE(ffc.data->>'description', '') FROM '([0-9]+(?:\.[0-9]+)?)%[^%]*$')::float8
+					ELSE NULL
+				END AS rollout_percentage
+			FROM feature_flag_changelog ffc
+			JOIN feature_flags ff ON ff.key = ffc.feature_flag_key
+			LEFT JOIN source_records sr ON sr.key = ffc.source_record_key
+			WHERE ffc.org_id = $1
+			  AND ffc.state  = 'active'
+			  AND ffc.occurred_at >= $2 AND ffc.occurred_at <= $3
+			  AND ffc.data->'environments' @> '["production"]'::jsonb
+			  AND ($4 = '' OR ff.data->'maintainer'->'team'->>'name' = $4)
+			  AND ($5 = '' OR ffc.data->'actor'->>'email' = $5)
+		),
+		deduped AS (
+			SELECT
+				flag_key,
+				flag_name,
+				actor_email,
+				actor_name,
+				rollout_percentage,
+				occurred_at,
+				ROW_NUMBER() OVER (
+					PARTITION BY flag_key
+					ORDER BY occurred_at DESC, rollout_percentage DESC NULLS LAST
+				) AS rn
+			FROM candidate_events
+			WHERE rollout_percentage > 0
+		)
 		SELECT
-			ff.key,
-			ff.data->>'name',
-			COALESCE(ffc.data->'actor'->>'email', ''),
-			COALESCE(ffc.data->'actor'->>'name',  ''),
-			ffc.occurred_at
-		FROM feature_flag_changelog ffc
-		JOIN feature_flags ff ON ff.key = ffc.feature_flag_key
-		WHERE ffc.org_id = $1
-		  AND ffc.state  = 'active'
-		  AND ffc.occurred_at >= $2 AND ffc.occurred_at <= $3
-		  AND EXISTS (
-		        SELECT 1 FROM jsonb_each(ff.data->'environments') env(k, v)
-		        WHERE (v->>'rollout_percentage')::numeric = 100
-		      )
-		  AND ($4 = '' OR ff.data->'maintainer'->'team'->>'name' = $4)
-		  AND ($5 = '' OR ffc.data->'actor'->>'email' = $5)
-		ORDER BY ffc.occurred_at DESC`
+			flag_key,
+			flag_name,
+			actor_email,
+			actor_name,
+			rollout_percentage,
+			occurred_at
+		FROM deduped
+		WHERE rn = 1
+		ORDER BY occurred_at DESC`
 
 	rows, err := r.pool.Query(ctx, q, orgID, from, to, team, actor)
 	if err != nil {
@@ -97,7 +124,7 @@ func (r *PostgresRepository) QueryLaunchedWins(ctx context.Context, orgID uuid.U
 	var res LaunchedWinsResult
 	for rows.Next() {
 		var w LaunchedWin
-		if err := rows.Scan(&w.FlagKey, &w.FlagName, &w.ActorEmail, &w.ActorName, &w.OccurredAt); err != nil {
+		if err := rows.Scan(&w.FlagKey, &w.FlagName, &w.ActorEmail, &w.ActorName, &w.RolloutPercentage, &w.OccurredAt); err != nil {
 			return LaunchedWinsResult{}, fmt.Errorf("QueryLaunchedWins scan: %w", err)
 		}
 		res.Wins = append(res.Wins, w)

@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// LaunchedWinEntry is a single flag that reached 100% rollout in the window.
+// LaunchedWinEntry is a single flag that had a non-zero production rollout in the window.
 type LaunchedWinEntry struct {
 	FlagKey           uuid.UUID `json:"flagKey"`
 	FlagName          string    `json:"flagName"`
@@ -46,7 +46,7 @@ func (p *launchedWinsPlugin) Execute(ctx context.Context, q Query) (any, error) 
 			FlagName:          w.FlagName,
 			ActorEmail:        w.ActorEmail,
 			ActorName:         w.ActorName,
-			RolloutPercentage: 100,
+			RolloutPercentage: w.RolloutPercentage,
 			OccurredAt:        w.OccurredAt,
 		})
 	}

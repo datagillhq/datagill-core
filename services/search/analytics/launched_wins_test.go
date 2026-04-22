@@ -20,7 +20,7 @@ func TestLaunchedWinsPlugin(t *testing.T) {
 	t.Run("returns entries with rollout percentage 100", func(t *testing.T) {
 		repo := &fakeAnalyticsRepo{launchedWins: repository.LaunchedWinsResult{
 			Wins: []repository.LaunchedWin{
-				{FlagKey: flagKey, FlagName: "my-flag", ActorEmail: "a@b.com", ActorName: "Alice", OccurredAt: now},
+				{FlagKey: flagKey, FlagName: "my-flag", ActorEmail: "a@b.com", ActorName: "Alice", RolloutPercentage: 37, OccurredAt: now},
 			},
 		}}
 		p := analytics.NewLaunchedWinsPlugin(repo)
@@ -39,8 +39,8 @@ func TestLaunchedWinsPlugin(t *testing.T) {
 		if resp.Wins[0].FlagKey != flagKey {
 			t.Errorf("unexpected flag key: %v", resp.Wins[0].FlagKey)
 		}
-		if resp.Wins[0].RolloutPercentage != 100 {
-			t.Errorf("expected rollout 100, got %v", resp.Wins[0].RolloutPercentage)
+		if resp.Wins[0].RolloutPercentage != 37 {
+			t.Errorf("expected rollout 37, got %v", resp.Wins[0].RolloutPercentage)
 		}
 	})
 
