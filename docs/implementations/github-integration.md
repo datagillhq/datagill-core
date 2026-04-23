@@ -2,6 +2,7 @@
 
 > Status: In Design — not yet implemented.
 > Follows the same architecture patterns as the LaunchDarkly integration.
+> Implementation sequencing lives in [github-integration-implementation-plan.md](./github-integration-implementation-plan.md).
 
 ---
 
