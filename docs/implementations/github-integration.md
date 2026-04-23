@@ -7,7 +7,7 @@
 
 ## Overview
 
-GitHub is a code source integration. One integration per org covers **all repos** under a given owner (org or user). Auth is via GitHub OAuth app (not API key). Data is fetched via GitHub REST API — no GraphQL.
+GitHub is a code source integration. One integration per DataGill org covers one GitHub owner (organization or user account) and all repositories visible under that owner. A single DataGill org may connect multiple GitHub owners via multiple integrations. Auth is via GitHub OAuth app (not API key). Data is fetched via GitHub REST API — no GraphQL.
 
 **What we sync:** Merged pull requests within a date range, including metadata and a diff URL reference. Actual diff content is deferred to a future enrichment workflow.
 
@@ -24,7 +24,7 @@ GitHub is a code source integration. One integration per org covers **all repos*
 }
 ```
 
-Unique constraint: `UNIQUE(org_id, source, config->>'owner')` — one GitHub integration per owner per org.
+Unique constraint: `UNIQUE(org_id, source, config->>'owner')` — one GitHub integration per owner per DataGill org.
 
 ---
 
@@ -35,7 +35,7 @@ Mirrors `feature_flags`. One row per PR, upserted on every ETL run.
 | Column | Type | Notes |
 |--------|------|-------|
 | id | bigserial | PK |
-| key | uuid UNIQUE | SHA1(org_id \| github \| pr.id) |
+| key | uuid UNIQUE | SHA1(org_id \| github \| repository_id \| pull_number) |
 | source_record_key | uuid | → source_records.key |
 | integration_id | uuid | → integrations.key |
 | org_id | uuid | Tenant scoping |
@@ -49,9 +49,10 @@ Key indexes: `(org_id)`, `(integration_id)`.
 ### Deterministic Key
 
 ```go
-// key = SHA1(namespace, org_id|github|pr_id)
-// pr.id is GitHub's globally unique numeric PR ID — stable across repo renames
-ComputePullRequestKey(orgID uuid.UUID, sourcePRKey string) uuid.UUID
+// key = SHA1(namespace, org_id|github|repository_id|pull_number)
+// pull numbers are only unique within a repository, so repository identity
+// must be part of the deterministic key. repository_id is stable across renames.
+func ComputePullRequestKey(orgID uuid.UUID, repositoryID int64, pullNumber int) uuid.UUID
 ```
 
 ### `source_records` source type
@@ -68,31 +69,39 @@ ComputePullRequestKey(orgID uuid.UUID, sourcePRKey string) uuid.UUID
   "description": "PR description...",
 
   "source": {
-    "key": "987654321",
+    "key": "123456:42",
     "provider": "github",
-    "project": "123456",
+    "repository_id": "123456",
     "created_at": "2024-01-15T10:00:00Z",
     "merged_at": "2024-01-20T10:00:00Z"
   },
 
   "actor": {
-    "authors": [
-      { "login": "ariel", "email": "ariel@acme.com" }
-    ],
-    "coauthors": [
-      { "login": "jordan", "email": "jordan@acme.com" }
-    ]
-  },
-
-  "maintainer": {
-    "team": { "name": "payments-team" }
+    "author": {
+      "login": "ariel",
+      "id": 12345
+    }
   },
 
   "details": {
     "url": "https://github.com/acme-org/backend/pull/42",
     "number": 42,
-    "repo": { "name": "backend" },
+    "repository": {
+      "owner": "acme-org",
+      "name": "backend"
+    },
     "labels": ["feature", "payments"],
+    "assignees": [
+      { "login": "jordan", "id": 67890 }
+    ],
+    "requested_reviewers": {
+      "users": [
+        { "login": "sarah", "id": 11111 }
+      ],
+      "teams": [
+        { "slug": "payments-team", "name": "Payments Team" }
+      ]
+    },
     "diff": {
       "url": "https://github.com/acme-org/backend/pull/42.diff",
       "sha": "abc123",
@@ -114,16 +123,19 @@ ComputePullRequestKey(orgID uuid.UUID, sourcePRKey string) uuid.UUID
 
 | Path | Source | Notes |
 |------|--------|-------|
-| source.key | `pull_request.id` | GitHub's globally unique numeric PR ID. Stable across repo renames |
-| source.project | `repository.id` | Stable numeric repo ID. Stable across repo renames/transfers |
+| source.key | `repository.id + ":" + pull_request.number` | Stable per-repository PR identifier used for deterministic keys |
+| source.repository_id | `repository.id` | Stable numeric repo ID. Stable across repo renames/transfers |
 | source.merged_at | `pull_request.merged_at` | Source timestamp, never ingestion time |
-| actor.authors | `pull_request.user` | PR opener. Single entry array for consistency |
-| actor.coauthors | `pull_request.assignees` | Co-authors/collaborators from PR assignees |
-| maintainer.team | `pull_request.requested_reviewers` team | Nullable |
-| details.number | `pull_request.number` | Human-readable #42 — display only, not used in key |
-| details.repo.name | `repository.name` | Display name — can change, stable ID is in source.project |
+| actor.author | `pull_request.user` | PR opener |
+| details.number | `pull_request.number` | Human-readable #42 — display only, scoped by repository |
+| details.repository.name | `repository.name` | Display name — can change, stable ID is in `source.repository_id` |
+| details.assignees | `pull_request.assignees` | Assignment metadata only — not authorship |
+| details.requested_reviewers.users | `pull_request.requested_reviewers` | Pending requested user reviewers |
+| details.requested_reviewers.teams | `pull_request.requested_teams` | Pending requested team reviewers |
 | details.diff.sha | `pull_request.merge_commit_sha` | Merge commit SHA — key for future LD cross-source correlation |
 | details.diff.stats | `pull_request.additions/deletions/changed_files` | Available on single PR GET, no extra API call |
+
+Deferred fields: co-authors and completed reviewers. Do not infer co-authorship from assignees.
 
 ---
 
@@ -131,28 +143,34 @@ ComputePullRequestKey(orgID uuid.UUID, sourcePRKey string) uuid.UUID
 
 ### Why two phases
 
-GitHub has no single endpoint that returns all PRs across all repos with full details. The available options are:
+GitHub has no single endpoint that returns full PR detail across all repos for an owner. The available options are:
 
 | Approach | Problem |
 |----------|---------|
 | `GET /orgs/{org}/repos` → per-repo `GET /pulls` | N+1 calls — one list call per repo before any PR data |
-| `GET /search/issues` | Single call across all repos with date range filter, but returns partial data only |
+| `GET /search/issues` | Owner-wide discovery with qualifiers like `is:pull-request`, but returns search-index data only and has hard limits |
 | `GET /repos/{owner}/{repo}/pulls/{number}` | Full PR detail, but requires knowing the PR first |
 
-**Decision:** Use the Search API to discover PRs, then parallel detail fetches — identical to how LD uses audit log pagination to discover flags then fetches flag detail in parallel.
+**Decision:** Use the Search API as the primary discovery path, then parallel detail fetches. This mirrors LD's discover-then-hydrate pattern, but GitHub search has hard limits, so the design must explicitly account for incomplete search coverage.
 
 ### Phase 1 — SearchPullRequests (mirrors `ListAuditLogs`)
 
 ```
-GET /search/issues?q=is:pr+is:merged+org:{owner}+merged:{from}..{to}&per_page=100
+GET /search/issues?q=is:pull-request+is:merged+org:{owner}+merged:{from}..{to}&per_page=100
 ```
 
-- Single call covers all repos in the org
+- A single query can discover PRs across repositories for the owner
 - Date range filter built into the query
-- Paginated via `Link` header (cursor-based, unlike LD's timestamp cursor)
-- Returns enough to identify each PR: `id`, `number`, `title`, `html_url`, `diff_url`, `merged_at`, `repository_url`
+- Paginated with `page` / `per_page`
+- Returns enough to identify each PR for phase-two hydration, but it is still a search endpoint, not a PR-detail endpoint
 
-**Tradeoff — 1000 result cap:** GitHub's Search API returns a maximum of 1000 results per query. For orgs with high PR volume, the extract workflow automatically narrows the date window until each window returns fewer than 1000 results. This adds complexity but is the only way to guarantee completeness without per-repo enumeration.
+**Tradeoffs and limits:**
+
+- Search returns at most 1000 results per query, so the workflow must narrow the date window when a query approaches that cap.
+- Search only searches up to 4000 matching repositories.
+- Search may return `incomplete_results=true` if the query times out.
+
+Because of those limits, date-window narrowing alone does not guarantee completeness for very large owners. The implementation should use search-first discovery by default, but explicitly fall back to repository enumeration when search bounds are exceeded or results are incomplete.
 
 ### Phase 2 — GetPullRequestDetail (mirrors `GetFlagDetail`)
 
@@ -161,7 +179,7 @@ GET /repos/{owner}/{repo}/pulls/{number}
 ```
 
 - One call per PR, run in parallel via `workflow.Go` goroutines
-- Returns full PR data: `merge_commit_sha`, `additions`, `deletions`, `changed_files`, `head`/`base` refs, `requested_reviewers`
+- Returns full PR data: `merge_commit_sha`, `additions`, `deletions`, `changed_files`, `head`/`base` refs, assignees, requested reviewers, requested teams
 - Raw response saved to `source_records` as `pr_detail` before normalization
 
 ---
@@ -180,7 +198,7 @@ FeatureFlagETLWorkflow (routes by source)
               └─ SavePullRequest (shared)
 ```
 
-Same incremental sync pattern as LD: `last_synced_at` watermark on `integrations`. First run = full backfill. Subsequent runs = only PRs merged since last sync.
+Same incremental sync pattern as LD: a merged-at cursor stored in Temporal workflow state, not a DB column on `integrations`. First run = bounded backfill. Subsequent runs = only PRs merged since the last successful sync window.
 
 ---
 
@@ -189,6 +207,13 @@ Same incremental sync pattern as LD: `last_synced_at` watermark on `integrations
 > Detail TBD — to be designed next.
 
 Key difference from LD: OAuth token instead of static API key. Token stored encrypted (AES-256-GCM) in `integrations.api_key`, same column, same encryption. OAuth flow handled at integration creation time in the Search Service.
+
+Recommended token lifecycle:
+
+- Persist encrypted OAuth credential material on the integration row.
+- Refresh access tokens inside activities immediately before API calls when needed.
+- Persist rotated tokens through the repository layer.
+- Do not cache long-lived access tokens in Temporal workflow state.
 
 ---
 
@@ -220,6 +245,6 @@ One routing case added to `workflows/etl.go`. Zero changes to LD code.
 | Question | Notes |
 |----------|-------|
 | OAuth app detail | OAuth app chosen. Flow, token refresh, and storage detail TBD |
-| Search 1000 cap window strategy | Auto-narrow date window logic needs exact algorithm defined |
+| Search fallback threshold | Exact fallback rule from search-first to per-repo enumeration needs definition |
 | Enrichment workflow | Future `GitHubEnrichWorkflow` — fetches diff content, cross-references with LD flag changes via `diff.sha` |
 | `pull_requests` migration | New migration file alongside existing ones |
