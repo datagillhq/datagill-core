@@ -56,6 +56,8 @@ Key indexes: `(org_id)`, `(integration_id)`.
 ```go
 // key = SHA1(namespace, org_id|github|pull_request.id)
 // pull_request.id is GitHub's globally unique numeric PR ID.
+// org_id remains part of the key so DataGill can safely correlate data
+// inside tenant scope without ever relying on cross-tenant global identity.
 func ComputePullRequestKey(orgID uuid.UUID, sourcePRKey string) uuid.UUID
 ```
 
@@ -109,18 +111,6 @@ Customer-specific `integrations.config` stores installation metadata only.
     "assignees": [
       { "login": "jordan", "id": 67890 }
     ],
-    "completed_reviewers": {
-      "users": [
-        { "login": "sarah", "id": 11111 }
-      ]
-    },
-    "coauthors": [
-      { "login": "jordan", "id": 67890, "email": "jordan@acme.com" }
-    ],
-    "review_summary": {
-      "approvals": 1,
-      "changes_requested": 0
-    },
     "diff": {
       "url": "https://github.com/acme-org/backend/pull/42.diff",
       "sha": "abc123",
@@ -149,13 +139,10 @@ Customer-specific `integrations.config` stores installation metadata only.
 | details.number | `pull_request.number` | Human-readable #42 — display only, scoped by repository |
 | details.repository.name | `repository.name` | Display name — can change, stable ID is in `source.repository_id` |
 | details.assignees | `pull_request.assignees` | Assignment metadata only — not authorship |
-| details.completed_reviewers.users | `GET /repos/{owner}/{repo}/pulls/{number}/reviews` | Actual reviewers who submitted reviews on the PR |
-| details.coauthors | Derived from PR commits and/or commit trailers | Do not infer from assignees |
-| details.review_summary | Derived from completed review states | Rollup of approvals / change requests |
 | details.diff.sha | `pull_request.merge_commit_sha` | Merge commit SHA — key for future LD cross-source correlation |
 | details.diff.stats | `pull_request.additions/deletions/changed_files` | Available on single PR GET, no extra API call |
 
-Requested reviewers are intentionally omitted from the base model for now. Completed reviewers are higher-signal because they reflect actual PR participation.
+Requested reviewers, completed reviewers, co-authors, and review summaries are intentionally deferred to P1 enrichment. The initial GitHub integration should focus on reliable installation auth, merged PR discovery, normalization, and storage first.
 
 ---
 
@@ -189,6 +176,7 @@ GET /search/issues?q=is:pull-request+is:merged+org:{owner}+merged:{from}..{to}&p
 - Search returns at most 1000 results per query, so the workflow must narrow the date window when a query approaches that cap.
 - Search only searches up to 4000 matching repositories.
 - Search may return `incomplete_results=true` if the query times out.
+- Assumption for v1: when called with an installation access token, search results are limited to repositories visible to that installation. If this assumption is wrong in practice, repository enumeration over the installation's accessible repositories becomes mandatory.
 
 Because of those limits, date-window narrowing alone does not guarantee completeness for very large installations. The implementation should use search-first discovery by default, but explicitly fall back to repository enumeration over the installation's accessible repositories when search bounds are exceeded or results are incomplete.
 
@@ -201,8 +189,12 @@ GET /repos/{owner}/{repo}/pulls/{number}
 - One call per PR, run in parallel via `workflow.Go` goroutines
 - Returns full PR data: `merge_commit_sha`, `additions`, `deletions`, `changed_files`, `head`/`base` refs, assignees
 - Raw response saved to `source_records` as `pr_detail` before normalization
-- Completed reviewers require an additional call to `GET /repos/{owner}/{repo}/pulls/{number}/reviews`
-- Co-authors require extra derivation from PR commits and/or commit trailers
+
+P1 enrichment, not part of the initial implementation:
+
+- Completed reviewers via `GET /repos/{owner}/{repo}/pulls/{number}/reviews`
+- Co-authors via PR commits and/or commit trailers
+- Review summary derived from completed review states
 
 ---
 
@@ -222,6 +214,37 @@ FeatureFlagETLWorkflow (routes by source)
 
 Same incremental sync pattern as LD: a merged-at cursor stored in Temporal workflow state, not a DB column on `integrations`. First run = bounded backfill. Subsequent runs = only PRs merged since the last successful sync window.
 
+### Rate Limiting and Concurrency
+
+Initial implementation should hardcode conservative limits and make them configurable later:
+
+- Search requests: sequential within a single date window
+- PR detail fetches: max 10 concurrent requests per workflow run
+- On GitHub rate limiting, rely on Temporal retries with backoff rather than custom retry loops
+- If a run cannot complete because rate limits persist, fail the run and resume from the last successful merged-at cursor on retry
+
+---
+
+## Lifecycle and Drift
+
+### Uninstall
+
+GitHub integration removal is initiated from DataGill's manage integrations UI, consistent with existing LaunchDarkly integration management.
+
+- User disables or removes the GitHub integration in DataGill
+- DataGill marks the integration inactive and stops the Temporal schedule
+- If DataGill later supports uninstalling the GitHub App directly from the product, that action should also remove or deactivate the matching integration row
+
+### Permission Drift
+
+Permission drift is deferred to P1.
+
+- Repository selection changes after installation
+- Installation permissions reduced
+- Installation suspended or removed outside DataGill
+
+For the initial implementation, ETL failures caused by these cases should surface clearly in logs and workflow failures, and the user can manually reconnect or refresh the integration.
+
 ---
 
 ## Auth: DataGill GitHub App
@@ -234,7 +257,8 @@ DataGill uses a single GitHub App registration. Customers connect GitHub by inst
 2. Frontend opens GitHub's browser-based GitHub App installation flow.
 3. User selects the GitHub organization or personal account and chooses all repositories or selected repositories.
 4. GitHub redirects back to DataGill's setup URL.
-5. DataGill creates or updates the `github` integration row with installation metadata.
+5. The Search service owns the callback endpoint and validates the installation context.
+6. The Search service creates or updates the `github` integration row with installation metadata.
 
 ### Stored In `integrations.config`
 
@@ -261,6 +285,10 @@ DataGill uses a single GitHub App registration. Customers connect GitHub by inst
 ### User Authorization
 
 Out of scope for v1. The initial integration uses installation-scoped access only. If DataGill later needs to act on behalf of specific users or access user-scoped data, GitHub App user authorization can be added separately.
+
+### Implementation Note
+
+The GitHub App installation flow is a standard protocol surface, not a novel auth problem. The remaining work is to fit GitHub's installation callback and installation-token lifecycle cleanly into DataGill's existing Search service and Temporal worker split.
 
 ---
 
@@ -293,5 +321,5 @@ One routing case added to `workflows/etl.go`. Zero changes to LD code.
 |----------|-------|
 | GitHub App setup flow | Final callback/setup URL contract between frontend and backend |
 | Search fallback threshold | Exact fallback rule from search-first to per-repo enumeration needs definition |
-| Enrichment workflow | Future `GitHubEnrichWorkflow` — fetches diff content, cross-references with LD flag changes via `diff.sha` |
+| P1 enrichment workflow | Future `GitHubEnrichWorkflow` — completed reviewers, co-authors, diff content, and LD cross-reference via `diff.sha` |
 | `pull_requests` migration | New migration file alongside existing ones |
