@@ -41,7 +41,7 @@ The current repo is not GitHub-ready yet. These are the main constraints the imp
 - `models.Source` only supports LaunchDarkly, Unleash, and Flagsmith.
 - `models.IntegrationConfig` is LaunchDarkly-shaped (`environment_key`) and cannot yet represent GitHub App installation metadata cleanly.
 - Search integration creation assumes API-key validation before insert.
-- Temporal schedule management only supports create; pause/delete do not update schedules.
+- Temporal schedule management only supports create. This is acceptable for v1 as long as ETL exits immediately for non-active integrations.
 - ETL routing in [workflows/etl.go](/Users/kuyoungshin/Coding/datagill-core/workflows/etl.go:1) only dispatches LaunchDarkly.
 - Repository and canonical models have no `pull_requests` persistence surface yet.
 - Live code still has `integrations.last_synced_at`, which conflicts with the current architecture decision that sync cursor belongs in Temporal workflow state.
@@ -135,17 +135,13 @@ Tasks:
    - LaunchDarkly stays one per provider per org for now, matching current API behavior
    - GitHub uniqueness should use installation identity, not provider-only duplicate checks
    - this temporary inconsistency is intentional and should be revisited only if integration uniqueness is redesigned across all providers
-4. Extend scheduler interface beyond `Create`:
-   - `Pause`
-   - `Resume`
-   - `Delete`
-5. Update integration update/delete handlers so state changes and deletes also update the Temporal schedule.
-6. Add the GitHub installation unique index migration.
+4. Add the GitHub installation unique index migration.
+5. Ensure ETL exits immediately for integrations whose state is not `active`.
 
 Notes:
 
 - This slice should not yet perform GitHub App installation flow.
-- It should only make the integration model and schedule lifecycle GitHub-capable.
+- It should only make the integration model GitHub-capable and enforce the disabled-integration no-op rule.
 
 ### Slice 2: GitHub App onboarding in Search
 
@@ -177,10 +173,10 @@ Tasks:
    - verify the installation belongs to that user
    - fetch authoritative installation metadata
    - upsert the integration
-   - create or resume the Temporal schedule
+   - create the Temporal schedule if this is a new integration
    - redirect back to the frontend
 5. Make callback idempotent:
-   - repeated callback for the same installation updates config and resumes the integration if paused
+   - repeated callback for the same installation updates config and sets the integration `active`
    - callback must not create duplicate rows
 
 This slice has one mandatory external API chain in Search:
@@ -273,7 +269,7 @@ If GitHub does not provide `installation_id` on this callback in practice:
 
 - lookup key: `(org_id, source='github', config.installation_id)`
 - if existing row is `active`: update config in place, keep active
-- if existing row is `paused`: update config and resume schedule
+- if existing row is `paused`: update config and set state back to `active`
 - if existing row is `deleted`: create a new row rather than mutating a deleted row
 - if the same GitHub installation is somehow associated with a different DataGill org, reject and log a high-severity error
 
@@ -314,7 +310,7 @@ sequenceDiagram
     Search->>API: GET /app/installations/{installation_id} (app JWT)
     API-->>Search: installation metadata
     Search->>Search: Upsert integration row
-    Search->>Temporal: Create or resume schedule
+    Search->>Temporal: Create schedule if new integration
     Search-->>UI: Redirect to frontend success URL
 ```
 
@@ -396,6 +392,7 @@ Tasks:
 5. Add `SavePullRequest` shared activity or a PR-specific shared activity.
 6. Route `FeatureFlagETLWorkflow` to a new GitHub extract workflow.
 7. Register GitHub activities and workflows in the worker.
+8. At ETL workflow entry, load integration state and return immediately when state is not `active`.
 
 V1 workflow behavior:
 
@@ -418,7 +415,7 @@ Tasks:
 
 1. Add unit tests for:
    - Search callback handler
-   - integration create/update/delete behavior with schedule lifecycle
+   - integration create/update/delete behavior with disabled-integration semantics
    - GitHub App token generation logic
    - GitHub PR normalization
    - ETL workflow routing
@@ -441,39 +438,26 @@ Recommendation:
 - do not overload the existing `POST /v1/integrations` API with fake API-key semantics for GitHub
 - instead add a separate GitHub connect flow that creates the integration only after GitHub App installation succeeds
 
-## Schedule Lifecycle Work
+## Disabled Integration Behavior
 
-This is required for GitHub but should be fixed generically for all integrations.
+V1 keeps the scheduler simple.
 
-Current gap:
-
-- create integration creates a Temporal schedule
-- pause/delete integration do not pause/delete that schedule
+- schedules are created once for an integration
+- disabling or deleting an integration does not pause or delete the existing Temporal schedule
+- in-flight workflows are allowed to finish
+- all future scheduled runs must exit immediately when the integration state is not `active`
 
 Implementation requirement:
 
-- onboarding create flow:
-  1. upsert integration row in `paused`
-  2. create schedule
-  3. if schedule create succeeds, set integration `active`
-  4. if schedule create fails, leave the row `paused` and return an error
-- pausing an integration:
-  1. pause the schedule
-  2. persist `paused`
-- resuming an integration:
-  1. resume the schedule
-  2. persist `active`
-- deleting an integration:
-  1. delete the schedule, treating schedule-not-found as success
-  2. soft-delete the row
+- `FeatureFlagETLWorkflow` must fetch the integration first
+- if integration state is `paused` or `deleted`, return without dispatching provider-specific extract work
+- Search update/delete handlers only need to persist state changes; they do not need Temporal schedule mutations in v1
 
-Failure-handling rule:
+Tradeoff:
 
-- never mark an integration `active` unless the schedule exists
-- if pause/resume fails at the schedule layer, leave DB state unchanged
-- if schedule delete succeeds but soft-delete fails, return an error and require a retry; deleting the schedule twice must be safe
-
-If this is not fixed before GitHub onboarding, uninstall behavior will be incorrect.
+- simpler implementation now
+- extra Temporal wakeups for disabled integrations
+- schedule cleanup deferred to P1 operational hardening
 
 ## Testing Plan
 
@@ -483,7 +467,7 @@ Minimum test matrix for the first GitHub implementation:
 - Repository tests for GitHub integration config round-tripping
 - Repository tests for `pull_requests` upsert idempotency
 - Activity tests for GitHub App token generation and PR normalization
-- Workflow tests for provider routing and GitHub extract fan-out
+- Workflow tests for provider routing, disabled-integration no-op behavior, and GitHub extract fan-out
 - One manual end-to-end test with real GitHub App installation
 
 ## Recommended PR Breakdown
@@ -491,7 +475,7 @@ Minimum test matrix for the first GitHub implementation:
 Keep this work in reviewable chunks rather than one giant branch.
 
 1. PR 1A: add `SourceGitHub`, integration config expansion, and GitHub unique index
-2. PR 1B: schedule lifecycle cleanup for create/pause/resume/delete
+2. PR 1B: disabled-integration no-op behavior in ETL entrypoint
 3. PR 2A: Search config + GitHub App client scaffolding
 4. PR 2B: `POST /v1/auth/github` install-url endpoint
 5. PR 2C: `GET /v1/auth/github` callback handler, user-token verification, integration upsert
@@ -514,11 +498,11 @@ These are the implementation tasks future agents should pick up directly.
 - add GitHub installation unique index migration
 - update integration list/provider responses
 
-### JIRA 2: Temporal schedule lifecycle correctness
+### JIRA 2: Disabled-integration no-op behavior
 
-- add pause/resume/delete methods to `Scheduler`
-- wire integration update/delete handlers to schedule lifecycle
-- adopt `paused -> create schedule -> active` onboarding flow
+- ensure ETL entrypoint exits immediately for non-active integrations
+- add workflow tests for paused/deleted integrations
+- keep scheduler create-only in v1
 
 ### JIRA 3: Search GitHub App config and client
 
@@ -540,7 +524,7 @@ These are the implementation tasks future agents should pick up directly.
 - verify installation visibility to user
 - fetch installation metadata
 - upsert integration
-- create/resume schedule
+- create schedule only for new integrations
 - redirect to frontend
 
 ### JIRA 6: Pull request persistence groundwork
@@ -563,7 +547,7 @@ These are the implementation tasks future agents should pick up directly.
 - GitHub's own docs warn that setup-url `installation_id` is spoofable, so agents must not regress the onboarding plan back to setup-url-only behavior.
 - The current `IntegrationConfig` type may become too provider-specific again if GitHub fields are bolted on carelessly.
 - Search API visibility under installation tokens should be verified early with a real GitHub App installation.
-- Schedule lifecycle bugs will create confusing “deleted but still syncing” behavior if not fixed first.
+- If ETL entrypoints do not short-circuit on non-active integrations, disabled integrations will continue doing real work.
 - `last_synced_at` drift should not leak into new GitHub ETL code.
 
 ## First Spike Recommendation
