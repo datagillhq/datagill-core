@@ -252,14 +252,25 @@ For the initial implementation, ETL failures caused by these cases should surfac
 
 DataGill uses a single GitHub App registration. Customers connect GitHub by installing that app on an organization or personal account. Each installation becomes one `github` integration row in DataGill.
 
+### Onboarding Security Decision
+
+V1 should use the GitHub App callback URL with `request_oauth_on_install=true`, not the setup URL.
+
+- GitHub's setup URL only guarantees an `installation_id`, and GitHub explicitly warns that this value can be spoofed.
+- GitHub's callback URL is used for the web application flow that returns an authorization `code` and `state`.
+- DataGill should use that one-time user authorization only to verify that the installing user can actually access the installation they just created.
+- ETL remains installation-token based. DataGill should not persist long-lived user tokens for sync.
+
 ### Connection Flow
 
 1. Frontend calls `POST /v1/auth/github` on the Search service.
-2. Search verifies the authenticated org context, mints a short-lived signed `state`, and returns a GitHub `install_url`.
-3. Frontend redirects the browser to GitHub's browser-based GitHub App installation flow.
-4. User selects the GitHub organization or personal account and chooses all repositories or selected repositories.
-5. GitHub redirects back to `GET /v1/auth/github` on the Search service.
-6. Search validates the signed `state`, fetches installation details, and creates or updates the `github` integration row with installation metadata.
+2. Search verifies the authenticated org context, mints a short-lived signed `state`, and returns a GitHub installation URL that includes that `state`.
+3. Frontend redirects the browser to GitHub's GitHub App installation flow.
+4. User installs the app and authorizes it as part of the same GitHub flow.
+5. GitHub redirects back to `GET /v1/auth/github` on the Search service with an authorization `code` and `state`.
+6. Search exchanges the `code` for a short-lived GitHub App user access token.
+7. Search verifies that the installation belongs to an installation visible to that authorized user.
+8. Search fetches authoritative installation details, creates or updates the `github` integration row, creates/resumes the Temporal schedule, and redirects back to the frontend.
 
 ### Stored In `integrations.config`
 
@@ -272,7 +283,9 @@ DataGill uses a single GitHub App registration. Customers connect GitHub by inst
 
 - GitHub App ID
 - GitHub App private key
-- GitHub App client ID / client secret if later needed for optional user authorization
+- GitHub App client ID / client secret
+- short-lived onboarding `state`
+- one-time GitHub App user access tokens used during onboarding verification
 - Installation access tokens
 
 ### Token Lifecycle
@@ -280,12 +293,14 @@ DataGill uses a single GitHub App registration. Customers connect GitHub by inst
 - Activities authenticate as the GitHub App using the app ID and private key.
 - Activities generate an installation access token for the integration's `installation_id`.
 - Installation access tokens are short-lived and used only for API calls during ETL.
+- Search uses a one-time GitHub App user access token during onboarding to verify the installation belongs to the installing user, then discards it.
 - Do not store installation access tokens in Postgres.
+- Do not store onboarding user access tokens in Postgres.
 - Do not pass installation access tokens through Temporal workflow state or history.
 
 ### User Authorization
 
-Out of scope for v1. The initial integration uses installation-scoped access only. If DataGill later needs to act on behalf of specific users or access user-scoped data, GitHub App user authorization can be added separately.
+Persistent user-scoped operation is out of scope for v1. However, one-time user authorization during installation is in scope because GitHub recommends it for verifying that the installation associated with the callback actually belongs to the installing user. DataGill should discard the resulting user access token after onboarding verification completes.
 
 ### Implementation Note
 
@@ -320,7 +335,7 @@ One routing case added to `workflows/etl.go`. Zero changes to LD code.
 
 | Question | Notes |
 |----------|-------|
-| GitHub App setup flow | Final callback/setup URL contract between frontend and backend |
+| GitHub App callback contract | Final callback query-param contract between GitHub and Search during install/update flow |
 | Search fallback threshold | Exact fallback rule from search-first to per-repo enumeration needs definition |
 | P1 enrichment workflow | Future `GitHubEnrichWorkflow` — completed reviewers, co-authors, diff content, and LD cross-reference via `diff.sha` |
 | `pull_requests` migration | New migration file alongside existing ones |
