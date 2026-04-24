@@ -105,10 +105,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	cfg := loadConfig()
-	cfg.GitHubAppSlug = "datagill-test"
-	cfg.GitHubStateKey = "test-github-state-secret"
-	testApp := newApp(cfg, logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry)
+	testApp := newApp(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry)
 	return httptest.NewServer(testApp.router())
 }
 
