@@ -254,12 +254,12 @@ DataGill uses a single GitHub App registration. Customers connect GitHub by inst
 
 ### Connection Flow
 
-1. User clicks `Connect GitHub` in DataGill.
-2. Frontend opens GitHub's browser-based GitHub App installation flow.
-3. User selects the GitHub organization or personal account and chooses all repositories or selected repositories.
-4. GitHub redirects back to DataGill's setup URL.
-5. The Search service owns the callback endpoint and validates the installation context.
-6. The Search service creates or updates the `github` integration row with installation metadata.
+1. Frontend calls `POST /v1/auth/github` on the Search service.
+2. Search verifies the authenticated org context, mints a short-lived signed `state`, and returns a GitHub `install_url`.
+3. Frontend redirects the browser to GitHub's browser-based GitHub App installation flow.
+4. User selects the GitHub organization or personal account and chooses all repositories or selected repositories.
+5. GitHub redirects back to `GET /v1/auth/github` on the Search service.
+6. Search validates the signed `state`, fetches installation details, and creates or updates the `github` integration row with installation metadata.
 
 ### Stored In `integrations.config`
 

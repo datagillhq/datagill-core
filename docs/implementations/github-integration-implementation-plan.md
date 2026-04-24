@@ -97,8 +97,8 @@ Tasks:
    - `GITHUB_APP_CLIENT_SECRET` only if needed for callback verification flow
    - `GITHUB_APP_PRIVATE_KEY` or `GITHUB_APP_PRIVATE_KEY_B64`
    - `GITHUB_APP_SETUP_URL` or callback path config if required
-2. Add a browser-start endpoint or return install URL from the integrations API.
-3. Add GitHub App callback handler owned by Search.
+2. Add `POST /v1/auth/github` as the browser-start endpoint.
+3. Add `GET /v1/auth/github` as the GitHub App callback handler owned by Search.
 4. In the callback handler:
    - verify installation context using GitHub App credentials
    - resolve installation metadata
@@ -112,11 +112,24 @@ Open protocol work to resolve before coding this slice:
 - whether GitHub sends enough installation context directly for DataGill, or whether Search must exchange and fetch installation details afterward
 - exact callback route shape used by the frontend
 
+Recommended endpoint contract:
+
+- `POST /v1/auth/github`
+  - JWT-protected
+  - returns `{ "install_url": "..." }`
+  - generates a short-lived signed `state` bound to the initiating DataGill org/user context
+- `GET /v1/auth/github`
+  - not protected by normal JWT middleware
+  - validates the signed `state` from the browser callback
+  - fetches installation details from GitHub
+  - upserts the integration and redirects the browser back to the frontend settings page
+
 Recommendation:
 
 - keep the callback server-side only
 - do not persist GitHub installation access tokens in Postgres
 - do not route callback logic through the worker
+- use signed `state` as the callback trust boundary instead of relying on a user JWT still being present at callback time
 
 ### Slice 3: Schema and model groundwork for pull requests
 
@@ -217,8 +230,8 @@ The Search service integration API is currently API-key based. GitHub changes th
 Recommended API additions:
 
 - `GET /v1/integrations/providers` should include `github`
-- add a GitHub connect/init endpoint or include provider metadata in providers response
-- add a callback endpoint outside JWT-protected org routes if GitHub cannot call it with user JWT context
+- add `POST /v1/auth/github` to start GitHub App installation and return `install_url`
+- add `GET /v1/auth/github` as the signed-state callback endpoint
 
 Recommendation:
 
@@ -266,6 +279,7 @@ Keep this work in reviewable chunks rather than one giant branch.
 ## Risks to Watch
 
 - Search callback route design may be more awkward than expected because JWT-scoped org APIs are not the same as GitHub callback surfaces.
+- The `GET /v1/auth/github` callback must be carefully state-validated because it sits outside the normal JWT-protected API group.
 - The current `IntegrationConfig` type may become too provider-specific again if GitHub fields are bolted on carelessly.
 - Search API visibility under installation tokens should be verified early with a real GitHub App installation.
 - Schedule lifecycle bugs will create confusing “deleted but still syncing” behavior if not fixed first.
