@@ -12,6 +12,8 @@ GitHub is a code source integration. DataGill operates a single GitHub App regis
 
 **What we sync:** Merged pull requests within a date range, including metadata and a diff URL reference. Actual diff content is deferred to a future enrichment workflow.
 
+**GitHub App permissions for v1:** repository `Metadata: read` and repository `Pull requests: read`. Keep the app read-only. During the onboarding/search spike, verify that `GET /search/issues` works with that permission set under an installation token. If GitHub requires additional read-only permission for search in practice, document and add the minimum extra read permission then.
+
 **Why GitHub App, not OAuth app:** GitHub's current guidance is to prefer GitHub Apps over OAuth apps for new integrations. GitHub Apps provide fine-grained permissions, installation-scoped repository access, short-lived installation tokens, and centralized webhooks. OAuth apps use broader user-scoped permissions, are less precise about repo access, and are not the recommended greenfield integration model.
 
 ---

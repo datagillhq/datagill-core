@@ -69,6 +69,26 @@ Notes:
 - `GITHUB_APP_CALLBACK_URL` must exactly match one configured callback URL in the GitHub App settings.
 - `GITHUB_APP_STATE_SECRET` signs DataGill's short-lived onboarding state.
 
+### GitHub App Permissions
+
+V1 app permissions should remain read-only.
+
+Required repository permissions:
+
+- `Metadata: read`
+- `Pull requests: read`
+
+Reasoning:
+
+- `GET /repos/{owner}/{repo}/pulls/{pull_number}` accepts GitHub App installation tokens with `Pull requests: read` or `Contents: read`; prefer `Pull requests: read` because it is narrower.
+- repository metadata is needed for repository identity and installation/repository surfaces.
+
+Open verification item:
+
+- GitHub's docs clearly show that `GET /search/issues` is available to installation access tokens, but the exact minimum repository permission for that endpoint is not clearly documented in the permission reference I checked.
+- Therefore, keep v1 permissions at `Metadata: read` plus `Pull requests: read`, then verify `GET /search/issues` during the onboarding/search spike.
+- Only add another read-only permission if the spike proves it is actually required.
+
 ### Integration Model
 
 Keep using `integrations.config` for provider-specific metadata.
@@ -271,7 +291,7 @@ If GitHub does not provide `installation_id` on this callback in practice:
 - if existing row is `active`: update config in place, keep active
 - if existing row is `paused`: update config and set state back to `active`
 - if existing row is `deleted`: create a new row rather than mutating a deleted row
-- if the same GitHub installation is somehow associated with a different DataGill org, reject and log a high-severity error
+- if the same GitHub installation is somehow associated with a different DataGill org: deferred decision, to be resolved after the onboarding spike
 
 ### Success and Error Redirects
 
