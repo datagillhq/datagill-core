@@ -16,6 +16,21 @@ GitHub is a code source integration. DataGill operates a single GitHub App regis
 
 **Why GitHub App, not OAuth app:** GitHub's current guidance is to prefer GitHub Apps over OAuth apps for new integrations. GitHub Apps provide fine-grained permissions, installation-scoped repository access, short-lived installation tokens, and centralized webhooks. OAuth apps use broader user-scoped permissions, are less precise about repo access, and are not the recommended greenfield integration model.
 
+### Validated Spike Findings — 2026-04-24
+
+The onboarding spike validated the following against a real GitHub App installation in `datagillhq`:
+
+- callback query params include `code`, `installation_id`, `setup_action`, and `state`
+- `request_oauth_on_install=true` works as expected for the combined install + authorize flow
+- Search can exchange `code` for a GitHub App user access token
+- Search can verify the installing user's installation visibility via `GET /user/installations`
+- Search can fetch installation metadata via app JWT auth and mint an installation access token
+- `GET /search/issues` succeeds with the minimal read-only permission set:
+  - repository `Metadata: read`
+  - repository `Pull requests: read`
+
+Result: the v1 onboarding and discovery design is proven end to end. No broader repository, organization, or account permissions are currently required.
+
 ---
 
 ## Integration Config
