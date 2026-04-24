@@ -15,6 +15,31 @@ The original onboarding idea used the GitHub App setup URL. That is not the righ
 - This does not change the ETL auth model. ETL still uses installation access tokens only.
 - The user access token exists only during onboarding so Search can verify that the installing user can actually access the installation being connected.
 
+## Spike Outcome — 2026-04-24
+
+The onboarding spike answered the two main open questions from this plan.
+
+Confirmed with a real installation:
+
+- GitHub's combined install + authorize callback returns:
+  - `code`
+  - `installation_id`
+  - `setup_action`
+  - `state`
+- Search can exchange `code` for a GitHub App user access token.
+- Search can verify installation visibility via `GET /user/installations`.
+- Search can fetch authoritative installation metadata via app JWT auth.
+- Search can mint an installation access token.
+- `GET /search/issues` works with installation auth using only:
+  - repository `Metadata: read`
+  - repository `Pull requests: read`
+
+Resolved decisions:
+
+- callback parsing in Slice 2 can treat `installation_id` as present in the `request_oauth_on_install=true` flow
+- no broader read permission is required for v1 discovery at this time
+- the onboarding/search spike goals are complete; future work should move back to clean implementation branches
+
 ## Goals
 
 V1 goal:
@@ -83,11 +108,10 @@ Reasoning:
 - `GET /repos/{owner}/{repo}/pulls/{pull_number}` accepts GitHub App installation tokens with `Pull requests: read` or `Contents: read`; prefer `Pull requests: read` because it is narrower.
 - repository metadata is needed for repository identity and installation/repository surfaces.
 
-Open verification item:
+Validated by spike:
 
-- GitHub's docs clearly show that `GET /search/issues` is available to installation access tokens, but the exact minimum repository permission for that endpoint is not clearly documented in the permission reference I checked.
-- Therefore, keep v1 permissions at `Metadata: read` plus `Pull requests: read`, then verify `GET /search/issues` during the onboarding/search spike.
-- Only add another read-only permission if the spike proves it is actually required.
+- `GET /search/issues` works for v1 with `Metadata: read` plus `Pull requests: read`
+- no extra repository permission is currently required
 
 ### Integration Model
 
@@ -280,10 +304,10 @@ Future agents should not improvise this logic.
 
 Do not persist user access or refresh tokens. If GitHub returns a refresh token as part of the user authorization flow, discard it after onboarding verification completes.
 
-If GitHub does not provide `installation_id` on this callback in practice:
+Fallback note:
 
-- Search must list accessible installations for the user and resolve the most recent matching installation during the onboarding window.
-- This should be proven in the onboarding spike before implementation is considered complete.
+- if GitHub ever stops providing `installation_id` on this callback in practice, Search would need to resolve the installation from the user's accessible installations during the onboarding window
+- this fallback is not required for the currently validated flow
 
 ### Integration Upsert Rules
 
@@ -291,7 +315,7 @@ If GitHub does not provide `installation_id` on this callback in practice:
 - if existing row is `active`: update config in place, keep active
 - if existing row is `paused`: update config and set state back to `active`
 - if existing row is `deleted`: create a new row rather than mutating a deleted row
-- if the same GitHub installation is somehow associated with a different DataGill org: deferred decision, to be resolved after the onboarding spike
+- if the same GitHub installation is somehow associated with a different DataGill org: still deferred; not needed to begin implementation
 
 ### Success and Error Redirects
 
@@ -566,19 +590,13 @@ These are the implementation tasks future agents should pick up directly.
 - The `GET /v1/auth/github` callback must be carefully state-validated because it sits outside the normal JWT-protected API group.
 - GitHub's own docs warn that setup-url `installation_id` is spoofable, so agents must not regress the onboarding plan back to setup-url-only behavior.
 - The current `IntegrationConfig` type may become too provider-specific again if GitHub fields are bolted on carelessly.
-- Search API visibility under installation tokens should be verified early with a real GitHub App installation.
+- Search API visibility under installation tokens has been validated for the current v1 permission set.
 - If ETL entrypoints do not short-circuit on non-active integrations, disabled integrations will continue doing real work.
 - `last_synced_at` drift should not leak into new GitHub ETL code.
 
 ## First Spike Recommendation
 
-Before building the full ingestion path, do one short spike:
+Spike status:
 
-1. stand up a DataGill GitHub App in a dev GitHub account
-2. enable `request_oauth_on_install=true` and configure the callback URL
-3. wire a minimal callback endpoint in Search
-4. store a GitHub integration row from a real installation
-5. mint an installation token server-side
-6. call one low-risk GitHub API endpoint successfully with that token
-
-That spike will validate the hardest new boundary early: secure onboarding plus installation-token auth in the existing Search/worker split.
+- completed on 2026-04-24
+- use this document's validated findings rather than the spike code as the source of truth for implementation

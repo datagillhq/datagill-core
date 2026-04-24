@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/services/search/analytics"
 )
@@ -49,6 +53,22 @@ func TestGitHubAuthStartHandler(t *testing.T) {
 		resp := requestWithoutToken(t, http.MethodPost, srv.URL+"/v1/auth/github", `{"return_to":"/settings/integrations"}`)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("allows spike mode without jwt", func(t *testing.T) {
+		logger := zerolog.New(io.Discard)
+		cfg := loadConfig()
+		cfg.GitHubAppSlug = "datagill-test"
+		cfg.GitHubStateKey = "test-github-state-secret"
+		cfg.GitHubSpikeMode = true
+		testApp := newApp(cfg, logger, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, stubScheduler{}, testJWTKeyfunc, analytics.NewRegistry())
+		srv := httptest.NewServer(testApp.router())
+		defer srv.Close()
+
+		resp := requestWithoutToken(t, http.MethodPost, srv.URL+"/v1/auth/github", `{"return_to":"/settings/integrations"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
 	})
 }
