@@ -53,10 +53,14 @@ func (a *app) router() http.Handler {
 	// Infrastructure routes — no org ID required.
 	r.Get("/healthz", healthzHandler)
 	r.Handle("/metrics", promhttp.Handler())
+	r.Get("/v1/auth/github", a.githubAuthCallbackHandler)
 
 	// API routes — JWT required.
 	r.Group(func(r chi.Router) {
 		r.Use(a.jwtMiddleware)
+
+		// GitHub App auth spike API
+		r.Post("/v1/auth/github", a.githubAuthStartHandler)
 
 		// Integrations API
 		r.Get("/v1/integrations/providers", a.providersHandler)

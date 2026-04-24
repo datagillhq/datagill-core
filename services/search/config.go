@@ -18,6 +18,9 @@ type config struct {
 	AllowedOrigin   string // CORS allowed origin for the browser UI
 	EncryptionKey   []byte // 32 bytes decoded from ENCRYPTION_KEY (hex)
 	TemporalAddress string // host:port of the Temporal frontend
+	GitHubAppSlug   string
+	GitHubStateKey  string
+	GitHubClientID  string
 }
 
 func loadConfig() config {
@@ -52,5 +55,8 @@ func loadConfig() config {
 		AllowedOrigin:   allowedOrigin,
 		EncryptionKey:   encryptionKey,
 		TemporalAddress: os.Getenv("TEMPORAL_ADDRESS"),
+		GitHubAppSlug:   os.Getenv("GITHUB_APP_SLUG"),
+		GitHubStateKey:  os.Getenv("GITHUB_APP_STATE_SECRET"),
+		GitHubClientID:  os.Getenv("GITHUB_APP_CLIENT_ID"),
 	}
 }

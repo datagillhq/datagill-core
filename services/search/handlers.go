@@ -20,6 +20,12 @@ func orgIDFromCtx(r *http.Request) string {
 	return v
 }
 
+// userIDFromCtx returns the user ID stored in context by jwtMiddleware.
+func userIDFromCtx(r *http.Request) string {
+	v, _ := r.Context().Value(userIDKey).(string)
+	return v
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
