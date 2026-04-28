@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,7 +32,7 @@ func writeCode(w http.ResponseWriter, status int, code string) {
 
 // providersHandler returns the list of supported integration providers.
 func (a *app) providersHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]string{"providers": {string(models.SourceLaunchDarkly)}})
+	writeJSON(w, http.StatusOK, map[string][]string{"providers": {string(models.SourceLaunchDarkly), string(models.SourceGitHub)}})
 }
 
 type createIntegrationRequest struct {
@@ -51,6 +53,11 @@ func (a *app) createIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	var req createIntegrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY")
+		return
+	}
+
+	if req.Provider == models.SourceGitHub {
+		writeCode(w, http.StatusBadRequest, "INTEGRATION_USE_GITHUB_AUTH")
 		return
 	}
 
@@ -125,6 +132,61 @@ func (a *app) listIntegrationsHandler(w http.ResponseWriter, r *http.Request) {
 		resp[i] = toIntegrationResponse(v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"integrations": resp})
+}
+
+type startGitHubAuthRequest struct {
+	ReturnTo string `json:"return_to"`
+}
+
+func (a *app) startGitHubAuthHandler(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(orgIDFromCtx(r))
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, "INVALID_ORG_ID")
+		return
+	}
+
+	var req startGitHubAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY")
+		return
+	}
+
+	resp, err := a.githubAuth.Start(r.Context(), orgID, userIDFromCtx(r), req.ReturnTo)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, "INTERNAL_ERROR")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (a *app) githubAuthCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	redirectURL, err := a.githubAuth.Complete(r.Context(), r.URL.Query())
+	if err != nil {
+		if redirectURL == "" {
+			redirectURL = buildGitHubErrorRedirect(a.config.FrontendURL, "/settings/integrations", "integration_create_failed")
+		}
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+func buildGitHubErrorRedirect(frontendURL, returnTo, code string) string {
+	base, err := url.Parse(frontendURL)
+	if err != nil {
+		return "/settings/integrations?provider=github&status=error&code=" + code
+	}
+	target, err := base.Parse(normalizeReturnTo(returnTo))
+	if err != nil {
+		return "/settings/integrations?provider=github&status=error&code=" + code
+	}
+	q := target.Query()
+	q.Set("provider", "github")
+	q.Set("status", "error")
+	q.Set("code", code)
+	target.RawQuery = q.Encode()
+	return target.String()
 }
 
 type updateIntegrationRequest struct {

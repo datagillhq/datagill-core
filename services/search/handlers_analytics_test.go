@@ -31,7 +31,7 @@ func newAnalyticsTestServer(t *testing.T, plugin analytics.Plugin) *httptest.Ser
 	if err := reg.Register(plugin); err != nil {
 		t.Fatal(err)
 	}
-	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, reg)
+	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, reg, nil)
 }
 
 const validDateRange = "from=2025-01-01T00:00:00Z&to=2025-02-01T00:00:00Z"

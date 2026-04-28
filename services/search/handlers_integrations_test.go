@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -59,7 +60,7 @@ func TestCreateIntegrationHandler(t *testing.T) {
 	}
 
 	t.Run("success", func(t *testing.T) {
-		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", body)
@@ -69,7 +70,7 @@ func TestCreateIntegrationHandler(t *testing.T) {
 	})
 
 	t.Run("invalid api key", func(t *testing.T) {
-		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrInvalidAPIKey}, analytics.NewRegistry())
+		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrInvalidAPIKey}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", body)
@@ -79,7 +80,7 @@ func TestCreateIntegrationHandler(t *testing.T) {
 	})
 
 	t.Run("provider unreachable", func(t *testing.T) {
-		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrProviderUnreachable}, analytics.NewRegistry())
+		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrProviderUnreachable}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", body)
@@ -92,12 +93,24 @@ func TestCreateIntegrationHandler(t *testing.T) {
 		existing := &stubIntegrationsRepo{integrations: []models.Integration{
 			{Source: models.SourceLaunchDarkly, State: models.IntegrationStateActive},
 		}}
-		srv := newTestServerFull(t, existing, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, existing, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", body)
 		if resp.StatusCode != http.StatusConflict {
 			t.Fatalf("expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("github must use auth flow", func(t *testing.T) {
+		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", createIntegrationRequest{
+			Provider: models.SourceGitHub,
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
 		}
 	})
 
@@ -120,7 +133,7 @@ func TestListIntegrationsHandler(t *testing.T) {
 	integrationsRepo := &stubIntegrationsRepo{integrations: []models.Integration{
 		{Key: uuid.New(), Source: models.SourceLaunchDarkly, State: models.IntegrationStateActive},
 	}}
-	srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+	srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 	defer srv.Close()
 
 	resp := getWithToken(t, srv.URL+"/v1/integrations", testOrgID, testUserID)
@@ -137,7 +150,7 @@ func TestUpdateIntegrationHandler(t *testing.T) {
 		integrationsRepo := &stubIntegrationsRepo{
 			updateResult: models.Integration{Key: key, Source: models.SourceLaunchDarkly, State: newState},
 		}
-		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"state": "paused"})
@@ -148,7 +161,7 @@ func TestUpdateIntegrationHandler(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		integrationsRepo := &stubIntegrationsRepo{updateErr: repository.ErrNotFound}
-		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"state": "paused"})
@@ -158,7 +171,7 @@ func TestUpdateIntegrationHandler(t *testing.T) {
 	})
 
 	t.Run("invalid api key on update", func(t *testing.T) {
-		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrInvalidAPIKey}, analytics.NewRegistry())
+		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{err: ErrInvalidAPIKey}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"api_key": "bad-key"})
@@ -175,7 +188,7 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 		integrationsRepo := &stubIntegrationsRepo{
 			deleteResult: models.Integration{Key: key, State: models.IntegrationStateDeleted},
 		}
-		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodDelete, srv.URL+"/v1/integrations/"+key.String(), nil)
@@ -186,7 +199,7 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		integrationsRepo := &stubIntegrationsRepo{deleteErr: repository.ErrNotFound}
-		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodDelete, srv.URL+"/v1/integrations/"+key.String(), nil)
@@ -197,7 +210,7 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 
 	t.Run("wrong org returns 404 not 403", func(t *testing.T) {
 		integrationsRepo := &stubIntegrationsRepo{deleteErr: repository.ErrNotFound}
-		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
 		defer srv.Close()
 
 		resp := requestWithToken(t, http.MethodDelete, srv.URL+"/v1/integrations/"+key.String(), nil)
@@ -205,4 +218,56 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 			t.Fatalf("expected 404 (not 403) for wrong org, got %d", resp.StatusCode)
 		}
 	})
+}
+func TestStartGitHubAuthHandler(t *testing.T) {
+	srv := newTestServerFull(
+		t,
+		&stubIntegrationsRepo{},
+		&stubOrgRepo{},
+		&stubValidator{},
+		analytics.NewRegistry(),
+		&stubGitHubAuth{startResp: githubStartResponse{
+			InstallURL: "https://github.com/apps/datagill/installations/new?state=test",
+			ExpiresAt:  time.Now().Add(15 * time.Minute).UTC(),
+		}},
+	)
+	defer srv.Close()
+
+	resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/auth/github", map[string]any{"return_to": "/settings/integrations"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestGitHubAuthCallbackHandler(t *testing.T) {
+	srv := newTestServerFull(
+		t,
+		&stubIntegrationsRepo{},
+		&stubOrgRepo{},
+		&stubValidator{},
+		analytics.NewRegistry(),
+		&stubGitHubAuth{completeURL: "http://localhost:3001/settings/integrations?provider=github&status=connected"},
+	)
+	defer srv.Close()
+
+	client := &http.Client{
+		Timeout: testClient.Timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/auth/github?code=test&state=test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected 302, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got == "" {
+		t.Fatal("expected redirect location")
+	}
 }

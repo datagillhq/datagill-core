@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -51,14 +52,17 @@ var testClient = &http.Client{Timeout: 5 * time.Second}
 
 // stubIntegrationsRepo is a configurable stub for IntegrationsRepository.
 type stubIntegrationsRepo struct {
-	integrations []models.Integration
-	integrErr    error
-	createErr    error
-	getErr       error
-	updateResult models.Integration
-	updateErr    error
-	deleteResult models.Integration
-	deleteErr    error
+	integrations  []models.Integration
+	integrErr     error
+	createErr     error
+	upsertResult  models.Integration
+	upsertCreated bool
+	upsertErr     error
+	getErr        error
+	updateResult  models.Integration
+	updateErr     error
+	deleteResult  models.Integration
+	deleteErr     error
 }
 
 func (s *stubIntegrationsRepo) CreateIntegration(_ context.Context, i models.Integration) (models.Integration, error) {
@@ -74,6 +78,9 @@ func (s *stubIntegrationsRepo) GetIntegration(_ context.Context, _, _ uuid.UUID)
 }
 func (s *stubIntegrationsRepo) ListIntegrations(_ context.Context, _ uuid.UUID) ([]models.Integration, error) {
 	return s.integrations, s.integrErr
+}
+func (s *stubIntegrationsRepo) UpsertGitHubIntegration(_ context.Context, _ uuid.UUID, _ models.IntegrationConfig) (models.Integration, bool, error) {
+	return s.upsertResult, s.upsertCreated, s.upsertErr
 }
 func (s *stubIntegrationsRepo) UpdateIntegration(_ context.Context, _, _ uuid.UUID, _ models.IntegrationPatch) (models.Integration, error) {
 	return s.updateResult, s.updateErr
@@ -97,15 +104,30 @@ type stubValidator struct{ err error }
 
 func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) error { return s.err }
 
-func newTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+type stubGitHubAuth struct {
+	startResp   githubStartResponse
+	startErr    error
+	completeURL string
+	completeErr error
 }
 
-func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
+func (s *stubGitHubAuth) Start(_ context.Context, _ uuid.UUID, _, _ string) (githubStartResponse, error) {
+	return s.startResp, s.startErr
+}
+
+func (s *stubGitHubAuth) Complete(_ context.Context, _ url.Values) (string, error) {
+	return s.completeURL, s.completeErr
+}
+
+func newTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), nil)
+}
+
+func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry, githubAuth GitHubAuthService) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry)
+	testApp := newAppWithGitHubAuth(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry, githubAuth)
 	return httptest.NewServer(testApp.router())
 }
 
