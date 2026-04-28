@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -58,6 +59,39 @@ func TestGitHubAuthStart(t *testing.T) {
 	}
 	if state.ReturnTo != "/settings/integrations" {
 		t.Fatalf("expected return_to /settings/integrations, got %q", state.ReturnTo)
+	}
+	if state.Nonce == "" {
+		t.Fatal("expected nonce to be set")
+	}
+}
+
+func TestGitHubAuthStartNormalizesReturnTo(t *testing.T) {
+	svc := &githubAuthService{
+		cfg: config{
+			GitHubAppSlug:        "datagill",
+			GitHubAppStateSecret: "secret",
+		},
+		now: func() time.Time { return time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC) },
+	}
+
+	resp, err := svc.Start(t.Context(), uuid.MustParse(testOrgID), testUserID, "https://evil.example")
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	installURL, err := url.Parse(resp.InstallURL)
+	if err != nil {
+		t.Fatalf("parse install url: %v", err)
+	}
+	state := decodeGitHubState(t, installURL.Query().Get("state"))
+	if state.ReturnTo != "/settings/integrations" {
+		t.Fatalf("expected normalized return_to, got %q", state.ReturnTo)
+	}
+}
+
+func TestGitHubAuthStartRequiresConfig(t *testing.T) {
+	svc := &githubAuthService{cfg: config{}}
+	if _, err := svc.Start(t.Context(), uuid.MustParse(testOrgID), testUserID, ""); err == nil {
+		t.Fatal("expected error when config is missing")
 	}
 }
 
@@ -194,6 +228,48 @@ func TestGitHubAuthComplete(t *testing.T) {
 			t.Fatal("expected installation visibility error")
 		}
 		assertGitHubRedirect(t, redirectURL, "error", "github_auth_failed")
+	})
+
+	t.Run("finds installation on second page", func(t *testing.T) {
+		// Build a first page of 100 non-matching IDs so pagination is exercised.
+		ids := make([]string, 100)
+		for i := range ids {
+			ids[i] = fmt.Sprintf(`{"id":%d}`, i+1)
+		}
+		page1 := `{"installations":[` + strings.Join(ids, ",") + `]}`
+
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/login/oauth/access_token":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"user-token"}`))
+			case "/user/installations":
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Query().Get("page") == "2" {
+					_, _ = w.Write([]byte(`{"installations":[{"id":12345}]}`))
+				} else {
+					_, _ = w.Write([]byte(page1))
+				}
+			case "/app/installations/12345":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":12345,"account":{"login":"acme-org","type":"Organization"},"repository_selection":"all"}`))
+			default:
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+		}))
+		defer api.Close()
+
+		repo := &stubIntegrationsRepo{
+			upsertResult:  models.Integration{Key: uuid.New(), OrgID: orgID, Source: models.SourceGitHub},
+			upsertCreated: true,
+		}
+		svc := newCallbackTestService(t, callbackTestConfig(privateKeyPEM), repo, &stubOrgRepo{}, &stubScheduler{}, now, api.URL+"/login/oauth/access_token", api.URL)
+
+		redirectURL, err := svc.Complete(t.Context(), callbackQuery(t, svc, orgID, "/settings/integrations"))
+		if err != nil {
+			t.Fatalf("Complete returned error: %v", err)
+		}
+		assertGitHubRedirect(t, redirectURL, "connected", "")
 	})
 }
 

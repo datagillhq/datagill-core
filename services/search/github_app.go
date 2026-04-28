@@ -257,23 +257,28 @@ func (s *githubAuthService) exchangeCode(ctx context.Context, code string) (stri
 }
 
 func (s *githubAuthService) userCanAccessInstallation(ctx context.Context, userToken string, installationID int64) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.apiBaseURL+"/user/installations", nil)
-	if err != nil {
-		return false, fmt.Errorf("build user installations request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+userToken)
-	req.Header.Set("Accept", "application/vnd.github+json")
+	for page := 1; ; page++ {
+		reqURL := fmt.Sprintf("%s/user/installations?per_page=100&page=%d", s.apiBaseURL, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return false, fmt.Errorf("build user installations request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+userToken)
+		req.Header.Set("Accept", "application/vnd.github+json")
 
-	var resp githubUserInstallationsResponse
-	if err := s.doJSON(req, &resp); err != nil {
-		return false, fmt.Errorf("list user installations: %w", err)
-	}
-	for _, installation := range resp.Installations {
-		if installation.ID == installationID {
-			return true, nil
+		var resp githubUserInstallationsResponse
+		if err := s.doJSON(req, &resp); err != nil {
+			return false, fmt.Errorf("list user installations: %w", err)
+		}
+		for _, installation := range resp.Installations {
+			if installation.ID == installationID {
+				return true, nil
+			}
+		}
+		if len(resp.Installations) < 100 {
+			return false, nil
 		}
 	}
-	return false, nil
 }
 
 func (s *githubAuthService) getInstallation(ctx context.Context, installationID int64) (githubInstallation, error) {
