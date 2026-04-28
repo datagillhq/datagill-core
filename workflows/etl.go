@@ -36,6 +36,9 @@ func FeatureFlagETLWorkflow(ctx workflow.Context, input ETLWorkflowInput) error 
 	if err := workflow.ExecuteActivity(ctx, (*activities.SharedActivities).GetIntegration, input.OrgID, input.IntegrationKey).Get(ctx, &integration); err != nil {
 		return fmt.Errorf("FeatureFlagETLWorkflow: get integration: %w", err)
 	}
+	if integration.State != models.IntegrationStateActive {
+		return nil
+	}
 
 	switch integration.Source {
 	case models.SourceLaunchDarkly:

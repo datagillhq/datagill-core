@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,6 +90,62 @@ func (r *PostgresRepository) CreateIntegration(ctx context.Context, i models.Int
 		return models.Integration{}, fmt.Errorf("CreateIntegration: %w", err)
 	}
 	return created, nil
+}
+
+// UpsertGitHubIntegration upserts an active GitHub integration for the given org and installation.
+// Deleted rows are treated as tombstones: a new active row is inserted instead of mutating them.
+func (r *PostgresRepository) UpsertGitHubIntegration(ctx context.Context, orgID uuid.UUID, config models.IntegrationConfig) (models.Integration, bool, error) {
+	if config.InstallationID == 0 {
+		return models.Integration{}, false, fmt.Errorf("UpsertGitHubIntegration: installation_id is required")
+	}
+
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return models.Integration{}, false, fmt.Errorf("UpsertGitHubIntegration marshal config: %w", err)
+	}
+
+	encryptedKey, err := encryptAPIKey(r.encryptionKey, "")
+	if err != nil {
+		return models.Integration{}, false, fmt.Errorf("UpsertGitHubIntegration encrypt api_key: %w", err)
+	}
+
+	installationID := strconv.FormatInt(config.InstallationID, 10)
+
+	row := r.pool.QueryRow(ctx, `
+		UPDATE integrations
+		SET
+			config = $3,
+			state = 'active',
+			updated_at = NOW()
+		WHERE org_id = $1
+		  AND source = 'github'
+		  AND state IN ('active', 'paused')
+		  AND config->>'installation_id' = $2
+		RETURNING `+integrationColumns,
+		orgID, installationID, configJSON,
+	)
+
+	updated, err := r.rowToIntegration(row)
+	if err == nil {
+		return updated, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return models.Integration{}, false, fmt.Errorf("UpsertGitHubIntegration update: %w", err)
+	}
+
+	key := uuid.New()
+	insertRow := r.pool.QueryRow(ctx, `
+		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
+		VALUES ($1, $2, 'github', $3, $4, 'active', NOW(), NOW())
+		RETURNING `+integrationColumns,
+		key, orgID, encryptedKey, configJSON,
+	)
+
+	created, err := r.rowToIntegration(insertRow)
+	if err != nil {
+		return models.Integration{}, false, fmt.Errorf("UpsertGitHubIntegration insert: %w", err)
+	}
+	return created, true, nil
 }
 
 // GetIntegration returns a single non-deleted integration by key, scoped to the org.

@@ -78,6 +78,7 @@ func runMigrations(ctx context.Context, connString string) error {
 		"002_indexes.up.sql",
 		"003_analytics_indexes.up.sql",
 		"004_integration_last_synced_at.up.sql",
+		"005_github_integrations.up.sql",
 	}
 
 	for _, mig := range migrations {

@@ -29,6 +29,7 @@ func TestFeatureFlagETLWorkflow_RoutesLaunchDarkly(t *testing.T) {
 		Key:    integrationKey,
 		OrgID:  orgID,
 		Source: models.SourceLaunchDarkly,
+		State:  models.IntegrationStateActive,
 	}
 
 	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).Return(integration, nil)
@@ -55,6 +56,7 @@ func TestFeatureFlagETLWorkflow_UnsupportedSource(t *testing.T) {
 		Key:    integrationKey,
 		OrgID:  orgID,
 		Source: "unknown-provider",
+		State:  models.IntegrationStateActive,
 	}
 
 	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).Return(integration, nil)
@@ -72,4 +74,30 @@ func TestFeatureFlagETLWorkflow_UnsupportedSource(t *testing.T) {
 	if !errors.As(err, &appErr) || !appErr.NonRetryable() {
 		t.Errorf("expected non-retryable ApplicationError, got: %v", err)
 	}
+}
+
+func TestFeatureFlagETLWorkflow_SkipsPausedIntegration(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	integration := models.Integration{
+		Key:    integrationKey,
+		OrgID:  orgID,
+		Source: models.SourceLaunchDarkly,
+		State:  models.IntegrationStatePaused,
+	}
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).Return(integration, nil)
+
+	env.ExecuteWorkflow(workflows.FeatureFlagETLWorkflow, workflows.ETLWorkflowInput{
+		OrgID:          orgID,
+		IntegrationKey: integrationKey,
+	})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("FeatureFlagETLWorkflow failed: %v", err)
+	}
+	env.AssertExpectations(t)
 }
