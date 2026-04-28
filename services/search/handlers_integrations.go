@@ -30,7 +30,7 @@ func writeCode(w http.ResponseWriter, status int, code string) {
 
 // providersHandler returns the list of supported integration providers.
 func (a *app) providersHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]string{"providers": {string(models.SourceLaunchDarkly)}})
+	writeJSON(w, http.StatusOK, map[string][]string{"providers": {string(models.SourceLaunchDarkly), string(models.SourceGitHub)}})
 }
 
 type createIntegrationRequest struct {
@@ -51,6 +51,11 @@ func (a *app) createIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	var req createIntegrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY")
+		return
+	}
+
+	if req.Provider == models.SourceGitHub {
+		writeCode(w, http.StatusBadRequest, "INTEGRATION_USE_GITHUB_AUTH")
 		return
 	}
 
