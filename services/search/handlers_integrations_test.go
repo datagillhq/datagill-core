@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -245,6 +246,77 @@ func TestStartGitHubAuthHandler(t *testing.T) {
 		}
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+}
+
+func TestGitHubAuthCallbackHandler(t *testing.T) {
+	noRedirectClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	t.Run("success redirect", func(t *testing.T) {
+		githubAuth := &stubGitHubAuth{
+			completeRedirect: "http://localhost:3001/settings/integrations?provider=github&status=connected",
+		}
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), githubAuth)
+		defer srv.Close()
+
+		resp, err := noRedirectClient.Get(srv.URL + "/v1/auth/github?state=signed&code=oauth-code&installation_id=12345")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusFound {
+			t.Fatalf("expected 302, got %d", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Location"); got != githubAuth.completeRedirect {
+			t.Fatalf("expected redirect %q, got %q", githubAuth.completeRedirect, got)
+		}
+		if githubAuth.completeQuery.Get("state") != "signed" || githubAuth.completeQuery.Get("code") != "oauth-code" {
+			t.Fatalf("expected query to be forwarded, got %v", githubAuth.completeQuery)
+		}
+	})
+
+	t.Run("error redirect from service", func(t *testing.T) {
+		githubAuth := &stubGitHubAuth{
+			completeRedirect: "http://localhost:3001/settings/integrations?provider=github&status=error&code=invalid_state",
+			completeErr:      context.DeadlineExceeded,
+		}
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), githubAuth)
+		defer srv.Close()
+
+		resp, err := noRedirectClient.Get(srv.URL + "/v1/auth/github?state=signed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusFound {
+			t.Fatalf("expected 302, got %d", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Location"); got != githubAuth.completeRedirect {
+			t.Fatalf("expected redirect %q, got %q", githubAuth.completeRedirect, got)
+		}
+	})
+
+	t.Run("fallback redirect when service returns empty redirect", func(t *testing.T) {
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), &stubGitHubAuth{completeErr: context.DeadlineExceeded})
+		defer srv.Close()
+
+		resp, err := noRedirectClient.Get(srv.URL + "/v1/auth/github?state=signed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusFound {
+			t.Fatalf("expected 302, got %d", resp.StatusCode)
+		}
+		target, err := url.Parse(resp.Header.Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.Query().Get("code") != "integration_create_failed" {
+			t.Fatalf("expected fallback code integration_create_failed, got %q", target.Query().Get("code"))
 		}
 	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 
 type GitHubAuthService interface {
 	Start(ctx context.Context, orgID uuid.UUID, userID, returnTo string) (githubStartResponse, error)
+	Complete(ctx context.Context, query url.Values) (string, error)
 }
 
 type app struct {
@@ -32,7 +34,7 @@ func newApp(cfg config, logger zerolog.Logger, integrationsRepo IntegrationsRepo
 
 func newAppWithGitHubAuth(cfg config, logger zerolog.Logger, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, scheduler Scheduler, jwtKeyfunc jwt.Keyfunc, analyticsRegistry *analytics.Registry, githubAuth GitHubAuthService) *app {
 	if githubAuth == nil {
-		githubAuth = newGitHubAuthService(cfg)
+		githubAuth = newGitHubAuthService(cfg, integrationsRepo, orgRepo, scheduler)
 	}
 	return &app{
 		config:            cfg,
