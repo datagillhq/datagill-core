@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -51,14 +52,19 @@ var testClient = &http.Client{Timeout: 5 * time.Second}
 
 // stubIntegrationsRepo is a configurable stub for IntegrationsRepository.
 type stubIntegrationsRepo struct {
-	integrations []models.Integration
-	integrErr    error
-	createErr    error
-	getErr       error
-	updateResult models.Integration
-	updateErr    error
-	deleteResult models.Integration
-	deleteErr    error
+	integrations  []models.Integration
+	integrErr     error
+	createErr     error
+	getErr        error
+	upsertResult  models.Integration
+	upsertCreated bool
+	upsertErr     error
+	upsertConfig  *models.IntegrationConfig
+	upsertOrgID   *uuid.UUID
+	updateResult  models.Integration
+	updateErr     error
+	deleteResult  models.Integration
+	deleteErr     error
 }
 
 func (s *stubIntegrationsRepo) CreateIntegration(_ context.Context, i models.Integration) (models.Integration, error) {
@@ -75,6 +81,12 @@ func (s *stubIntegrationsRepo) GetIntegration(_ context.Context, _, _ uuid.UUID)
 func (s *stubIntegrationsRepo) ListIntegrations(_ context.Context, _ uuid.UUID) ([]models.Integration, error) {
 	return s.integrations, s.integrErr
 }
+func (s *stubIntegrationsRepo) UpsertGitHubIntegration(_ context.Context, orgID uuid.UUID, config models.IntegrationConfig) (models.Integration, bool, error) {
+	s.upsertOrgID = &orgID
+	cfg := config
+	s.upsertConfig = &cfg
+	return s.upsertResult, s.upsertCreated, s.upsertErr
+}
 func (s *stubIntegrationsRepo) UpdateIntegration(_ context.Context, _, _ uuid.UUID, _ models.IntegrationPatch) (models.Integration, error) {
 	return s.updateResult, s.updateErr
 }
@@ -82,10 +94,17 @@ func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, _ uui
 	return s.deleteResult, s.deleteErr
 }
 
-// stubScheduler is a no-op Scheduler for tests.
-type stubScheduler struct{}
+// stubScheduler is a configurable Scheduler for tests.
+type stubScheduler struct {
+	createErr  error
+	createCall *models.Integration
+}
 
-func (stubScheduler) Create(_ context.Context, _ models.Integration) error { return nil }
+func (s *stubScheduler) Create(_ context.Context, integration models.Integration) error {
+	copied := integration
+	s.createCall = &copied
+	return s.createErr
+}
 
 // stubOrgRepo is a no-op stub for OrgRepository.
 type stubOrgRepo struct{}
@@ -98,9 +117,12 @@ type stubValidator struct{ err error }
 func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) error { return s.err }
 
 type stubGitHubAuth struct {
-	startResp githubStartResponse
-	startErr  error
-	startCall *githubStartCall
+	startResp        githubStartResponse
+	startErr         error
+	startCall        *githubStartCall
+	completeRedirect string
+	completeErr      error
+	completeQuery    url.Values
 }
 
 type githubStartCall struct {
@@ -114,19 +136,28 @@ func (s *stubGitHubAuth) Start(_ context.Context, orgID uuid.UUID, userID, retur
 	return s.startResp, s.startErr
 }
 
+func (s *stubGitHubAuth) Complete(_ context.Context, query url.Values) (string, error) {
+	s.completeQuery = query
+	return s.completeRedirect, s.completeErr
+}
+
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
 }
 
 func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
-	return newTestServerWithGitHubAuth(t, integrationsRepo, orgRepo, validator, analyticsRegistry, nil)
+	return newTestServerWithGitHubAuthAndScheduler(t, integrationsRepo, orgRepo, validator, analyticsRegistry, &stubScheduler{}, nil)
 }
 
 func newTestServerWithGitHubAuth(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry, githubAuth GitHubAuthService) *httptest.Server {
+	return newTestServerWithGitHubAuthAndScheduler(t, integrationsRepo, orgRepo, validator, analyticsRegistry, &stubScheduler{}, githubAuth)
+}
+
+func newTestServerWithGitHubAuthAndScheduler(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry, scheduler Scheduler, githubAuth GitHubAuthService) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newAppWithGitHubAuth(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry, githubAuth)
+	testApp := newAppWithGitHubAuth(loadConfig(), logger, integrationsRepo, orgRepo, validator, scheduler, testJWTKeyfunc, analyticsRegistry, githubAuth)
 	return httptest.NewServer(testApp.router())
 }
 

@@ -159,6 +159,14 @@ func (a *app) startGitHubAuthHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (a *app) githubAuthCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	redirectURL, err := a.githubAuth.Complete(r.Context(), r.URL.Query())
+	if err != nil && redirectURL == "" {
+		redirectURL = buildGitHubErrorRedirect(a.config.FrontendURL, "/settings/integrations", "integration_create_failed")
+	}
+	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
 type updateIntegrationRequest struct {
 	APIKey *string                  `json:"api_key,omitempty"`
 	State  *models.IntegrationState `json:"state,omitempty"`

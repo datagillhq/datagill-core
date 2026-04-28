@@ -60,14 +60,26 @@ Set `AUTH_URL` to the BetterAuth base path served by the frontend:
 AUTH_URL=http://localhost:3001/api/auth
 ```
 
-For GitHub onboarding start flow in Search, also set:
+For GitHub onboarding in Search, also set:
 
 ```
+GITHUB_APP_ID=<your GitHub App ID>
+GITHUB_APP_CLIENT_ID=<your GitHub App client ID>
+GITHUB_APP_CLIENT_SECRET=<your GitHub App client secret>
+GITHUB_APP_PRIVATE_KEY_B64=<base64-encoded PEM private key>
 GITHUB_APP_SLUG=<your GitHub App slug>
+GITHUB_APP_CALLBACK_URL=http://localhost:8082/v1/auth/github
 GITHUB_APP_STATE_SECRET=<random secret used to sign state>
+FRONTEND_URL=http://localhost:3001
 ```
 
-This slice only adds `POST /v1/auth/github`, so local setup only needs the start-flow values above. Callback-specific GitHub App settings will be documented in the next slice.
+`GITHUB_APP_CALLBACK_URL` must exactly match the callback URL configured in your GitHub App settings.
+
+To produce `GITHUB_APP_PRIVATE_KEY_B64` from a downloaded PEM file:
+
+```bash
+base64 < path/to/github-app-private-key.pem | tr -d '\n'
+```
 
 ### 2. Start the backend stack
 

@@ -25,6 +25,7 @@ type IntegrationsRepository interface {
 	CreateIntegration(ctx context.Context, i models.Integration) (models.Integration, error)
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 	ListIntegrations(ctx context.Context, orgID uuid.UUID) ([]models.Integration, error)
+	UpsertGitHubIntegration(ctx context.Context, orgID uuid.UUID, config models.IntegrationConfig) (models.Integration, bool, error)
 	UpdateIntegration(ctx context.Context, orgID, key uuid.UUID, patch models.IntegrationPatch) (models.Integration, error)
 	SoftDeleteIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 }
