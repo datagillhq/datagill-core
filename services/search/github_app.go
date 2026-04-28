@@ -54,9 +54,9 @@ type githubUserInstallationsResponse struct {
 }
 
 type githubInstallation struct {
-	ID                  int64          `json:"id"`
-	Account             githubAccount  `json:"account"`
-	RepositorySelection string         `json:"repository_selection"`
+	ID                  int64         `json:"id"`
+	Account             githubAccount `json:"account"`
+	RepositorySelection string        `json:"repository_selection"`
 }
 
 type githubAccount struct {
