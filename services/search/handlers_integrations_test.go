@@ -265,7 +265,11 @@ func TestGitHubAuthCallbackHandler(t *testing.T) {
 		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), githubAuth)
 		defer srv.Close()
 
-		resp, err := noRedirectClient.Get(srv.URL + "/v1/auth/github?state=signed&code=oauth-code&installation_id=12345")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/auth/github?state=signed&code=oauth-code&installation_id=12345", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := noRedirectClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +292,11 @@ func TestGitHubAuthCallbackHandler(t *testing.T) {
 		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), githubAuth)
 		defer srv.Close()
 
-		resp, err := noRedirectClient.Get(srv.URL + "/v1/auth/github?state=signed")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/auth/github?state=signed", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := noRedirectClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +312,11 @@ func TestGitHubAuthCallbackHandler(t *testing.T) {
 		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), &stubGitHubAuth{completeErr: context.DeadlineExceeded})
 		defer srv.Close()
 
-		resp, err := noRedirectClient.Get(srv.URL + "/v1/auth/github?state=signed")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/auth/github?state=signed", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := noRedirectClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

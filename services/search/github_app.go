@@ -241,7 +241,7 @@ func (s *githubAuthService) exchangeCode(ctx context.Context, code string) (stri
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.oauthURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("build oauth request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -259,7 +259,7 @@ func (s *githubAuthService) exchangeCode(ctx context.Context, code string) (stri
 func (s *githubAuthService) userCanAccessInstallation(ctx context.Context, userToken string, installationID int64) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.apiBaseURL+"/user/installations", nil)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("build user installations request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+userToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -283,7 +283,7 @@ func (s *githubAuthService) getInstallation(ctx context.Context, installationID 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/app/installations/%d", s.apiBaseURL, installationID), nil)
 	if err != nil {
-		return githubInstallation{}, err
+		return githubInstallation{}, fmt.Errorf("build installation request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+jwtToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -306,20 +306,27 @@ func (s *githubAuthService) appJWT() (string, error) {
 		"exp": now.Add(9 * time.Minute).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	return token.SignedString(s.signer)
+	signed, err := token.SignedString(s.signer)
+	if err != nil {
+		return "", fmt.Errorf("sign app jwt: %w", err)
+	}
+	return signed, nil
 }
 
 func (s *githubAuthService) doJSON(req *http.Request, out any) error {
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("do request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decode json response: %w", err)
+	}
+	return nil
 }
 
 func buildGitHubSuccessRedirect(frontendURL, returnTo string) string {
