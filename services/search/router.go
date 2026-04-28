@@ -64,6 +64,7 @@ func (a *app) router() http.Handler {
 		r.Get("/v1/integrations", a.listIntegrationsHandler)
 		r.Put("/v1/integrations/{key}", a.updateIntegrationHandler)
 		r.Delete("/v1/integrations/{key}", a.deleteIntegrationHandler)
+		r.Post("/v1/auth/github", a.startGitHubAuthHandler)
 
 		// Analytics API
 		r.Get("/v1/analytics", a.analyticsHandler)

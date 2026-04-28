@@ -42,12 +42,16 @@ Make sure `datagill-ui` is already running before starting the backend.
 cp .env.example .env
 ```
 
-Fill in the two required secrets:
+Fill in the required local secrets:
 
 ```bash
 # Generate a 64-char hex encryption key:
 openssl rand -hex 32
 # Paste as ENCRYPTION_KEY in .env
+
+# Generate a GitHub state signing secret:
+openssl rand -hex 32
+# Paste as GITHUB_APP_STATE_SECRET in .env
 ```
 
 Set `AUTH_URL` to the BetterAuth base path served by the frontend:
@@ -55,6 +59,15 @@ Set `AUTH_URL` to the BetterAuth base path served by the frontend:
 ```
 AUTH_URL=http://localhost:3001/api/auth
 ```
+
+For GitHub onboarding start flow in Search, also set:
+
+```
+GITHUB_APP_SLUG=<your GitHub App slug>
+GITHUB_APP_STATE_SECRET=<random secret used to sign state>
+```
+
+This slice only adds `POST /v1/auth/github`, so local setup only needs the start-flow values above. Callback-specific GitHub App settings will be documented in the next slice.
 
 ### 2. Start the backend stack
 

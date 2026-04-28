@@ -97,15 +97,36 @@ type stubValidator struct{ err error }
 
 func (s *stubValidator) Validate(_ context.Context, _ models.Source, _ string) error { return s.err }
 
+type stubGitHubAuth struct {
+	startResp githubStartResponse
+	startErr  error
+	startCall *githubStartCall
+}
+
+type githubStartCall struct {
+	orgID    uuid.UUID
+	userID   string
+	returnTo string
+}
+
+func (s *stubGitHubAuth) Start(_ context.Context, orgID uuid.UUID, userID, returnTo string) (githubStartResponse, error) {
+	s.startCall = &githubStartCall{orgID: orgID, userID: userID, returnTo: returnTo}
+	return s.startResp, s.startErr
+}
+
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
 }
 
 func newTestServerFull(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry) *httptest.Server {
+	return newTestServerWithGitHubAuth(t, integrationsRepo, orgRepo, validator, analyticsRegistry, nil)
+}
+
+func newTestServerWithGitHubAuth(t *testing.T, integrationsRepo IntegrationsRepository, orgRepo OrgRepository, validator IntegrationValidator, analyticsRegistry *analytics.Registry, githubAuth GitHubAuthService) *httptest.Server {
 	t.Helper()
 	logger := zerolog.New(io.Discard)
-	testApp := newApp(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry)
+	testApp := newAppWithGitHubAuth(loadConfig(), logger, integrationsRepo, orgRepo, validator, stubScheduler{}, testJWTKeyfunc, analyticsRegistry, githubAuth)
 	return httptest.NewServer(testApp.router())
 }
 

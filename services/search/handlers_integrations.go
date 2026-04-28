@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -130,6 +131,32 @@ func (a *app) listIntegrationsHandler(w http.ResponseWriter, r *http.Request) {
 		resp[i] = toIntegrationResponse(v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"integrations": resp})
+}
+
+type startGitHubAuthRequest struct {
+	ReturnTo string `json:"return_to"`
+}
+
+func (a *app) startGitHubAuthHandler(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(orgIDFromCtx(r))
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, "INVALID_ORG_ID")
+		return
+	}
+
+	var req startGitHubAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY")
+		return
+	}
+
+	resp, err := a.githubAuth.Start(r.Context(), orgID, userIDFromCtx(r), req.ReturnTo)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, "INTERNAL_ERROR")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type updateIntegrationRequest struct {
