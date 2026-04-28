@@ -29,11 +29,8 @@ const (
 // Poll interval and backfill window are owned internally by DataGill and are not
 // client-configurable. Project context lives at the feature flag level, not here.
 type IntegrationConfig struct {
-	EnvironmentKey      string `json:"environment_key,omitempty"`
-	InstallationID      int64  `json:"installation_id,omitempty"`
-	AccountLogin        string `json:"account_login,omitempty"`
-	AccountType         string `json:"account_type,omitempty"`
-	RepositorySelection string `json:"repository_selection,omitempty"`
+	EnvironmentKey string `json:"environment_key,omitempty"`
+	InstallationID int64  `json:"installation_id,omitempty"`
 }
 
 // IntegrationPatch carries optional fields for a partial integration update.

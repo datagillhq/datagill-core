@@ -21,10 +21,7 @@ func TestUpsertGitHubIntegration(t *testing.T) {
 	orgID := setupTestOrg(ctx, t, pool)
 
 	first, created, err := repo.UpsertGitHubIntegration(ctx, orgID, models.IntegrationConfig{
-		InstallationID:      12345,
-		AccountLogin:        "datagillhq",
-		AccountType:         "Organization",
-		RepositorySelection: "selected",
+		InstallationID: 12345,
 	})
 	if err != nil {
 		t.Fatalf("UpsertGitHubIntegration create failed: %v", err)
@@ -34,10 +31,7 @@ func TestUpsertGitHubIntegration(t *testing.T) {
 	}
 
 	second, created, err := repo.UpsertGitHubIntegration(ctx, orgID, models.IntegrationConfig{
-		InstallationID:      12345,
-		AccountLogin:        "datagillhq-renamed",
-		AccountType:         "Organization",
-		RepositorySelection: "all",
+		InstallationID: 12345,
 	})
 	if err != nil {
 		t.Fatalf("UpsertGitHubIntegration update failed: %v", err)
@@ -48,7 +42,7 @@ func TestUpsertGitHubIntegration(t *testing.T) {
 	if first.Key != second.Key {
 		t.Fatalf("expected same integration key, got %s and %s", first.Key, second.Key)
 	}
-	if second.Config.AccountLogin != "datagillhq-renamed" {
-		t.Fatalf("expected updated account login, got %q", second.Config.AccountLogin)
+	if second.Config.InstallationID != 12345 {
+		t.Fatalf("expected installation id to round-trip, got %d", second.Config.InstallationID)
 	}
 }
