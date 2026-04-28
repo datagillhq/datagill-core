@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -139,6 +141,112 @@ func TestListIntegrationsHandler(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
+}
+
+func TestStartGitHubAuthHandler(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		githubAuth := &stubGitHubAuth{
+			startResp: githubStartResponse{
+				InstallURL: "https://github.com/apps/datagill/installations/new?state=signed",
+				ExpiresAt:  time.Date(2026, 4, 28, 12, 15, 0, 0, time.UTC),
+			},
+		}
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), githubAuth)
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/auth/github", map[string]any{"return_to": "/settings/integrations"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		if githubAuth.startCall == nil {
+			t.Fatal("expected Start to be called")
+		}
+		if githubAuth.startCall.orgID != uuid.MustParse(testOrgID) {
+			t.Fatalf("expected org_id %s, got %s", testOrgID, githubAuth.startCall.orgID)
+		}
+		if githubAuth.startCall.userID != testUserID {
+			t.Fatalf("expected user_id %q, got %q", testUserID, githubAuth.startCall.userID)
+		}
+		if githubAuth.startCall.returnTo != "/settings/integrations" {
+			t.Fatalf("expected return_to to be forwarded, got %q", githubAuth.startCall.returnTo)
+		}
+	})
+
+	t.Run("empty body is allowed", func(t *testing.T) {
+		githubAuth := &stubGitHubAuth{
+			startResp: githubStartResponse{
+				InstallURL: "https://github.com/apps/datagill/installations/new?state=signed",
+				ExpiresAt:  time.Date(2026, 4, 28, 12, 15, 0, 0, time.UTC),
+			},
+		}
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), githubAuth)
+		defer srv.Close()
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/auth/github", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+makeToken(testOrgID, testUserID))
+		resp, err := testClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		if githubAuth.startCall == nil {
+			t.Fatal("expected Start to be called")
+		}
+		if githubAuth.startCall.returnTo != "" {
+			t.Fatalf("expected empty return_to, got %q", githubAuth.startCall.returnTo)
+		}
+	})
+
+	t.Run("invalid body", func(t *testing.T) {
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), &stubGitHubAuth{})
+		defer srv.Close()
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/auth/github", strings.NewReader("{"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+makeToken(testOrgID, testUserID))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := testClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("service error", func(t *testing.T) {
+		srv := newTestServerWithGitHubAuth(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), &stubGitHubAuth{startErr: context.DeadlineExceeded})
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/auth/github", map[string]any{"return_to": "/settings/integrations"})
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("no auth", func(t *testing.T) {
+		srv := newTestServer(t)
+		defer srv.Close()
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/auth/github", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := testClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", resp.StatusCode)
+		}
+	})
 }
 
 func TestUpdateIntegrationHandler(t *testing.T) {
