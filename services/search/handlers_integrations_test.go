@@ -101,6 +101,18 @@ func TestCreateIntegrationHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("github must use auth flow", func(t *testing.T) {
+		srv := newTestServerFull(t, &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", createIntegrationRequest{
+			Provider: models.SourceGitHub,
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
 	t.Run("no auth", func(t *testing.T) {
 		srv := newTestServer(t)
 		defer srv.Close()
