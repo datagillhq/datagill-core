@@ -34,3 +34,11 @@ func ComputeChangelogKey(orgID uuid.UUID, source Source, projectKey, sourceKey s
 	raw := fmt.Sprintf("%s|%s|%s|%s", orgID, source, projectKey, sourceKey)
 	return uuid.NewSHA1(DataGillNamespace, []byte(raw))
 }
+
+// ComputePullRequestKey returns a deterministic UUID v5 for a pull request record.
+// sourcePRKey is GitHub's globally unique pull_request.id.
+// org_id remains part of the key so DataGill never relies on cross-tenant global identity.
+func ComputePullRequestKey(orgID uuid.UUID, sourcePRKey string) uuid.UUID {
+	raw := fmt.Sprintf("%s|%s|%s", orgID, SourceGitHub, sourcePRKey)
+	return uuid.NewSHA1(DataGillNamespace, []byte(raw))
+}

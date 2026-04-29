@@ -13,6 +13,8 @@ type SourceType string
 const (
 	SourceTypeAuditLog   SourceType = "audit_log"
 	SourceTypeFlagDetail SourceType = "flag_detail"
+	SourceTypePRSearch   SourceType = "pr_search"
+	SourceTypePRDetail   SourceType = "pr_detail"
 )
 
 // SourceRecord maps to the source_records table.
