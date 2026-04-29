@@ -45,14 +45,16 @@ type IntegrationPatch struct {
 
 // Integration maps to the integrations table.
 type Integration struct {
-	ID           int64
-	Key          uuid.UUID
-	OrgID        uuid.UUID
-	Source       Source
-	APIKey       string // AES-256-GCM encrypted at rest
-	Config       IntegrationConfig
-	State        IntegrationState
-	LastSyncedAt *time.Time // nil means never synced; triggers full backfill
+	ID     int64
+	Key    uuid.UUID
+	OrgID  uuid.UUID
+	Source Source
+	APIKey string // AES-256-GCM encrypted at rest
+	Config IntegrationConfig
+	State  IntegrationState
+	// LastSyncedAt is temporary LaunchDarkly compatibility state.
+	// New providers must keep their sync cursor in Temporal workflow state instead.
+	LastSyncedAt *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

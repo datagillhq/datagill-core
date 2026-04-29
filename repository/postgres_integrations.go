@@ -37,6 +37,7 @@ func (r *PostgresRepository) rowToIntegration(row pgx.Row) (models.Integration, 
 }
 
 // UpdateIntegrationLastSyncedAt records the high-water mark after a successful sync.
+// Temporary LaunchDarkly compatibility only; new providers must keep cursor state in Temporal.
 func (r *PostgresRepository) UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE integrations
