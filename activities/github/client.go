@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 const (
@@ -21,6 +23,8 @@ const (
 	defaultTimeout   = 10 * time.Second
 	maxErrorBodySize = 4096
 	defaultRetryWait = 60
+	searchMaxPerPage = 100
+	searchResultCap  = 1000
 )
 
 // Client is a thin HTTP wrapper for GitHub App authentication.
@@ -117,6 +121,55 @@ func (c *Client) CreateInstallationToken(ctx context.Context, installationID int
 		return InstallationToken{}, fmt.Errorf("create installation token: missing token")
 	}
 	return InstallationToken{Token: out.Token, ExpiresAt: out.ExpiresAt}, nil
+}
+
+// SearchPullRequests searches merged pull requests for one GitHub account within a time window.
+func (c *Client) SearchPullRequests(ctx context.Context, installationToken, accountLogin, accountType string, from, to time.Time, page, perPage int) (models.GitHubSearchResponse, error) {
+	if installationToken == "" {
+		return models.GitHubSearchResponse{}, fmt.Errorf("installation token is required")
+	}
+	qualifier, err := accountQualifier(accountLogin, accountType)
+	if err != nil {
+		return models.GitHubSearchResponse{}, err
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if perPage <= 0 || perPage > searchMaxPerPage {
+		perPage = searchMaxPerPage
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/search/issues", nil)
+	if err != nil {
+		return models.GitHubSearchResponse{}, fmt.Errorf("create request: %w", err)
+	}
+	q := req.URL.Query()
+	q.Set("q", fmt.Sprintf("is:pull-request is:merged %s merged:%s..%s", qualifier, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339)))
+	q.Set("page", strconv.Itoa(page))
+	q.Set("per_page", strconv.Itoa(perPage))
+	req.URL.RawQuery = q.Encode()
+	req.Header.Set("Authorization", "Bearer "+installationToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	var out models.GitHubSearchResponse
+	if err := c.doJSON(req, &out); err != nil {
+		return models.GitHubSearchResponse{}, fmt.Errorf("search pull requests: %w", err)
+	}
+	return out, nil
+}
+
+func accountQualifier(accountLogin, accountType string) (string, error) {
+	if accountLogin == "" {
+		return "", fmt.Errorf("account login is required")
+	}
+	switch accountType {
+	case "Organization":
+		return "org:" + accountLogin, nil
+	case "User":
+		return "user:" + accountLogin, nil
+	default:
+		return "", fmt.Errorf("unsupported account type %q", accountType)
+	}
 }
 
 func (c *Client) appJWT() (string, error) {
