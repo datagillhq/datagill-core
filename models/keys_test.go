@@ -97,3 +97,25 @@ func TestComputeChangelogKey_DifferentOrgs(t *testing.T) {
 		t.Error("different orgs should produce different changelog keys")
 	}
 }
+
+func TestComputePullRequestKey_Deterministic(t *testing.T) {
+	a := models.ComputePullRequestKey(testOrgID, "987654321")
+	b := models.ComputePullRequestKey(testOrgID, "987654321")
+	if a != b {
+		t.Errorf("same inputs produced different keys: %s vs %s", a, b)
+	}
+}
+
+func TestComputePullRequestKey_Unique(t *testing.T) {
+	base := models.ComputePullRequestKey(testOrgID, "987654321")
+
+	diffOrg := models.ComputePullRequestKey(otherOrgID, "987654321")
+	if diffOrg == base {
+		t.Error("different org should produce different pull request key")
+	}
+
+	diffPR := models.ComputePullRequestKey(testOrgID, "123456789")
+	if diffPR == base {
+		t.Error("different pull request id should produce different key")
+	}
+}
