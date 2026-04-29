@@ -28,6 +28,10 @@ type Repository interface {
 	// Upserts on feature_flag_changelog.key.
 	SaveChangelog(ctx context.Context, c models.FeatureFlagChangelog) error
 
+	// SavePullRequest upserts the normalized state of a pull request.
+	// Upserts on pull_requests.key.
+	SavePullRequest(ctx context.Context, pr models.PullRequest) error
+
 	// GetIntegration returns a single non-deleted integration by key, scoped to the org.
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 
