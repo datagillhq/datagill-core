@@ -145,7 +145,7 @@ func TestCreateInstallationToken_ContextCancelled(t *testing.T) {
 	}
 }
 
-func TestSearchPullRequests_Success(t *testing.T) {
+func TestSearchPullRequests_SuccessOrganization(t *testing.T) {
 	var (
 		authHeader string
 		gotQuery   url.Values
@@ -177,7 +177,7 @@ func TestSearchPullRequests_Success(t *testing.T) {
 	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
 	from := time.Date(2026, 4, 28, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)
-	resp, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", from, to, 2, 50)
+	resp, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", "Organization", from, to, 2, 50)
 	if err != nil {
 		t.Fatalf("SearchPullRequests failed: %v", err)
 	}
@@ -196,6 +196,27 @@ func TestSearchPullRequests_Success(t *testing.T) {
 	}
 }
 
+func TestSearchPullRequests_SuccessUser(t *testing.T) {
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.GitHubSearchResponse{})
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	from := time.Date(2026, 4, 28, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)
+	if _, err := client.SearchPullRequests(context.Background(), "installation-token", "ariel", "User", from, to, 1, 100); err != nil {
+		t.Fatalf("SearchPullRequests failed: %v", err)
+	}
+	expectedQ := "is:pull-request is:merged user:ariel merged:2026-04-28T00:00:00Z..2026-04-29T00:00:00Z"
+	if gotQuery.Get("q") != expectedQ {
+		t.Fatalf("expected q %q, got %q", expectedQ, gotQuery.Get("q"))
+	}
+}
+
 func TestSearchPullRequests_ClampsPagination(t *testing.T) {
 	var gotQuery url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +227,7 @@ func TestSearchPullRequests_ClampsPagination(t *testing.T) {
 	defer server.Close()
 
 	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
-	_, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", time.Now(), time.Now().Add(time.Hour), 0, 999)
+	_, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", "Organization", time.Now(), time.Now().Add(time.Hour), 0, 999)
 	if err != nil {
 		t.Fatalf("SearchPullRequests failed: %v", err)
 	}
@@ -215,6 +236,14 @@ func TestSearchPullRequests_ClampsPagination(t *testing.T) {
 	}
 	if gotQuery.Get("per_page") != strconv.Itoa(searchMaxPerPage) {
 		t.Fatalf("expected per_page=%d, got %q", searchMaxPerPage, gotQuery.Get("per_page"))
+	}
+}
+
+func TestSearchPullRequests_RequiresSupportedAccountType(t *testing.T) {
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t))
+	_, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", "Bot", time.Now(), time.Now().Add(time.Hour), 1, 100)
+	if err == nil {
+		t.Fatal("expected error for unsupported account type")
 	}
 }
 

@@ -123,13 +123,14 @@ func (c *Client) CreateInstallationToken(ctx context.Context, installationID int
 	return InstallationToken{Token: out.Token, ExpiresAt: out.ExpiresAt}, nil
 }
 
-// SearchPullRequests searches merged pull requests for one GitHub owner within a time window.
-func (c *Client) SearchPullRequests(ctx context.Context, installationToken, owner string, from, to time.Time, page, perPage int) (models.GitHubSearchResponse, error) {
+// SearchPullRequests searches merged pull requests for one GitHub account within a time window.
+func (c *Client) SearchPullRequests(ctx context.Context, installationToken, accountLogin, accountType string, from, to time.Time, page, perPage int) (models.GitHubSearchResponse, error) {
 	if installationToken == "" {
 		return models.GitHubSearchResponse{}, fmt.Errorf("installation token is required")
 	}
-	if owner == "" {
-		return models.GitHubSearchResponse{}, fmt.Errorf("owner is required")
+	qualifier, err := accountQualifier(accountLogin, accountType)
+	if err != nil {
+		return models.GitHubSearchResponse{}, err
 	}
 	if page <= 0 {
 		page = 1
@@ -143,7 +144,7 @@ func (c *Client) SearchPullRequests(ctx context.Context, installationToken, owne
 		return models.GitHubSearchResponse{}, fmt.Errorf("create request: %w", err)
 	}
 	q := req.URL.Query()
-	q.Set("q", fmt.Sprintf("is:pull-request is:merged org:%s merged:%s..%s", owner, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339)))
+	q.Set("q", fmt.Sprintf("is:pull-request is:merged %s merged:%s..%s", qualifier, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339)))
 	q.Set("page", strconv.Itoa(page))
 	q.Set("per_page", strconv.Itoa(perPage))
 	req.URL.RawQuery = q.Encode()
@@ -155,6 +156,20 @@ func (c *Client) SearchPullRequests(ctx context.Context, installationToken, owne
 		return models.GitHubSearchResponse{}, fmt.Errorf("search pull requests: %w", err)
 	}
 	return out, nil
+}
+
+func accountQualifier(accountLogin, accountType string) (string, error) {
+	if accountLogin == "" {
+		return "", fmt.Errorf("account login is required")
+	}
+	switch accountType {
+	case "Organization":
+		return "org:" + accountLogin, nil
+	case "User":
+		return "user:" + accountLogin, nil
+	default:
+		return "", fmt.Errorf("unsupported account type %q", accountType)
+	}
 }
 
 func (c *Client) appJWT() (string, error) {

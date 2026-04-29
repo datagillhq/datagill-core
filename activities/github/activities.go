@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/datagill/datagill-core/models"
+	"github.com/datagill/datagill-core/shared"
 )
 
 type githubRepository interface {
@@ -93,10 +94,14 @@ func (a *Activities) SearchPullRequests(ctx context.Context, input SearchPullReq
 	}
 	accountLogin := integration.Config.AccountLogin
 	if accountLogin == "" {
-		return SearchPullRequestsOutput{}, fmt.Errorf("github integration missing account_login")
+		return SearchPullRequestsOutput{}, &shared.NonRetryableServiceError{Message: "github integration missing account_login"}
+	}
+	accountType := integration.Config.AccountType
+	if accountType == "" {
+		return SearchPullRequestsOutput{}, &shared.NonRetryableServiceError{Message: "github integration missing account_type"}
 	}
 
-	resp, err := a.client.SearchPullRequests(ctx, token.Token, accountLogin, input.From, input.To, input.Page, input.PerPage)
+	resp, err := a.client.SearchPullRequests(ctx, token.Token, accountLogin, accountType, input.From, input.To, input.Page, input.PerPage)
 	if err != nil {
 		return SearchPullRequestsOutput{}, toServiceError(fmt.Errorf("search pull requests: %w", err))
 	}
@@ -109,7 +114,10 @@ func (a *Activities) SearchPullRequests(ctx context.Context, input SearchPullReq
 
 		owner, repo, err := parseRepositoryURL(item.RepositoryURL)
 		if err != nil {
-			return SearchPullRequestsOutput{}, fmt.Errorf("parse repository url for search result %d: %w", item.ID, err)
+			return SearchPullRequestsOutput{}, &shared.NonRetryableServiceError{
+				Message: fmt.Sprintf("parse repository url for search result %d", item.ID),
+				Cause:   err,
+			}
 		}
 
 		sourceKey := strconv.FormatInt(item.ID, 10)

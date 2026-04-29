@@ -158,6 +158,7 @@ func TestSearchPullRequests(t *testing.T) {
 				Config: models.IntegrationConfig{
 					InstallationID: 12345,
 					AccountLogin:   "acme",
+					AccountType:    "Organization",
 				},
 			},
 		},
@@ -255,5 +256,99 @@ func TestSearchPullRequests_RequiresAccountLogin(t *testing.T) {
 		To:             time.Now().Add(time.Hour),
 	}); err == nil {
 		t.Fatal("expected error for missing account_login")
+	}
+}
+
+func TestSearchPullRequests_RequiresAccountType(t *testing.T) {
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	repo := &stubRepository{
+		integrations: map[uuid.UUID]models.Integration{
+			integrationKey: {
+				Key:    integrationKey,
+				OrgID:  orgID,
+				Source: models.SourceGitHub,
+				Config: models.IntegrationConfig{
+					InstallationID: 12345,
+					AccountLogin:   "acme",
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/app/installations/12345/access_tokens" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(installationTokenResponse{Token: "installation-token"})
+			return
+		}
+		t.Fatalf("unexpected path %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL)), repo)
+	_, err := acts.SearchPullRequests(context.Background(), SearchPullRequestsInput{
+		IntegrationKey: integrationKey,
+		OrgID:          orgID,
+		From:           time.Now(),
+		To:             time.Now().Add(time.Hour),
+	})
+	var nonRetryable *shared.NonRetryableServiceError
+	if !errors.As(err, &nonRetryable) {
+		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
+	}
+}
+
+func TestSearchPullRequests_MapsBadRepositoryURLToNonRetryable(t *testing.T) {
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	repo := &stubRepository{
+		integrations: map[uuid.UUID]models.Integration{
+			integrationKey: {
+				Key:    integrationKey,
+				OrgID:  orgID,
+				Source: models.SourceGitHub,
+				Config: models.IntegrationConfig{
+					InstallationID: 12345,
+					AccountLogin:   "acme",
+					AccountType:    "Organization",
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/12345/access_tokens":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(installationTokenResponse{Token: "installation-token"})
+		case "/search/issues":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(models.GitHubSearchResponse{
+				Items: []models.GitHubSearchResultItem{
+					{
+						ID:            987654321,
+						Number:        42,
+						RepositoryURL: "https://example.com/repos/acme/backend",
+						PullRequest:   &models.GitHubPullRequestLinks{URL: "https://api.github.com/repos/acme/backend/pulls/42"},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL)), repo)
+	_, err := acts.SearchPullRequests(context.Background(), SearchPullRequestsInput{
+		IntegrationKey: integrationKey,
+		OrgID:          orgID,
+		From:           time.Now(),
+		To:             time.Now().Add(time.Hour),
+	})
+	var nonRetryable *shared.NonRetryableServiceError
+	if !errors.As(err, &nonRetryable) {
+		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
 	}
 }
