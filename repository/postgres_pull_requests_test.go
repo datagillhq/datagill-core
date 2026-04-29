@@ -95,12 +95,13 @@ func TestSavePullRequest(t *testing.T) {
 		state     string
 		title     string
 		createdAt time.Time
+		updatedAt time.Time
 	)
 	err = pool.QueryRow(ctx, `
-		SELECT state, data->>'title', created_at
+		SELECT state, data->>'title', created_at, updated_at
 		FROM pull_requests
 		WHERE key = $1
-	`, pr.Key).Scan(&state, &title, &createdAt)
+	`, pr.Key).Scan(&state, &title, &createdAt, &updatedAt)
 	if err != nil {
 		t.Fatalf("failed to query pull request: %v", err)
 	}
@@ -126,10 +127,10 @@ func TestSavePullRequest(t *testing.T) {
 
 	var count int
 	err = pool.QueryRow(ctx, `
-		SELECT state, data->>'title', created_at
+		SELECT state, data->>'title', created_at, updated_at
 		FROM pull_requests
 		WHERE key = $1
-	`, pr.Key).Scan(&state, &title, &createdAt)
+	`, pr.Key).Scan(&state, &title, &createdAt, &updatedAt)
 	if err != nil {
 		t.Fatalf("failed to query updated pull request: %v", err)
 	}
@@ -139,8 +140,11 @@ func TestSavePullRequest(t *testing.T) {
 	if title != pr.Data.Title {
 		t.Errorf("expected updated title %q, got %q", pr.Data.Title, title)
 	}
-	if !createdAt.Equal(pr.CreatedAt) {
-		t.Errorf("expected created_at to refresh to %s, got %s", pr.CreatedAt, createdAt)
+	if !createdAt.Equal(now) {
+		t.Errorf("expected created_at to remain %s, got %s", now, createdAt)
+	}
+	if !updatedAt.Equal(pr.UpdatedAt) {
+		t.Errorf("expected updated_at to change to %s, got %s", pr.UpdatedAt, updatedAt)
 	}
 
 	err = pool.QueryRow(ctx, "SELECT COUNT(*) FROM pull_requests WHERE key = $1", pr.Key).Scan(&count)

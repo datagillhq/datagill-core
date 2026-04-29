@@ -62,7 +62,8 @@ func TestSaveFeatureFlag(t *testing.T) {
 	// Verify record exists with correct state
 	var state string
 	var createdAt time.Time
-	err = pool.QueryRow(ctx, "SELECT state, created_at FROM feature_flags WHERE key = $1", flag.Key).Scan(&state, &createdAt)
+	var updatedAt time.Time
+	err = pool.QueryRow(ctx, "SELECT state, created_at, updated_at FROM feature_flags WHERE key = $1", flag.Key).Scan(&state, &createdAt, &updatedAt)
 	if err != nil {
 		t.Fatalf("failed to query feature flag: %v", err)
 	}
@@ -76,21 +77,24 @@ func TestSaveFeatureFlag(t *testing.T) {
 	// Update (upsert)
 	flag.State = models.FlagStateOff
 	flag.CreatedAt = now.Add(-24 * time.Hour)
-	flag.UpdatedAt = time.Now().UTC()
+	flag.UpdatedAt = now.Add(time.Hour)
 	if err := repo.SaveFeatureFlag(ctx, flag); err != nil {
 		t.Fatalf("SaveFeatureFlag upsert failed: %v", err)
 	}
 
 	// Verify update
-	err = pool.QueryRow(ctx, "SELECT state, created_at FROM feature_flags WHERE key = $1", flag.Key).Scan(&state, &createdAt)
+	err = pool.QueryRow(ctx, "SELECT state, created_at, updated_at FROM feature_flags WHERE key = $1", flag.Key).Scan(&state, &createdAt, &updatedAt)
 	if err != nil {
 		t.Fatalf("failed to query feature flag after update: %v", err)
 	}
 	if state != string(models.FlagStateOff) {
 		t.Errorf("expected state 'off' after update, got %q", state)
 	}
-	if !createdAt.Equal(flag.CreatedAt) {
-		t.Errorf("expected created_at to refresh to %s, got %s", flag.CreatedAt, createdAt)
+	if !createdAt.Equal(now) {
+		t.Errorf("expected created_at to remain %s, got %s", now, createdAt)
+	}
+	if !updatedAt.Equal(flag.UpdatedAt) {
+		t.Errorf("expected updated_at to change to %s, got %s", flag.UpdatedAt, updatedAt)
 	}
 
 	// Verify only one record

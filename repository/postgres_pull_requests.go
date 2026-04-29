@@ -22,7 +22,6 @@ func (r *PostgresRepository) SavePullRequest(ctx context.Context, pr models.Pull
 			source_record_key = EXCLUDED.source_record_key,
 			state = EXCLUDED.state,
 			data = EXCLUDED.data,
-			created_at = EXCLUDED.created_at,
 			updated_at = EXCLUDED.updated_at
 	`
 
