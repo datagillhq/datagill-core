@@ -88,6 +88,24 @@ func TestCreateInstallationToken_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestCreateInstallationToken_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("installation not found"))
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	_, err := client.CreateInstallationToken(context.Background(), 12345)
+	var notFoundErr *NotFoundError
+	if !errors.As(err, &notFoundErr) {
+		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+	}
+	if notFoundErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", notFoundErr.StatusCode)
+	}
+}
+
 func TestCreateInstallationToken_RateLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "30")

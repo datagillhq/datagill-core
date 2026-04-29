@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/datagill/datagill-core/models"
+	"github.com/datagill/datagill-core/shared"
 )
 
 func TestInstallationTokenFor(t *testing.T) {
@@ -73,6 +75,60 @@ func TestInstallationTokenFor_RequiresInstallationID(t *testing.T) {
 
 	if _, err := acts.installationTokenFor(context.Background(), orgID, integrationKey); err == nil {
 		t.Fatal("expected error for missing installation_id")
+	}
+}
+
+func TestInstallationTokenFor_RequiresGitHubSource(t *testing.T) {
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	repo := &stubRepository{
+		integrations: map[uuid.UUID]models.Integration{
+			integrationKey: {
+				Key:    integrationKey,
+				OrgID:  orgID,
+				Source: models.SourceLaunchDarkly,
+				Config: models.IntegrationConfig{
+					InstallationID: 12345,
+				},
+			},
+		},
+	}
+	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t)), repo)
+
+	if _, err := acts.installationTokenFor(context.Background(), orgID, integrationKey); err == nil {
+		t.Fatal("expected error for non-github source")
+	}
+}
+
+func TestInstallationTokenFor_MapsNotFoundToNonRetryable(t *testing.T) {
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	repo := &stubRepository{
+		integrations: map[uuid.UUID]models.Integration{
+			integrationKey: {
+				Key:    integrationKey,
+				OrgID:  orgID,
+				Source: models.SourceGitHub,
+				Config: models.IntegrationConfig{
+					InstallationID: 12345,
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("installation not found"))
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	acts := New(client, repo)
+
+	_, err := acts.installationTokenFor(context.Background(), orgID, integrationKey)
+	var nonRetryable *shared.NonRetryableServiceError
+	if !errors.As(err, &nonRetryable) {
+		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
 	}
 }
 

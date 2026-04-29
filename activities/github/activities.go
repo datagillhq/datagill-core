@@ -33,13 +33,16 @@ func (a *Activities) installationTokenFor(ctx context.Context, orgID, key uuid.U
 	if err != nil {
 		return InstallationToken{}, fmt.Errorf("get integration for client: %w", err)
 	}
+	if integration.Source != models.SourceGitHub {
+		return InstallationToken{}, fmt.Errorf("integration source %q is not github", integration.Source)
+	}
 	if integration.Config.InstallationID == 0 {
 		return InstallationToken{}, fmt.Errorf("github integration missing installation_id")
 	}
 
 	token, err := a.client.CreateInstallationToken(ctx, integration.Config.InstallationID)
 	if err != nil {
-		return InstallationToken{}, fmt.Errorf("create installation token: %w", err)
+		return InstallationToken{}, toServiceError(fmt.Errorf("create installation token: %w", err))
 	}
 	return token, nil
 }

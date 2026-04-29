@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/datagill/datagill-core/shared"
 )
 
 const (
@@ -154,6 +157,11 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 		return &UnauthorizedError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
 
+	if resp.StatusCode == http.StatusNotFound {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		return &NotFoundError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+
 	if resp.StatusCode >= 500 || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
 		return &UnexpectedStatusError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
@@ -206,6 +214,16 @@ func (e *UnauthorizedError) Error() string {
 	return fmt.Sprintf("unauthorized (%d): %s", e.StatusCode, e.Message)
 }
 
+// NotFoundError is returned when the installation no longer exists or is inaccessible to this app.
+type NotFoundError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("not found (%d): %s", e.StatusCode, e.Message)
+}
+
 // UnexpectedStatusError is returned for any other non-2xx response.
 type UnexpectedStatusError struct {
 	StatusCode int
@@ -214,4 +232,18 @@ type UnexpectedStatusError struct {
 
 func (e *UnexpectedStatusError) Error() string {
 	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Message)
+}
+
+func toServiceError(err error) error {
+	var unauthorized *UnauthorizedError
+	if errors.As(err, &unauthorized) {
+		return &shared.NonRetryableServiceError{Message: err.Error(), Cause: err}
+	}
+
+	var notFound *NotFoundError
+	if errors.As(err, &notFound) {
+		return &shared.NonRetryableServiceError{Message: err.Error(), Cause: err}
+	}
+
+	return &shared.ServiceError{Message: err.Error(), Cause: err}
 }
