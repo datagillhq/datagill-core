@@ -10,10 +10,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 func TestNewClient_RequiresAppID(t *testing.T) {
@@ -138,6 +142,79 @@ func TestCreateInstallationToken_ContextCancelled(t *testing.T) {
 
 	if _, err := client.CreateInstallationToken(ctx, 12345); err == nil {
 		t.Fatal("expected cancellation error")
+	}
+}
+
+func TestSearchPullRequests_Success(t *testing.T) {
+	var (
+		authHeader string
+		gotQuery   url.Values
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/search/issues" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		authHeader = r.Header.Get("Authorization")
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.GitHubSearchResponse{
+			TotalCount: 1,
+			Items: []models.GitHubSearchResultItem{
+				{
+					ID:            987654321,
+					Number:        42,
+					RepositoryURL: "https://api.github.com/repos/acme/backend",
+					PullRequest:   &models.GitHubPullRequestLinks{URL: "https://api.github.com/repos/acme/backend/pulls/42"},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	from := time.Date(2026, 4, 28, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)
+	resp, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", from, to, 2, 50)
+	if err != nil {
+		t.Fatalf("SearchPullRequests failed: %v", err)
+	}
+	if authHeader != "Bearer installation-token" {
+		t.Fatalf("expected bearer token, got %q", authHeader)
+	}
+	if gotQuery.Get("page") != "2" || gotQuery.Get("per_page") != "50" {
+		t.Fatalf("unexpected pagination query: %v", gotQuery)
+	}
+	expectedQ := "is:pull-request is:merged org:acme merged:2026-04-28T00:00:00Z..2026-04-29T00:00:00Z"
+	if gotQuery.Get("q") != expectedQ {
+		t.Fatalf("expected q %q, got %q", expectedQ, gotQuery.Get("q"))
+	}
+	if resp.TotalCount != 1 || len(resp.Items) != 1 || resp.Items[0].Number != 42 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestSearchPullRequests_ClampsPagination(t *testing.T) {
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.GitHubSearchResponse{})
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	_, err := client.SearchPullRequests(context.Background(), "installation-token", "acme", time.Now(), time.Now().Add(time.Hour), 0, 999)
+	if err != nil {
+		t.Fatalf("SearchPullRequests failed: %v", err)
+	}
+	if gotQuery.Get("page") != "1" {
+		t.Fatalf("expected page=1, got %q", gotQuery.Get("page"))
+	}
+	if gotQuery.Get("per_page") != strconv.Itoa(searchMaxPerPage) {
+		t.Fatalf("expected per_page=%d, got %q", searchMaxPerPage, gotQuery.Get("per_page"))
 	}
 }
 
