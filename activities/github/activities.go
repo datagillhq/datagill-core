@@ -24,7 +24,7 @@ func New(client *Client, repo githubRepository) *Activities {
 	return &Activities{client: client, repo: repo}
 }
 
-func (a *Activities) installationTokenFor(ctx context.Context, orgID, key uuid.UUID) (InstallationToken, error) {
+func (a *Activities) getInstallationToken(ctx context.Context, orgID, key uuid.UUID) (InstallationToken, error) {
 	if a.client == nil {
 		return InstallationToken{}, fmt.Errorf("github client is not configured")
 	}

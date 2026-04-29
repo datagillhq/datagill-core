@@ -43,9 +43,9 @@ func TestInstallationTokenFor(t *testing.T) {
 	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
 	acts := New(client, repo)
 
-	token, err := acts.installationTokenFor(context.Background(), orgID, integrationKey)
+	token, err := acts.getInstallationToken(context.Background(), orgID, integrationKey)
 	if err != nil {
-		t.Fatalf("installationTokenFor failed: %v", err)
+		t.Fatalf("getInstallationToken failed: %v", err)
 	}
 	if token.Token != "installation-token" {
 		t.Fatalf("expected installation token, got %q", token.Token)
@@ -54,7 +54,7 @@ func TestInstallationTokenFor(t *testing.T) {
 
 func TestInstallationTokenFor_RequiresClient(t *testing.T) {
 	acts := New(nil, &stubRepository{})
-	if _, err := acts.installationTokenFor(context.Background(), uuid.New(), uuid.New()); err == nil {
+	if _, err := acts.getInstallationToken(context.Background(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected error for nil client")
 	}
 }
@@ -73,7 +73,7 @@ func TestInstallationTokenFor_RequiresInstallationID(t *testing.T) {
 	}
 	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t)), repo)
 
-	if _, err := acts.installationTokenFor(context.Background(), orgID, integrationKey); err == nil {
+	if _, err := acts.getInstallationToken(context.Background(), orgID, integrationKey); err == nil {
 		t.Fatal("expected error for missing installation_id")
 	}
 }
@@ -95,7 +95,7 @@ func TestInstallationTokenFor_RequiresGitHubSource(t *testing.T) {
 	}
 	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t)), repo)
 
-	if _, err := acts.installationTokenFor(context.Background(), orgID, integrationKey); err == nil {
+	if _, err := acts.getInstallationToken(context.Background(), orgID, integrationKey); err == nil {
 		t.Fatal("expected error for non-github source")
 	}
 }
@@ -125,7 +125,7 @@ func TestInstallationTokenFor_MapsNotFoundToNonRetryable(t *testing.T) {
 	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
 	acts := New(client, repo)
 
-	_, err := acts.installationTokenFor(context.Background(), orgID, integrationKey)
+	_, err := acts.getInstallationToken(context.Background(), orgID, integrationKey)
 	var nonRetryable *shared.NonRetryableServiceError
 	if !errors.As(err, &nonRetryable) {
 		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
