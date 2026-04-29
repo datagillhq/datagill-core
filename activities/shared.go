@@ -7,17 +7,23 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/datagill/datagill-core/models"
-	"github.com/datagill/datagill-core/repository"
 )
+
+type sharedRepository interface {
+	SaveSourceRecord(ctx context.Context, r models.SourceRecord) error
+	SaveFeatureFlag(ctx context.Context, f models.FeatureFlag) error
+	SaveChangelog(ctx context.Context, c models.FeatureFlagChangelog) error
+	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
+}
 
 // SharedActivities wraps the repository for Temporal activity registration.
 // All save operations are idempotent — safe to retry on failure.
 type SharedActivities struct {
-	repo repository.Repository
+	repo sharedRepository
 }
 
 // NewSharedActivities creates a new SharedActivities instance.
-func NewSharedActivities(repo repository.Repository) *SharedActivities {
+func NewSharedActivities(repo sharedRepository) *SharedActivities {
 	return &SharedActivities{repo: repo}
 }
 

@@ -4,10 +4,11 @@ package launchdarkly
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/datagill/datagill-core/repository"
+	"github.com/datagill/datagill-core/models"
 )
 
 // Activities contains Temporal activities for LaunchDarkly ETL.
@@ -16,12 +17,18 @@ type Activities struct {
 	// When nil the activity fetches the integration from the repo and constructs
 	// the client from the stored API key — enabling multi-tenant workers.
 	client *Client
-	repo   repository.Repository
+	repo   launchDarklyRepository
+}
+
+type launchDarklyRepository interface {
+	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
+	SaveSourceRecord(ctx context.Context, r models.SourceRecord) error
+	UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error
 }
 
 // New creates a new Activities instance.
 // Pass client=nil in production workers; clientFor will build one per integration at runtime.
-func New(client *Client, repo repository.Repository) *Activities {
+func New(client *Client, repo launchDarklyRepository) *Activities {
 	return &Activities{client: client, repo: repo}
 }
 

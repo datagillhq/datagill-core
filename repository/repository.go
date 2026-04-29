@@ -48,10 +48,6 @@ type Repository interface {
 	// SoftDeleteIntegration sets state = deleted on the integration, scoped to the org.
 	SoftDeleteIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 
-	// UpdateIntegrationLastSyncedAt records the high-water mark after a successful sync.
-	// Safe to call multiple times; always overwrites with the provided timestamp.
-	UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error
-
 	// CreateOrg inserts an org row if one does not already exist. Safe to call
 	// multiple times — uses INSERT ... ON CONFLICT DO NOTHING.
 	CreateOrg(ctx context.Context, orgID uuid.UUID, externalOrgID string) error
