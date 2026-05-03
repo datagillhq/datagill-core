@@ -3,10 +3,12 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -66,9 +68,18 @@ func runLaunchDarklyExtract(ctx workflow.Context, integration models.Integration
 
 func runGitHubExtract(ctx workflow.Context, integration models.Integration) error {
 	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-		WorkflowID: fmt.Sprintf("github-extract-%s", integration.Key),
+		WorkflowID:        fmt.Sprintf("github-extract-%s", integration.Key),
+		ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
 	})
-	return workflow.ExecuteChildWorkflow(childCtx, ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
+	child := workflow.ExecuteChildWorkflow(childCtx, ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
 		Integration: integration,
-	}).Get(ctx, nil)
+	})
+	if err := child.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
+		var alreadyStarted *temporal.ChildWorkflowExecutionAlreadyStartedError
+		if errors.As(err, &alreadyStarted) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }

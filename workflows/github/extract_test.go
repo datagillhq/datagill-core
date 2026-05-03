@@ -9,12 +9,14 @@ import (
 	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/datagill/datagill-core/activities"
 	ghactivities "github.com/datagill/datagill-core/activities/github"
 	"github.com/datagill/datagill-core/models"
 	ghworkflows "github.com/datagill/datagill-core/workflows/github"
 )
 
 var ghActs = &ghactivities.Activities{}
+var sharedActs = &activities.SharedActivities{}
 
 func TestGitHubExtractWorkflow_IngestsDiscoveredPullRequests(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
@@ -42,6 +44,7 @@ func TestGitHubExtractWorkflow_IngestsDiscoveredPullRequests(t *testing.T) {
 	sourceRecordKey := uuid.New()
 	pr := models.PullRequest{Key: uuid.New(), OrgID: orgID, IntegrationID: integrationKey}
 
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, orgID, integrationKey).Return(integration, nil).Once()
 	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.MatchedBy(func(input ghactivities.SearchPullRequestsInput) bool {
 		return input.IntegrationKey == integrationKey &&
 			input.OrgID == orgID &&
@@ -69,7 +72,7 @@ func TestGitHubExtractWorkflow_IngestsDiscoveredPullRequests(t *testing.T) {
 	})).Return(pr, nil).Once()
 	env.OnActivity(ghActs.SavePullRequest, mock.Anything, pr).Return(nil).Once()
 
-	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration})
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("GitHubExtractWorkflow failed: %v", err)
@@ -92,6 +95,7 @@ func TestGitHubExtractWorkflow_SplitsLargeSearchWindow(t *testing.T) {
 		State:  models.IntegrationStateActive,
 	}
 
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, orgID, integrationKey).Return(integration, nil).Once()
 	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.MatchedBy(func(input ghactivities.SearchPullRequestsInput) bool {
 		return input.From.Equal(now.Add(-35*time.Minute)) && input.To.Equal(now)
 	})).Return(ghactivities.SearchPullRequestsOutput{TotalCount: 901}, nil).Once()
@@ -102,7 +106,7 @@ func TestGitHubExtractWorkflow_SplitsLargeSearchWindow(t *testing.T) {
 		return input.From.Equal(now.Add(-17*time.Minute-30*time.Second)) && input.To.Equal(now)
 	})).Return(ghactivities.SearchPullRequestsOutput{}, nil).Once()
 
-	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration})
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("GitHubExtractWorkflow failed: %v", err)
@@ -125,14 +129,106 @@ func TestGitHubExtractWorkflow_ReturnsSearchError(t *testing.T) {
 		State:  models.IntegrationStateActive,
 	}
 
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, orgID, integrationKey).Return(integration, nil).Once()
 	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.MatchedBy(func(input ghactivities.SearchPullRequestsInput) bool {
 		return input.From.Equal(now.Add(-35*time.Minute)) && input.To.Equal(now)
 	})).Return(ghactivities.SearchPullRequestsOutput{}, errors.New("github search failed")).Once()
 
-	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration})
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
 	if err := env.GetWorkflowError(); err == nil {
 		t.Fatal("expected workflow error")
+	}
+	env.AssertExpectations(t)
+}
+
+func TestGitHubExtractWorkflow_UsesLastSearchedThroughWithOverlap(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	env.SetStartTime(now)
+
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	lastSearchedThrough := now.Add(-30 * time.Minute)
+	integration := models.Integration{
+		Key:    integrationKey,
+		OrgID:  orgID,
+		Source: models.SourceGitHub,
+		State:  models.IntegrationStateActive,
+	}
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, orgID, integrationKey).Return(integration, nil).Once()
+	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.MatchedBy(func(input ghactivities.SearchPullRequestsInput) bool {
+		return input.From.Equal(lastSearchedThrough.Add(-5*time.Minute)) && input.To.Equal(now)
+	})).Return(ghactivities.SearchPullRequestsOutput{}, nil).Once()
+
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
+		Integration:         integration,
+		LastSearchedThrough: &lastSearchedThrough,
+		RunOnce:             true,
+	})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("GitHubExtractWorkflow failed: %v", err)
+	}
+	env.AssertExpectations(t)
+}
+
+func TestGitHubExtractWorkflow_ReturnsSaveError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	env.SetStartTime(now)
+
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	integration := models.Integration{
+		Key:    integrationKey,
+		OrgID:  orgID,
+		Source: models.SourceGitHub,
+		State:  models.IntegrationStateActive,
+	}
+	ref := ghactivities.PullRequestRef{Owner: "acme", Repo: "backend", Number: 42}
+	detail := models.GitHubPullRequestDetail{ID: 123456789, Number: 42}
+	sourceRecordKey := uuid.New()
+	pr := models.PullRequest{Key: uuid.New(), OrgID: orgID, IntegrationID: integrationKey}
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, orgID, integrationKey).Return(integration, nil).Once()
+	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.Anything).Return(ghactivities.SearchPullRequestsOutput{Refs: []ghactivities.PullRequestRef{ref}}, nil).Once()
+	env.OnActivity(ghActs.GetPullRequestDetail, mock.Anything, mock.Anything).Return(ghactivities.GetPullRequestDetailOutput{Ref: ref, Detail: detail, SourceRecordKey: sourceRecordKey}, nil).Once()
+	env.OnActivity(ghActs.NormalizePullRequest, mock.Anything, mock.Anything).Return(pr, nil).Once()
+	env.OnActivity(ghActs.SavePullRequest, mock.Anything, pr).Return(errors.New("db unavailable")).Once()
+
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
+
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("expected workflow error")
+	}
+	env.AssertExpectations(t)
+}
+
+func TestGitHubExtractWorkflow_SkipsPausedIntegration(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	inputIntegration := models.Integration{
+		Key:    integrationKey,
+		OrgID:  orgID,
+		Source: models.SourceGitHub,
+		State:  models.IntegrationStateActive,
+	}
+	currentIntegration := inputIntegration
+	currentIntegration.State = models.IntegrationStatePaused
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, orgID, integrationKey).Return(currentIntegration, nil).Once()
+
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: inputIntegration, RunOnce: true})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("GitHubExtractWorkflow failed: %v", err)
 	}
 	env.AssertExpectations(t)
 }

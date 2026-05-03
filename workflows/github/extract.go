@@ -6,42 +6,86 @@ import (
 
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/datagill/datagill-core/activities"
 	ghactivities "github.com/datagill/datagill-core/activities/github"
 	"github.com/datagill/datagill-core/models"
 )
 
 const (
 	searchPullRequestsTimeout = 2 * time.Minute
+	getIntegrationTimeout     = 10 * time.Second
 	pullRequestDetailTimeout  = 30 * time.Second
 	normalizeTimeout          = 30 * time.Second
 	savePullRequestTimeout    = 30 * time.Second
 
-	// Search runs on a 30-minute schedule. Keep a small overlap to tolerate
-	// indexing/API lag while avoiding a full-day rolling dedupe window.
-	searchWindow      = 35 * time.Minute
-	minSearchWindow   = 5 * time.Minute
-	searchPageSize    = 100
-	searchSplitLimit  = 900
-	detailConcurrency = 10
+	syncCadence         = 30 * time.Minute
+	searchOverlap       = 5 * time.Minute
+	initialSearchWindow = syncCadence + searchOverlap
+	minSearchWindow     = 5 * time.Minute
+	searchPageSize      = 100
+	searchSplitLimit    = 900
+	detailConcurrency   = 10
 )
 
 // ExtractInput is the input for GitHubExtractWorkflow.
 type ExtractInput struct {
-	Integration models.Integration
+	Integration         models.Integration
+	LastSearchedThrough *time.Time
+	SearchFrom          *time.Time
+	RunOnce             bool
 }
 
 // GitHubExtractWorkflow ingests merged pull requests for one GitHub integration.
 func GitHubExtractWorkflow(ctx workflow.Context, input ExtractInput) error {
-	integration := input.Integration
+	integration, err := currentIntegration(ctx, input.Integration)
+	if err != nil {
+		return fmt.Errorf("GitHubExtractWorkflow: get integration: %w", err)
+	}
+	if integration.State != models.IntegrationStateActive {
+		return nil
+	}
+
 	to := workflow.Now(ctx)
-	from := to.Add(-searchWindow)
+	from := searchFrom(input, to)
 
 	refs, err := searchPullRequests(ctx, integration, from, to)
 	if err != nil {
 		return fmt.Errorf("GitHubExtractWorkflow: search pull requests: %w", err)
 	}
-	processPullRequests(ctx, integration, refs)
-	return nil
+	if err := processPullRequests(ctx, integration, refs); err != nil {
+		return fmt.Errorf("GitHubExtractWorkflow: process pull requests: %w", err)
+	}
+	if input.RunOnce {
+		return nil
+	}
+	if err := workflow.Sleep(ctx, syncCadence); err != nil {
+		return err
+	}
+	return workflow.NewContinueAsNewError(ctx, GitHubExtractWorkflow, ExtractInput{
+		Integration:         integration,
+		LastSearchedThrough: &to,
+	})
+}
+
+func searchFrom(input ExtractInput, to time.Time) time.Time {
+	if input.LastSearchedThrough != nil {
+		return input.LastSearchedThrough.Add(-searchOverlap)
+	}
+	if input.SearchFrom != nil {
+		return *input.SearchFrom
+	}
+	return to.Add(-initialSearchWindow)
+}
+
+func currentIntegration(ctx workflow.Context, integration models.Integration) (models.Integration, error) {
+	getCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: getIntegrationTimeout,
+	})
+	var current models.Integration
+	if err := workflow.ExecuteActivity(getCtx, (*activities.SharedActivities).GetIntegration, integration.OrgID, integration.Key).Get(ctx, &current); err != nil {
+		return models.Integration{}, err
+	}
+	return current, nil
 }
 
 func searchPullRequests(ctx workflow.Context, integration models.Integration, from, to time.Time) ([]ghactivities.PullRequestRef, error) {
@@ -92,7 +136,7 @@ func searchPullRequests(ctx workflow.Context, integration models.Integration, fr
 	return refs, nil
 }
 
-func processPullRequests(ctx workflow.Context, integration models.Integration, refs []ghactivities.PullRequestRef) {
+func processPullRequests(ctx workflow.Context, integration models.Integration, refs []ghactivities.PullRequestRef) error {
 	logger := workflow.GetLogger(ctx)
 	detailCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: pullRequestDetailTimeout,
@@ -110,8 +154,10 @@ func processPullRequests(ctx workflow.Context, integration models.Integration, r
 			end = len(refs)
 		}
 
+		errs := make([]error, end-start)
 		wg := workflow.NewWaitGroup(ctx)
-		for _, ref := range refs[start:end] {
+		for i, ref := range refs[start:end] {
+			i := i
 			ref := ref
 			wg.Add(1)
 			workflow.Go(ctx, func(gCtx workflow.Context) {
@@ -124,6 +170,7 @@ func processPullRequests(ctx workflow.Context, integration models.Integration, r
 					Ref:            ref,
 				}).Get(gCtx, &detail); err != nil {
 					logger.Warn("skipping pull request: detail fetch failed", "owner", ref.Owner, "repo", ref.Repo, "number", ref.Number, "error", err)
+					errs[i] = err
 					return
 				}
 
@@ -136,14 +183,22 @@ func processPullRequests(ctx workflow.Context, integration models.Integration, r
 					Detail:          detail.Detail,
 				}).Get(gCtx, &pr); err != nil {
 					logger.Warn("skipping pull request: normalize failed", "owner", ref.Owner, "repo", ref.Repo, "number", ref.Number, "error", err)
+					errs[i] = err
 					return
 				}
 
 				if err := workflow.ExecuteActivity(saveCtx, (*ghactivities.Activities).SavePullRequest, pr).Get(gCtx, nil); err != nil {
 					logger.Warn("skipping pull request: save failed", "owner", ref.Owner, "repo", ref.Repo, "number", ref.Number, "error", err)
+					errs[i] = err
 				}
 			})
 		}
 		wg.Wait(ctx)
+		for _, err := range errs {
+			if err != nil {
+				return err
+			}
+		}
 	}
+	return nil
 }
