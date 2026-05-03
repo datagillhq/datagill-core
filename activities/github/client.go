@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +71,13 @@ type InstallationToken struct {
 type installationTokenResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// PullRequestDetailResponse preserves both the decoded PR detail and the exact
+// response bytes GitHub returned for source_records replay.
+type PullRequestDetailResponse struct {
+	Detail models.GitHubPullRequestDetail
+	Raw    json.RawMessage
 }
 
 // NewClient creates a new GitHub App client.
@@ -158,6 +166,37 @@ func (c *Client) SearchPullRequests(ctx context.Context, installationToken, acco
 	return out, nil
 }
 
+// GetPullRequestDetail fetches the full pull request payload for one discovered PR.
+func (c *Client) GetPullRequestDetail(ctx context.Context, installationToken, owner, repo string, number int64) (PullRequestDetailResponse, error) {
+	if installationToken == "" {
+		return PullRequestDetailResponse{}, fmt.Errorf("installation token is required")
+	}
+	if owner == "" {
+		return PullRequestDetailResponse{}, fmt.Errorf("owner is required")
+	}
+	if repo == "" {
+		return PullRequestDetailResponse{}, fmt.Errorf("repo is required")
+	}
+	if number <= 0 {
+		return PullRequestDetailResponse{}, fmt.Errorf("pull request number is required")
+	}
+
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return PullRequestDetailResponse{}, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+installationToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	var out models.GitHubPullRequestDetail
+	raw, err := c.doRawJSON(req, &out)
+	if err != nil {
+		return PullRequestDetailResponse{}, fmt.Errorf("get pull request detail: %w", err)
+	}
+	return PullRequestDetailResponse{Detail: out, Raw: raw}, nil
+}
+
 func accountQualifier(accountLogin, accountType string) (string, error) {
 	if accountLogin == "" {
 		return "", fmt.Errorf("account login is required")
@@ -188,9 +227,14 @@ func (c *Client) appJWT() (string, error) {
 }
 
 func (c *Client) doJSON(req *http.Request, out any) error {
+	_, err := c.doRawJSON(req, out)
+	return err
+}
+
+func (c *Client) doRawJSON(req *http.Request, out any) (json.RawMessage, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("execute request: %w", err)
+		return nil, fmt.Errorf("execute request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -199,28 +243,32 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
 			waitSeconds = s
 		}
-		return &TooManyRequestsError{RetryAfter: waitSeconds}
+		return nil, &TooManyRequestsError{RetryAfter: waitSeconds}
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		return &UnauthorizedError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+		return nil, &UnauthorizedError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		return &NotFoundError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+		return nil, &NotFoundError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
 
 	if resp.StatusCode >= 500 || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		return &UnexpectedStatusError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+		return nil, &UnexpectedStatusError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
 	}
-	return nil
+	if err := json.Unmarshal(raw, out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return json.RawMessage(raw), nil
 }
 
 func parseGitHubPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {

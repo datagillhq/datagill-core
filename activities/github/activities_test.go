@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +137,7 @@ func TestInstallationTokenFor_MapsNotFoundToNonRetryable(t *testing.T) {
 type stubRepository struct {
 	integrations  map[uuid.UUID]models.Integration
 	sourceRecords []models.SourceRecord
+	pullRequests  []models.PullRequest
 }
 
 func (r *stubRepository) GetIntegration(_ context.Context, _ uuid.UUID, key uuid.UUID) (models.Integration, error) {
@@ -143,6 +146,11 @@ func (r *stubRepository) GetIntegration(_ context.Context, _ uuid.UUID, key uuid
 
 func (r *stubRepository) SaveSourceRecord(_ context.Context, rec models.SourceRecord) error {
 	r.sourceRecords = append(r.sourceRecords, rec)
+	return nil
+}
+
+func (r *stubRepository) SavePullRequest(_ context.Context, pr models.PullRequest) error {
+	r.pullRequests = append(r.pullRequests, pr)
 	return nil
 }
 
@@ -182,6 +190,8 @@ func TestSearchPullRequests(t *testing.T) {
 						Number:        42,
 						RepositoryURL: "https://api.github.com/repos/acme/backend",
 						PullRequest:   &models.GitHubPullRequestLinks{URL: "https://api.github.com/repos/acme/backend/pulls/42"},
+						Labels:        []models.GitHubLabelSummary{{Name: "feature"}, {Name: "backend"}},
+						Assignees:     []models.GitHubUserSummary{{Login: "mira", ID: 2001}},
 					},
 				},
 			})
@@ -210,6 +220,12 @@ func TestSearchPullRequests(t *testing.T) {
 	}
 	if out.Refs[0].Owner != "acme" || out.Refs[0].Repo != "backend" || out.Refs[0].Number != 42 {
 		t.Fatalf("unexpected ref: %+v", out.Refs[0])
+	}
+	if len(out.Refs[0].Labels) != 2 || out.Refs[0].Labels[0] != "feature" || out.Refs[0].Labels[1] != "backend" {
+		t.Fatalf("unexpected labels: %+v", out.Refs[0].Labels)
+	}
+	if len(out.Refs[0].Assignees) != 1 || out.Refs[0].Assignees[0].Login != "mira" || out.Refs[0].Assignees[0].ID != 2001 {
+		t.Fatalf("unexpected assignees: %+v", out.Refs[0].Assignees)
 	}
 	if out.NextPage != 2 {
 		t.Fatalf("expected next page 2, got %d", out.NextPage)
@@ -350,5 +366,214 @@ func TestSearchPullRequests_MapsBadRepositoryURLToNonRetryable(t *testing.T) {
 	var nonRetryable *shared.NonRetryableServiceError
 	if !errors.As(err, &nonRetryable) {
 		t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
+	}
+}
+
+func TestGetPullRequestDetail(t *testing.T) {
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	repo := &stubRepository{
+		integrations: map[uuid.UUID]models.Integration{
+			integrationKey: {
+				Key:    integrationKey,
+				OrgID:  orgID,
+				Source: models.SourceGitHub,
+				Config: models.IntegrationConfig{
+					InstallationID: 12345,
+				},
+			},
+		},
+	}
+	createdAt := time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC)
+	mergedAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/12345/access_tokens":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(installationTokenResponse{Token: "installation-token"})
+		case "/repos/acme/backend/pulls/42":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{
+				"id": 123456789,
+				"number": 42,
+				"title": "Ship checkout",
+				"html_url": "https://github.com/acme/backend/pull/42",
+				"diff_url": "https://github.com/acme/backend/pull/42.diff",
+				"created_at": %q,
+				"merged_at": %q,
+				"user": {"login": "ariel", "id": 1001},
+				"base": {"ref": "main", "repo": {"id": 9001, "name": "backend", "owner": {"login": "acme"}}},
+				"head": {"ref": "checkout-v2"},
+				"unknown_future_field": {"must": "survive"}
+			}`, createdAt.Format(time.RFC3339), mergedAt.Format(time.RFC3339))))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL)), repo)
+	out, err := acts.GetPullRequestDetail(context.Background(), GetPullRequestDetailInput{
+		IntegrationKey: integrationKey,
+		OrgID:          orgID,
+		Ref: PullRequestRef{
+			Owner:  "acme",
+			Repo:   "backend",
+			Number: 42,
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetPullRequestDetail failed: %v", err)
+	}
+	if out.Detail.ID != 123456789 {
+		t.Fatalf("expected detail id 123456789, got %d", out.Detail.ID)
+	}
+	expectedKey := models.ComputeSourceRecordKey(orgID, models.SourceGitHub, models.SourceTypePRDetail, "123456789")
+	if out.SourceRecordKey != expectedKey {
+		t.Fatalf("expected source record key %s, got %s", expectedKey, out.SourceRecordKey)
+	}
+	if len(repo.sourceRecords) != 1 {
+		t.Fatalf("expected 1 source record, got %d", len(repo.sourceRecords))
+	}
+	if repo.sourceRecords[0].SourceType != models.SourceTypePRDetail {
+		t.Fatalf("expected source type pr_detail, got %q", repo.sourceRecords[0].SourceType)
+	}
+	if !strings.Contains(string(repo.sourceRecords[0].Data), `"unknown_future_field"`) {
+		t.Fatalf("expected raw source record to preserve unknown fields, got %s", string(repo.sourceRecords[0].Data))
+	}
+}
+
+func TestGetPullRequestDetail_RequiresValidRef(t *testing.T) {
+	acts := New(mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t)), &stubRepository{})
+	tests := []struct {
+		name string
+		ref  PullRequestRef
+	}{
+		{name: "owner", ref: PullRequestRef{Repo: "backend", Number: 42}},
+		{name: "repo", ref: PullRequestRef{Owner: "acme", Number: 42}},
+		{name: "number", ref: PullRequestRef{Owner: "acme", Repo: "backend"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := acts.GetPullRequestDetail(context.Background(), GetPullRequestDetailInput{
+				IntegrationKey: uuid.New(),
+				OrgID:          uuid.New(),
+				Ref:            tt.ref,
+			})
+			var nonRetryable *shared.NonRetryableServiceError
+			if !errors.As(err, &nonRetryable) {
+				t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+func TestNormalizePullRequest(t *testing.T) {
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	sourceRecordKey := uuid.New()
+	createdAt := time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC)
+	mergedAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+
+	acts := New(nil, &stubRepository{})
+	pr, err := acts.NormalizePullRequest(context.Background(), NormalizePullRequestInput{
+		IntegrationKey:  integrationKey,
+		OrgID:           orgID,
+		SourceRecordKey: sourceRecordKey,
+		Ref: PullRequestRef{
+			Labels:    []string{"feature", "backend"},
+			Assignees: []models.PullRequestAssignee{{Login: "mira", ID: 2001}},
+		},
+		Detail: models.GitHubPullRequestDetail{
+			ID:             123456789,
+			Number:         42,
+			Title:          "Ship checkout",
+			Body:           "Enables checkout v2.",
+			HTMLURL:        "https://github.com/acme/backend/pull/42",
+			DiffURL:        "https://github.com/acme/backend/pull/42.diff",
+			MergeCommitSHA: "abc123",
+			Additions:      10,
+			Deletions:      2,
+			ChangedFiles:   3,
+			CreatedAt:      createdAt,
+			MergedAt:       &mergedAt,
+			User:           models.GitHubUserSummary{Login: "ariel", ID: 1001},
+			Base: models.GitHubPullRequestBranch{
+				Ref: "main",
+				Repo: models.GitHubRepositorySummary{
+					ID:    9001,
+					Name:  "backend",
+					Owner: models.GitHubUserSummary{Login: "acme"},
+				},
+			},
+			Head: models.GitHubPullRequestBranch{Ref: "checkout-v2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NormalizePullRequest failed: %v", err)
+	}
+	if pr.Key != models.ComputePullRequestKey(orgID, "123456789") {
+		t.Fatalf("unexpected pull request key %s", pr.Key)
+	}
+	if pr.SourceRecordKey != sourceRecordKey || pr.IntegrationID != integrationKey || pr.OrgID != orgID {
+		t.Fatalf("unexpected identity fields: %+v", pr)
+	}
+	if pr.State != models.PullRequestStateMerged {
+		t.Fatalf("expected merged state, got %q", pr.State)
+	}
+	if pr.Data.Source.RepositoryID != "9001" || pr.Data.Source.Provider != models.SourceGitHub {
+		t.Fatalf("unexpected source data: %+v", pr.Data.Source)
+	}
+	if pr.Data.Details.Repository.Owner != "acme" || pr.Data.Details.Repository.Name != "backend" {
+		t.Fatalf("unexpected repository: %+v", pr.Data.Details.Repository)
+	}
+	if pr.Data.Details.Diff.SHA != "abc123" || pr.Data.Details.Diff.Branches.Source != "checkout-v2" || pr.Data.Details.Diff.Branches.Target != "main" {
+		t.Fatalf("unexpected diff: %+v", pr.Data.Details.Diff)
+	}
+	if pr.Data.Details.Diff.Stats.Additions != 10 || pr.Data.Details.Diff.Stats.Deletions != 2 || pr.Data.Details.Diff.Stats.ChangedFiles != 3 {
+		t.Fatalf("unexpected stats: %+v", pr.Data.Details.Diff.Stats)
+	}
+	if len(pr.Data.Details.Labels) != 2 || pr.Data.Details.Labels[0] != "feature" || pr.Data.Details.Labels[1] != "backend" {
+		t.Fatalf("unexpected labels: %+v", pr.Data.Details.Labels)
+	}
+	if len(pr.Data.Details.Assignees) != 1 || pr.Data.Details.Assignees[0].Login != "mira" || pr.Data.Details.Assignees[0].ID != 2001 {
+		t.Fatalf("unexpected assignees: %+v", pr.Data.Details.Assignees)
+	}
+}
+
+func TestNormalizePullRequest_UsesFallbackRepository(t *testing.T) {
+	acts := New(nil, &stubRepository{})
+	pr, err := acts.NormalizePullRequest(context.Background(), NormalizePullRequestInput{
+		IntegrationKey:  uuid.New(),
+		OrgID:           uuid.New(),
+		SourceRecordKey: uuid.New(),
+		Ref: PullRequestRef{
+			Owner: "acme",
+			Repo:  "backend",
+		},
+		Detail: models.GitHubPullRequestDetail{
+			ID:        123456789,
+			CreatedAt: time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NormalizePullRequest failed: %v", err)
+	}
+	if pr.Data.Details.Repository.Owner != "acme" || pr.Data.Details.Repository.Name != "backend" {
+		t.Fatalf("unexpected fallback repository: %+v", pr.Data.Details.Repository)
+	}
+}
+
+func TestSavePullRequest(t *testing.T) {
+	repo := &stubRepository{}
+	acts := New(nil, repo)
+	pr := models.PullRequest{Key: uuid.New()}
+
+	if err := acts.SavePullRequest(context.Background(), pr); err != nil {
+		t.Fatalf("SavePullRequest failed: %v", err)
+	}
+	if len(repo.pullRequests) != 1 || repo.pullRequests[0].Key != pr.Key {
+		t.Fatalf("expected saved pull request, got %+v", repo.pullRequests)
 	}
 }

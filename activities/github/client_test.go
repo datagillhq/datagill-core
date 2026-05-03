@@ -247,6 +247,78 @@ func TestSearchPullRequests_RequiresSupportedAccountType(t *testing.T) {
 	}
 }
 
+func TestGetPullRequestDetail_Success(t *testing.T) {
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/backend/pulls/42" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		authHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.GitHubPullRequestDetail{
+			ID:       123456789,
+			Number:   42,
+			Title:    "Ship checkout",
+			HTMLURL:  "https://github.com/acme/backend/pull/42",
+			DiffURL:  "https://github.com/acme/backend/pull/42.diff",
+			MergedAt: ptrTime(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)),
+			User:     models.GitHubUserSummary{Login: "ariel", ID: 1001},
+			Base: models.GitHubPullRequestBranch{
+				Ref: "main",
+				Repo: models.GitHubRepositorySummary{
+					ID:    9001,
+					Name:  "backend",
+					Owner: models.GitHubUserSummary{Login: "acme"},
+				},
+			},
+			Head: models.GitHubPullRequestBranch{Ref: "checkout-v2"},
+		})
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	resp, err := client.GetPullRequestDetail(context.Background(), "installation-token", "acme", "backend", 42)
+	if err != nil {
+		t.Fatalf("GetPullRequestDetail failed: %v", err)
+	}
+	if authHeader != "Bearer installation-token" {
+		t.Fatalf("expected bearer token, got %q", authHeader)
+	}
+	if resp.Detail.ID != 123456789 || resp.Detail.Number != 42 || resp.Detail.Title != "Ship checkout" {
+		t.Fatalf("unexpected detail: %+v", resp.Detail)
+	}
+	if len(resp.Raw) == 0 {
+		t.Fatal("expected raw response bytes")
+	}
+}
+
+func TestGetPullRequestDetail_RequiresValidInput(t *testing.T) {
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t))
+	tests := []struct {
+		name   string
+		token  string
+		owner  string
+		repo   string
+		number int64
+	}{
+		{name: "token", owner: "acme", repo: "backend", number: 42},
+		{name: "owner", token: "token", repo: "backend", number: 42},
+		{name: "repo", token: "token", owner: "acme", number: 42},
+		{name: "number", token: "token", owner: "acme", repo: "backend"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.GetPullRequestDetail(context.Background(), tt.token, tt.owner, tt.repo, tt.number)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func mustNewClient(t *testing.T, appID string, privateKeyPEM []byte, opts ...ClientOption) *Client {
 	t.Helper()
 	client, err := NewClient(appID, privateKeyPEM, opts...)
@@ -254,6 +326,10 @@ func mustNewClient(t *testing.T, appID string, privateKeyPEM []byte, opts ...Cli
 		t.Fatalf("failed to create client: %v", err)
 	}
 	return client
+}
+
+func ptrTime(v time.Time) *time.Time {
+	return &v
 }
 
 func assertAppJWT(t *testing.T, authHeader, appID string, privateKeyPEM []byte, now time.Time) {
@@ -264,7 +340,7 @@ func assertAppJWT(t *testing.T, authHeader, appID string, privateKeyPEM []byte, 
 	key := parseTestPrivateKey(t, privateKeyPEM)
 	token, err := jwt.Parse(authHeader[7:], func(token *jwt.Token) (any, error) {
 		return &key.PublicKey, nil
-	})
+	}, jwt.WithoutClaimsValidation())
 	if err != nil {
 		t.Fatalf("parse app jwt: %v", err)
 	}
