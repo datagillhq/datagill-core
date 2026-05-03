@@ -12,6 +12,7 @@ import (
 
 	"github.com/datagill/datagill-core/activities"
 	"github.com/datagill/datagill-core/models"
+	ghworkflows "github.com/datagill/datagill-core/workflows/github"
 	ldworkflows "github.com/datagill/datagill-core/workflows/launchdarkly"
 )
 
@@ -43,6 +44,8 @@ func FeatureFlagETLWorkflow(ctx workflow.Context, input ETLWorkflowInput) error 
 	switch integration.Source {
 	case models.SourceLaunchDarkly:
 		return runLaunchDarklyExtract(ctx, integration)
+	case models.SourceGitHub:
+		return runGitHubExtract(ctx, integration)
 	default:
 		return temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("unsupported source: %s", integration.Source),
@@ -57,6 +60,15 @@ func runLaunchDarklyExtract(ctx workflow.Context, integration models.Integration
 		WorkflowID: fmt.Sprintf("ld-extract-%s", integration.Key),
 	})
 	return workflow.ExecuteChildWorkflow(childCtx, ldworkflows.LaunchDarklyExtractWorkflow, ldworkflows.ExtractInput{
+		Integration: integration,
+	}).Get(ctx, nil)
+}
+
+func runGitHubExtract(ctx workflow.Context, integration models.Integration) error {
+	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+		WorkflowID: fmt.Sprintf("github-extract-%s", integration.Key),
+	})
+	return workflow.ExecuteChildWorkflow(childCtx, ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
 		Integration: integration,
 	}).Get(ctx, nil)
 }

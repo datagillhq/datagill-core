@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"log"
 	"os"
@@ -10,9 +11,11 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/datagill/datagill-core/activities"
+	ghactivities "github.com/datagill/datagill-core/activities/github"
 	ldactivities "github.com/datagill/datagill-core/activities/launchdarkly"
 	"github.com/datagill/datagill-core/repository"
 	"github.com/datagill/datagill-core/workflows"
+	ghworkflows "github.com/datagill/datagill-core/workflows/github"
 	ldworkflows "github.com/datagill/datagill-core/workflows/launchdarkly"
 )
 
@@ -48,7 +51,10 @@ func main() {
 	// API key from the repo at runtime — supports multiple integrations on one worker.
 	w.RegisterActivity(ldactivities.New(nil, repo))
 
+	w.RegisterActivity(ghactivities.New(githubClientFromEnv(), repo))
+
 	w.RegisterWorkflow(workflows.FeatureFlagETLWorkflow)
+	w.RegisterWorkflow(ghworkflows.GitHubExtractWorkflow)
 	w.RegisterWorkflow(ldworkflows.LaunchDarklyExtractWorkflow)
 
 	log.Printf("worker starting on task queue %q → temporal %s", taskQueue, temporalAddr)
@@ -63,4 +69,25 @@ func mustEnv(key string) string {
 		log.Fatalf("required env var %s is not set", key)
 	}
 	return v
+}
+
+func githubClientFromEnv() *ghactivities.Client {
+	appID := os.Getenv("GITHUB_APP_ID")
+	privateKeyB64 := os.Getenv("GITHUB_APP_PRIVATE_KEY_B64")
+	if appID == "" && privateKeyB64 == "" {
+		log.Print("GitHub App env vars are not configured; GitHub activities will fail until configured")
+		return nil
+	}
+	if appID == "" || privateKeyB64 == "" {
+		log.Fatal("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 must both be set for GitHub ETL")
+	}
+	privateKeyPEM, err := base64.StdEncoding.DecodeString(privateKeyB64)
+	if err != nil {
+		log.Fatalf("decode GITHUB_APP_PRIVATE_KEY_B64: %v", err)
+	}
+	client, err := ghactivities.NewClient(appID, privateKeyPEM)
+	if err != nil {
+		log.Fatalf("create GitHub client: %v", err)
+	}
+	return client
 }
