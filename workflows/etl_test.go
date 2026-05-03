@@ -12,6 +12,7 @@ import (
 	"github.com/datagill/datagill-core/activities"
 	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/workflows"
+	ghworkflows "github.com/datagill/datagill-core/workflows/github"
 	ldworkflows "github.com/datagill/datagill-core/workflows/launchdarkly"
 )
 
@@ -34,6 +35,33 @@ func TestFeatureFlagETLWorkflow_RoutesLaunchDarkly(t *testing.T) {
 
 	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).Return(integration, nil)
 	env.OnWorkflow(ldworkflows.LaunchDarklyExtractWorkflow, mock.Anything, mock.Anything).Return(nil)
+
+	env.ExecuteWorkflow(workflows.FeatureFlagETLWorkflow, workflows.ETLWorkflowInput{
+		OrgID:          orgID,
+		IntegrationKey: integrationKey,
+	})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("FeatureFlagETLWorkflow failed: %v", err)
+	}
+	env.AssertExpectations(t)
+}
+
+func TestFeatureFlagETLWorkflow_RoutesGitHub(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	orgID := uuid.New()
+	integrationKey := uuid.New()
+	integration := models.Integration{
+		Key:    integrationKey,
+		OrgID:  orgID,
+		Source: models.SourceGitHub,
+		State:  models.IntegrationStateActive,
+	}
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).Return(integration, nil)
+	env.OnWorkflow(ghworkflows.GitHubExtractWorkflow, mock.Anything, mock.Anything).Return(nil)
 
 	env.ExecuteWorkflow(workflows.FeatureFlagETLWorkflow, workflows.ETLWorkflowInput{
 		OrgID:          orgID,

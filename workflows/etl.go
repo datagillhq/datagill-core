@@ -3,15 +3,18 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/datagill/datagill-core/activities"
 	"github.com/datagill/datagill-core/models"
+	ghworkflows "github.com/datagill/datagill-core/workflows/github"
 	ldworkflows "github.com/datagill/datagill-core/workflows/launchdarkly"
 )
 
@@ -43,6 +46,8 @@ func FeatureFlagETLWorkflow(ctx workflow.Context, input ETLWorkflowInput) error 
 	switch integration.Source {
 	case models.SourceLaunchDarkly:
 		return runLaunchDarklyExtract(ctx, integration)
+	case models.SourceGitHub:
+		return runGitHubExtract(ctx, integration)
 	default:
 		return temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("unsupported source: %s", integration.Source),
@@ -59,4 +64,22 @@ func runLaunchDarklyExtract(ctx workflow.Context, integration models.Integration
 	return workflow.ExecuteChildWorkflow(childCtx, ldworkflows.LaunchDarklyExtractWorkflow, ldworkflows.ExtractInput{
 		Integration: integration,
 	}).Get(ctx, nil)
+}
+
+func runGitHubExtract(ctx workflow.Context, integration models.Integration) error {
+	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+		WorkflowID:        fmt.Sprintf("github-extract-%s", integration.Key),
+		ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
+	})
+	child := workflow.ExecuteChildWorkflow(childCtx, ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
+		Integration: integration,
+	})
+	if err := child.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
+		var alreadyStarted *temporal.ChildWorkflowExecutionAlreadyStartedError
+		if errors.As(err, &alreadyStarted) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
