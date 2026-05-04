@@ -87,6 +87,27 @@ type PullRequestDiffStats struct {
 	ChangedFiles int `json:"changed_files"`
 }
 
+// PREnrichmentStatus tracks the enrichment lifecycle of a pull request row.
+type PREnrichmentStatus string
+
+const (
+	PREnrichmentStatusPending    PREnrichmentStatus = "pending"
+	PREnrichmentStatusInProgress PREnrichmentStatus = "in_progress"
+	PREnrichmentStatusCompleted  PREnrichmentStatus = "completed"
+	PREnrichmentStatusFailed     PREnrichmentStatus = "failed"
+)
+
+// PullRequestEnrichment is the computed enrichment output stored in pull_requests.enrichment JSONB.
+type PullRequestEnrichment struct {
+	FeatureFlags PullRequestFeatureFlagRefs `json:"feature_flags"`
+}
+
+// PullRequestFeatureFlagRefs holds flag UUIDs found in the PR diff, split by add/remove.
+type PullRequestFeatureFlagRefs struct {
+	Added   []string `json:"added"`
+	Removed []string `json:"removed"`
+}
+
 // PullRequest maps to the pull_requests table.
 type PullRequest struct {
 	ID              int64
@@ -96,6 +117,10 @@ type PullRequest struct {
 	OrgID           uuid.UUID
 	State           PullRequestState
 	Data            PullRequestData
+	Enrichment      *PullRequestEnrichment
+	EnrichedAt      *time.Time
+	Status          PREnrichmentStatus
+	Attempts        int
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
