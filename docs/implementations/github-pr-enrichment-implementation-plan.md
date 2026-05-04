@@ -9,8 +9,8 @@ This document breaks the enrichment design into concrete, ordered tasks. Each ta
 
 ## What Already Exists
 
-- `pull_requests` table (`006_pull_requests.up.sql`) — no enrichment columns yet.
-- `models/pull_request.go` — `PullRequest` struct, no enrichment fields.
+- `pull_requests` table (`006_pull_requests.up.sql`) — no enrichment table yet.
+- `models/pull_request.go` — `PullRequest` struct, no enrichment types.
 - `repository/postgres_pull_requests.go` — `SavePullRequest` only.
 - `activities/github/` — GitHub App client + ETL activities.
 - `workflows/github/extract.go` — ETL extract workflow.
@@ -18,49 +18,68 @@ This document breaks the enrichment design into concrete, ordered tasks. Each ta
 
 ---
 
-## Task 1 — DB migration: add enrichment columns
+## Task 1 — DB migration: create `pull_request_enrichments` table
 
 **File:** `db/migrations/007_pr_enrichment.up.sql`
 
-Add to `pull_requests`:
-
 ```sql
-ALTER TABLE pull_requests
-  ADD COLUMN enrichment  JSONB,
-  ADD COLUMN enriched_at TIMESTAMPTZ,
-  ADD COLUMN status      TEXT NOT NULL DEFAULT 'pending',
-  ADD COLUMN attempts    INT  NOT NULL DEFAULT 0;
+CREATE TABLE pull_request_enrichments (
+    pull_request_key UUID        PRIMARY KEY REFERENCES pull_requests(key) ON DELETE CASCADE,
+    org_id           UUID        NOT NULL REFERENCES organizations(key) ON DELETE CASCADE,
+    status           TEXT        NOT NULL DEFAULT 'pending',
+    attempts         INT         NOT NULL DEFAULT 0,
+    enrichment       JSONB,
+    enriched_at      TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX idx_pull_requests_status ON pull_requests(status)
+CREATE INDEX idx_pr_enrichments_status ON pull_request_enrichments(status)
   WHERE status = 'pending';
 
-CREATE INDEX idx_pr_enrichment_flags_added ON pull_requests
+CREATE INDEX idx_pr_enrichments_org_id ON pull_request_enrichments(org_id);
+
+CREATE INDEX idx_pr_enrichment_flags_added ON pull_request_enrichments
   USING GIN ((enrichment->'feature_flags'->'added'));
 
-CREATE INDEX idx_pr_enrichment_flags_removed ON pull_requests
+CREATE INDEX idx_pr_enrichment_flags_removed ON pull_request_enrichments
   USING GIN ((enrichment->'feature_flags'->'removed'));
 ```
 
 Notes:
-- Existing rows get `status = 'pending'` by default — they will be picked up by the enrichment workflow automatically.
+- No existing rows to backfill — `pull_request_enrichments` rows are created by `SavePullRequest` going forward.
 - No down migration required in v1.
 
 ---
 
 ## Task 2 — Model: add enrichment types
 
-**File:** `models/pull_request.go`
-
-Add to `PullRequest` struct:
-- `Enrichment *PullRequestEnrichment`
-- `EnrichedAt *time.Time`
-- `Status string` (`pending` / `in_progress` / `completed` / `failed`)
-- `Attempts int`
+**File:** `models/pull_request.go` (or new `models/pull_request_enrichment.go`)
 
 Add new types:
 
 ```go
+type PREnrichmentStatus string
+
+const (
+    PREnrichmentStatusPending    PREnrichmentStatus = "pending"
+    PREnrichmentStatusInProgress PREnrichmentStatus = "in_progress"
+    PREnrichmentStatusCompleted  PREnrichmentStatus = "completed"
+    PREnrichmentStatusFailed     PREnrichmentStatus = "failed"
+)
+
 type PullRequestEnrichment struct {
+    PullRequestKey uuid.UUID
+    OrgID          uuid.UUID
+    Status         PREnrichmentStatus
+    Attempts       int
+    Enrichment     *PullRequestEnrichmentData
+    EnrichedAt     *time.Time
+    CreatedAt      time.Time
+    UpdatedAt      time.Time
+}
+
+type PullRequestEnrichmentData struct {
     FeatureFlags PullRequestFeatureFlagRefs `json:"feature_flags"`
 }
 
@@ -70,38 +89,31 @@ type PullRequestFeatureFlagRefs struct {
 }
 ```
 
-Add status constants:
-
-```go
-const (
-    PREnrichmentStatusPending    = "pending"
-    PREnrichmentStatusInProgress = "in_progress"
-    PREnrichmentStatusCompleted  = "completed"
-    PREnrichmentStatusFailed     = "failed"
-)
-```
+`PullRequest` itself does not need new fields — enrichment is a separate model.
 
 ---
 
-## Task 3 — Repository: enrichment query and update methods
+## Task 3 — Repository: enrichment methods
 
-**File:** `repository/postgres_pull_requests.go`  
+**File:** `repository/postgres_pull_request_enrichments.go` (new file)
 **File:** `repository/repository.go`
+
+Update `SavePullRequest` to also insert a `pull_request_enrichments` row in the same transaction. On conflict (re-ingest of existing PR), do nothing on the enrichment row — ETL must not overwrite enrichment state.
 
 Add to `Repository` interface and `PostgresRepository`:
 
-### `ListPendingPRsForEnrichment`
+### `ListPendingEnrichments`
 
 ```go
-ListPendingPRsForEnrichment(ctx context.Context, limit int) ([]models.PullRequest, error)
+ListPendingEnrichments(ctx context.Context, limit int) ([]models.PullRequestEnrichment, error)
 ```
 
-Fetches up to `limit` rows where `status = 'pending'`, ordered by `created_at ASC`.
+Fetches up to `limit` enrichment rows with `status = 'pending'`, ordered by `created_at ASC`.
 
-### `ClaimPRForEnrichment`
+### `ClaimEnrichment`
 
 ```go
-ClaimPRForEnrichment(ctx context.Context, key uuid.UUID) error
+ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) error
 ```
 
 Sets `status = 'in_progress'`, increments `attempts`. No-op if row is already `in_progress` or `completed`.
@@ -109,7 +121,7 @@ Sets `status = 'in_progress'`, increments `attempts`. No-op if row is already `i
 ### `SaveEnrichmentResult`
 
 ```go
-SaveEnrichmentResult(ctx context.Context, key uuid.UUID, enrichment models.PullRequestEnrichment) error
+SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
 ```
 
 Writes `enrichment` JSONB, sets `enriched_at = now()`, sets `status = 'completed'`.
@@ -117,15 +129,17 @@ Writes `enrichment` JSONB, sets `enriched_at = now()`, sets `status = 'completed
 ### `MarkEnrichmentFailed`
 
 ```go
-MarkEnrichmentFailed(ctx context.Context, key uuid.UUID, maxAttempts int) error
+MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
 ```
 
-If `attempts >= maxAttempts`, sets `status = 'failed'`. Otherwise sets `status = 'pending'` (retry next run).
+If `attempts >= 5`, sets `status = 'failed'`. Otherwise sets `status = 'pending'` (retry next run).
 
-Add repository integration tests in `repository/postgres_pull_requests_test.go` covering:
-- status transitions
-- idempotency of `SaveEnrichmentResult`
-- retry cap behavior in `MarkEnrichmentFailed`
+Add repository integration tests in `repository/postgres_pull_request_enrichments_test.go` covering:
+- enrichment row created automatically on `SavePullRequest`
+- re-ingest of existing PR does not reset enrichment state
+- status transitions: pending → in_progress → completed
+- retry below cap: failed → pending
+- retry cap reached: failed → failed
 
 ---
 
@@ -163,7 +177,7 @@ Behavior:
 3. On HTTP 406 (diff too large): fall back to `GET /repos/{owner}/{repo}/compare/{base}...{head}` and reconstruct a unified diff from per-file patches.
 4. Return the raw unified diff string.
 
-Add unit tests in `activities/github/activities_test.go`.
+Add unit tests in `activities/github/fetch_pr_diff_test.go`.
 
 ---
 
@@ -207,16 +221,16 @@ Add unit tests in `activities/github/scan_diff_test.go` with synthetic diffs cov
 Add `EnrichPullRequest` activity:
 
 ```go
-func (a *GitHubActivities) EnrichPullRequest(ctx context.Context, input EnrichPRInput) (models.PullRequestEnrichment, error)
+func (a *GitHubActivities) EnrichPullRequest(ctx context.Context, input EnrichPRInput) (models.PullRequestEnrichmentData, error)
 ```
 
-Input: `PullRequest` (full row), `FlagKeys []string`
+Input: `PullRequestEnrichment` (full enrichment row including PR key, org, integration), `FlagKeys []string`
 
 Steps:
 1. Call `FetchPRDiff` to get raw diff.
 2. Call `ScanDiffForFlags` with the diff and flag keys.
 3. Resolve matched flag key strings to DataGill flag UUIDs (query `feature_flags` table).
-4. Return `PullRequestEnrichment` with `Added` and `Removed` UUID slices.
+4. Return `PullRequestEnrichmentData` with `Added` and `Removed` UUID slices.
 
 The repository query for flag UUID resolution needs a new method — add `GetFeatureFlagsByKeys(ctx, orgID, keys) ([]models.FeatureFlag, error)` to `repository.go` and implement in `postgres_feature_flags.go`.
 
@@ -237,15 +251,15 @@ func GitHubEnrichmentWorkflow(ctx workflow.Context) error
 No input — runs globally across all orgs.
 
 Steps:
-1. Call `ListPendingPRsForEnrichment` activity (batch of 100).
+1. Call `ListPendingEnrichments` activity (batch of 100).
 2. If batch is empty, return.
-3. For each PR in the batch:
-   a. Call `ClaimPRForEnrichment`.
+3. For each enrichment row in the batch:
+   a. Call `ClaimEnrichment`.
    b. Load the org's flag keys via `ListFeatureFlagKeys` activity.
    c. Call `EnrichPullRequest`.
    d. On success: call `SaveEnrichmentResult`.
-   e. On failure: call `MarkEnrichmentFailed` (cap: 5 attempts).
-4. Process PRs sequentially in v1 (no fan-out). Fan-out can be added later if throughput requires it.
+   e. On failure: call `MarkEnrichmentFailed`.
+4. Process sequentially in v1. Fan-out can be added later if throughput requires it.
 
 Activity options:
 - `StartToCloseTimeout`: 30s per PR
@@ -298,7 +312,7 @@ This should land as its own PR so the removal is clearly intentional.
 
 | PR | Tasks | Description |
 |----|-------|-------------|
-| 8A | 1, 2 | Migration + model enrichment fields |
+| 8A | 1, 2 | Migration + enrichment model |
 | 8B | 3 | Repository enrichment methods + tests |
 | 8C | 4 | Check in LD reference code |
 | 8D | 5, 6 | Diff fetch + flag scan activities + tests |
@@ -312,5 +326,5 @@ This should land as its own PR so the removal is clearly intentional.
 
 - **Flag key resolution**: flag keys in code may be string literals that match the `key` field on `feature_flags`, not the UUID. Confirm the match field before Task 7.
 - **Diff 406 fallback**: the compare API fallback for oversized diffs has not been tested against a real 406 case. Validate early in Task 5.
-- **`status` column name collision**: `pull_requests` already has a `state` column for the PR's lifecycle state (merged/closed). The new `status` column tracks enrichment state. These are different and must not be confused in queries or model code.
+- **`SavePullRequest` transaction**: the enrichment row insert must be in the same transaction as the PR insert. If they split, a PR can exist without an enrichment row and be silently skipped.
 - **Sequential enrichment throughput**: 100 PRs × 2 GitHub API calls each = up to 200 API calls per 30-minute run. Installation token rate limits are 5,000 requests/hour — well within budget for early usage, but watch as PR volume grows.

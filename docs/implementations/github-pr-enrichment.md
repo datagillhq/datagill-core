@@ -19,20 +19,31 @@ More enrichment types (security signals, co-author detection, etc.) may be added
 
 ## Design Decisions
 
-### Enrichment lives on `pull_requests` directly
+### Enrichment lives in a separate `pull_request_enrichments` table
 
-Rather than a separate table, new columns are added to `pull_requests`:
+Enrichment data is stored in a dedicated 1:1 table rather than as columns on `pull_requests`.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `enrichment` | `jsonb` | Computed enrichment output. Null until first enrichment run. |
-| `enriched_at` | `timestamptz` | Set when enrichment completes successfully. Null = not yet enriched. |
+| `pull_request_key` | `uuid` PK | FK to `pull_requests.key`. |
+| `org_id` | `uuid` | Denormalized for query convenience. |
 | `status` | `text` | Tracks enrichment lifecycle. See status values below. |
 | `attempts` | `int` | Incremented on each enrichment attempt. Used to cap retries. |
+| `enrichment` | `jsonb` | Computed enrichment output. Null until first enrichment run. |
+| `enriched_at` | `timestamptz` | Set when enrichment completes successfully. Null = not yet enriched. |
+| `created_at` | `timestamptz` | |
+| `updated_at` | `timestamptz` | |
 
-**Why not a separate table:** No join needed for reads. ETL owns `data`, enrichment owns `enrichment`. Clear column-level ownership with no table proliferation.
+**Why a separate table:**
+- `status` and `attempts` are worker/processing state, not PR metadata — they don't belong on the PR row.
+- `pull_requests` stays clean and owned entirely by ETL. No mixing of concerns between the ETL writer and the enrichment worker.
+- Enrichment can be reset or dropped without touching the PR row.
+- `pull_requests` already has a `state` column (merged/closed); adding a `status` column for enrichment on the same table is confusing.
+- Future enrichment types can be added as columns on `pull_request_enrichments` without touching the ETL table.
 
-**Why `enriched_at` is a real column, not inside JSONB:** The enrichment workflow queries for unenriched PRs with `WHERE status = 'pending'`. A real column supports a clean B-tree index; a JSONB path cannot.
+**Row creation:** `SavePullRequest` inserts a corresponding `pull_request_enrichments` row with `status = 'pending'` in the same transaction. ETL owns the insert; the enrichment worker only ever updates.
+
+**Why `enriched_at` is a real column, not inside JSONB:** The enrichment workflow queries for pending rows with `WHERE status = 'pending'`. A real column supports a clean B-tree index; a JSONB path cannot.
 
 ### Enrichment status values
 
@@ -67,16 +78,18 @@ Future enrichment types add keys under the same column. No schema migration requ
 ### GIN index for flag lookups
 
 ```sql
-CREATE INDEX idx_pr_enrichment_flags_added ON pull_requests USING GIN ((enrichment->'feature_flags'->'added'));
-CREATE INDEX idx_pr_enrichment_flags_removed ON pull_requests USING GIN ((enrichment->'feature_flags'->'removed'));
+CREATE INDEX idx_pr_enrichment_flags_added ON pull_request_enrichments USING GIN ((enrichment->'feature_flags'->'added'));
+CREATE INDEX idx_pr_enrichment_flags_removed ON pull_request_enrichments USING GIN ((enrichment->'feature_flags'->'removed'));
 ```
 
 Enables the query "which PRs reference this flag?":
 
 ```sql
-SELECT * FROM pull_requests
-WHERE org_id = 'org-uuid'
-AND enrichment->'feature_flags'->'added' @> '"flag-uuid-1"';
+SELECT pr.*
+FROM pull_requests pr
+JOIN pull_request_enrichments e ON e.pull_request_key = pr.key
+WHERE e.org_id = 'org-uuid'
+AND e.enrichment->'feature_flags'->'added' @> '"flag-uuid-1"';
 ```
 
 ---
@@ -138,12 +151,14 @@ A completely separate Temporal schedule, independent of the ETL sync workflow. I
 
 ### Batch query
 
-Each run fetches a bounded batch of pending PRs:
+Each run fetches a bounded batch of pending enrichment rows:
 
 ```sql
-SELECT * FROM pull_requests
-WHERE status = 'pending'
-ORDER BY created_at ASC
+SELECT e.*, pr.data
+FROM pull_request_enrichments e
+JOIN pull_requests pr ON pr.key = e.pull_request_key
+WHERE e.status = 'pending'
+ORDER BY e.created_at ASC
 LIMIT 100;
 ```
 
@@ -153,12 +168,12 @@ The `status = 'pending'` condition is the cursor. No cursor state is stored in T
 
 ### Per-PR enrichment steps
 
-1. Set `status = 'in_progress'`, increment `attempts`.
+1. Set `pull_request_enrichments.status = 'in_progress'`, increment `attempts`.
 2. Load the org's flag keys from `feature_flags` for the PR's `org_id`.
 3. Fetch the raw unified diff using the installation access token.
 4. Parse and scan the diff for flag key matches.
 5. Resolve matched flag keys to DataGill flag UUIDs.
-6. Write `enrichment` JSONB and set `enriched_at`, `status = 'completed'`.
+6. Write `enrichment` JSONB and set `enriched_at`, `status = 'completed'` on the enrichment row.
 
 ### Auth
 
@@ -168,22 +183,29 @@ Uses the same installation-token auth as the ETL worker. The activity fetches a 
 
 ## DB Migration
 
-New columns on `pull_requests` (separate migration from `006_pull_requests.up.sql`):
+New table (separate migration from `006_pull_requests.up.sql`):
 
 ```sql
-ALTER TABLE pull_requests
-  ADD COLUMN enrichment  JSONB,
-  ADD COLUMN enriched_at TIMESTAMPTZ,
-  ADD COLUMN status      TEXT NOT NULL DEFAULT 'pending',
-  ADD COLUMN attempts    INT  NOT NULL DEFAULT 0;
+CREATE TABLE pull_request_enrichments (
+    pull_request_key UUID        PRIMARY KEY REFERENCES pull_requests(key) ON DELETE CASCADE,
+    org_id           UUID        NOT NULL REFERENCES organizations(key) ON DELETE CASCADE,
+    status           TEXT        NOT NULL DEFAULT 'pending',
+    attempts         INT         NOT NULL DEFAULT 0,
+    enrichment       JSONB,
+    enriched_at      TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX idx_pull_requests_status ON pull_requests(status)
+CREATE INDEX idx_pr_enrichments_status ON pull_request_enrichments(status)
   WHERE status = 'pending';
 
-CREATE INDEX idx_pr_enrichment_flags_added ON pull_requests
+CREATE INDEX idx_pr_enrichments_org_id ON pull_request_enrichments(org_id);
+
+CREATE INDEX idx_pr_enrichment_flags_added ON pull_request_enrichments
   USING GIN ((enrichment->'feature_flags'->'added'));
 
-CREATE INDEX idx_pr_enrichment_flags_removed ON pull_requests
+CREATE INDEX idx_pr_enrichment_flags_removed ON pull_request_enrichments
   USING GIN ((enrichment->'feature_flags'->'removed'));
 ```
 
@@ -193,7 +215,7 @@ CREATE INDEX idx_pr_enrichment_flags_removed ON pull_requests
 
 | Decision | Notes |
 |----------|-------|
-| Re-enrichment for new flags | Flags created after a PR is merged will not be associated with that PR in v1. Re-enrichment triggered by flag creation events is deferred. If needed, a backfill job can reset `enrichment_status = 'pending'` for PRs merged within a relevant window. |
+| Re-enrichment for new flags | Flags created after a PR is merged will not be associated with that PR in v1. Re-enrichment triggered by flag creation events is deferred. If needed, a backfill job can reset `pull_request_enrichments.status = 'pending'` for PRs merged within a relevant window. |
 | Matching delimiter configuration | The exact delimiter set used for flag-key matching is TBD at implementation time. Start with no delimiter requirement and tighten if false-positive rates are high. |
 | Enrichment schedule per org vs. global | v1 runs a single global enrichment schedule across all orgs. Per-org scheduling is deferred. |
 | Failed PR manual retry | v1 has no API endpoint to manually reset a `failed` PR back to `pending`. Ops workaround is a direct SQL update. |
