@@ -231,6 +231,101 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 	return err
 }
 
+// FetchRawDiff fetches the raw unified diff for a pull request.
+// On HTTP 406 (diff too large) it falls back to the compare API and reconstructs
+// a unified diff from per-file patches.
+func (c *Client) FetchRawDiff(ctx context.Context, installationToken, owner, repo string, number int64, baseRef, headSHA string) (string, error) {
+	if installationToken == "" {
+		return "", fmt.Errorf("installation token is required")
+	}
+
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return "", fmt.Errorf("create diff request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+installationToken)
+	req.Header.Set("Accept", "application/vnd.github.v3.diff")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("execute diff request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotAcceptable { // 406: diff too large
+		return c.fetchDiffFromCompare(ctx, installationToken, owner, repo, baseRef, headSHA)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		return "", &UnauthorizedError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		return "", &NotFoundError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		return "", &UnexpectedStatusError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read diff response: %w", err)
+	}
+	return string(body), nil
+}
+
+type compareResponse struct {
+	Files []compareFile `json:"files"`
+}
+
+type compareFile struct {
+	Filename         string `json:"filename"`
+	PreviousFilename string `json:"previous_filename,omitempty"`
+	Patch            string `json:"patch,omitempty"`
+}
+
+// fetchDiffFromCompare reconstructs a unified diff from the compare API when the
+// primary diff endpoint returns 406. Used as a fallback for large diffs.
+func (c *Client) fetchDiffFromCompare(ctx context.Context, installationToken, owner, repo, base, head string) (string, error) {
+	path := fmt.Sprintf("/repos/%s/%s/compare/%s...%s",
+		url.PathEscape(owner), url.PathEscape(repo),
+		url.PathEscape(base), url.PathEscape(head),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return "", fmt.Errorf("create compare request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+installationToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	var compare compareResponse
+	if err := c.doJSON(req, &compare); err != nil {
+		return "", fmt.Errorf("fetch compare: %w", err)
+	}
+
+	var sb strings.Builder
+	for _, f := range compare.Files {
+		if f.Patch == "" {
+			continue
+		}
+		prev := f.Filename
+		if f.PreviousFilename != "" {
+			prev = f.PreviousFilename
+		}
+		sb.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", prev, f.Filename))
+		sb.WriteString(fmt.Sprintf("--- a/%s\n", prev))
+		sb.WriteString(fmt.Sprintf("+++ b/%s\n", f.Filename))
+		sb.WriteString(f.Patch)
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
 func (c *Client) doRawJSON(req *http.Request, out any) (json.RawMessage, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
