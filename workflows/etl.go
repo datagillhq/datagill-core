@@ -73,6 +73,7 @@ func runGitHubExtract(ctx workflow.Context, integration models.Integration) erro
 	})
 	child := workflow.ExecuteChildWorkflow(childCtx, ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
 		Integration: integration,
+		RunOnce:     true,
 	})
 	if err := child.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
 		var alreadyStarted *temporal.ChildWorkflowExecutionAlreadyStartedError
