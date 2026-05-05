@@ -5,8 +5,39 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/datagill/datagill-core/models"
 )
+
+// GetPullRequestByKey returns a single pull request by its key.
+func (r *PostgresRepository) GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT key, source_record_key, integration_id, org_id, state, data, created_at, updated_at
+		FROM pull_requests
+		WHERE key = $1
+	`, key)
+
+	var pr models.PullRequest
+	var dataJSON []byte
+	err := row.Scan(
+		&pr.Key,
+		&pr.SourceRecordKey,
+		&pr.IntegrationID,
+		&pr.OrgID,
+		&pr.State,
+		&dataJSON,
+		&pr.CreatedAt,
+		&pr.UpdatedAt,
+	)
+	if err != nil {
+		return models.PullRequest{}, fmt.Errorf("GetPullRequestByKey: %w", err)
+	}
+	if err := json.Unmarshal(dataJSON, &pr.Data); err != nil {
+		return models.PullRequest{}, fmt.Errorf("GetPullRequestByKey unmarshal: %w", err)
+	}
+	return pr, nil
+}
 
 // SavePullRequest upserts the normalized state of a pull request and ensures a
 // corresponding pull_request_enrichments row exists. Both writes are atomic.

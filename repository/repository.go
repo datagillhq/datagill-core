@@ -33,6 +33,15 @@ type Repository interface {
 	// On re-ingest of an existing PR the enrichment row is left untouched.
 	SavePullRequest(ctx context.Context, pr models.PullRequest) error
 
+	// GetPullRequestByKey returns a single pull request by its key.
+	GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error)
+
+	// GetFeatureFlagsBySourceKeys returns non-deleted flags for an org matching any of the given provider key strings.
+	GetFeatureFlagsBySourceKeys(ctx context.Context, orgID uuid.UUID, sourceKeys []string) ([]models.FeatureFlag, error)
+
+	// ListFeatureFlagSourceKeys returns all provider key strings for non-deleted flags in an org.
+	ListFeatureFlagSourceKeys(ctx context.Context, orgID uuid.UUID) ([]string, error)
+
 	// ListPendingEnrichments returns up to limit enrichment rows with status = 'pending', oldest first.
 	ListPendingEnrichments(ctx context.Context, limit int) ([]models.PullRequestEnrichment, error)
 

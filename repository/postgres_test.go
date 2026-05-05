@@ -81,6 +81,7 @@ func runMigrations(ctx context.Context, connString string) error {
 		"005_github_integrations.up.sql",
 		"006_pull_requests.up.sql",
 		"007_pr_enrichment.up.sql",
+		"008_feature_flag_source_key_index.up.sql",
 	}
 
 	for _, mig := range migrations {

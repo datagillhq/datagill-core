@@ -18,6 +18,9 @@ type githubRepository interface {
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 	SaveSourceRecord(ctx context.Context, r models.SourceRecord) error
 	SavePullRequest(ctx context.Context, pr models.PullRequest) error
+	GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error)
+	GetFeatureFlagsBySourceKeys(ctx context.Context, orgID uuid.UUID, sourceKeys []string) ([]models.FeatureFlag, error)
+	ListFeatureFlagSourceKeys(ctx context.Context, orgID uuid.UUID) ([]string, error)
 }
 
 // Activities contains Temporal activities for GitHub ETL.
