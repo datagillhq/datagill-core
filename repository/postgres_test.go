@@ -80,6 +80,7 @@ func runMigrations(ctx context.Context, connString string) error {
 		"004_integration_last_synced_at.up.sql",
 		"005_github_integrations.up.sql",
 		"006_pull_requests.up.sql",
+		"007_pr_enrichment.up.sql",
 	}
 
 	for _, mig := range migrations {

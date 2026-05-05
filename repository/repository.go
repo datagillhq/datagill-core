@@ -28,9 +28,22 @@ type Repository interface {
 	// Upserts on feature_flag_changelog.key.
 	SaveChangelog(ctx context.Context, c models.FeatureFlagChangelog) error
 
-	// SavePullRequest upserts the normalized state of a pull request.
-	// Upserts on pull_requests.key.
+	// SavePullRequest upserts the normalized state of a pull request and ensures a
+	// corresponding pull_request_enrichments row exists. Both writes are atomic.
+	// On re-ingest of an existing PR the enrichment row is left untouched.
 	SavePullRequest(ctx context.Context, pr models.PullRequest) error
+
+	// ListPendingEnrichments returns up to limit enrichment rows with status = 'pending', oldest first.
+	ListPendingEnrichments(ctx context.Context, limit int) ([]models.PullRequestEnrichment, error)
+
+	// ClaimEnrichment sets status = 'in_progress' and increments attempts for a pending row.
+	ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) error
+
+	// SaveEnrichmentResult writes enrichment output and sets status = 'completed'.
+	SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
+
+	// MarkEnrichmentFailed resets to 'pending' for retry or sets 'failed' if the attempt cap is reached.
+	MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
 
 	// GetIntegration returns a single non-deleted integration by key, scoped to the org.
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
