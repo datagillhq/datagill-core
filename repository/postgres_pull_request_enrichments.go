@@ -13,16 +13,17 @@ import (
 
 const enrichmentMaxAttempts = 5
 
-// ListPendingEnrichments returns up to limit enrichment rows with status = 'pending',
+// ListPendingEnrichments returns up to limit enrichment rows with status = 'pending' for an org,
 // ordered oldest first.
-func (r *PostgresRepository) ListPendingEnrichments(ctx context.Context, limit int) ([]models.PullRequestEnrichment, error) {
+func (r *PostgresRepository) ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT pull_request_key, org_id, status, attempts, enrichment, enriched_at, created_at, updated_at
 		FROM pull_request_enrichments
 		WHERE status = 'pending'
+		  AND org_id = $1
 		ORDER BY created_at ASC
-		LIMIT $1
-	`, limit)
+		LIMIT $2
+	`, orgID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("ListPendingEnrichments: %w", err)
 	}

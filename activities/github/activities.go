@@ -21,6 +21,10 @@ type githubRepository interface {
 	GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error)
 	GetFeatureFlagsBySourceKeys(ctx context.Context, orgID uuid.UUID, sourceKeys []string) ([]models.FeatureFlag, error)
 	ListFeatureFlagSourceKeys(ctx context.Context, orgID uuid.UUID) ([]string, error)
+	ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error)
+	ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) error
+	SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
+	MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
 }
 
 // Activities contains Temporal activities for GitHub ETL.

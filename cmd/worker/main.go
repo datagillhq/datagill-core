@@ -55,6 +55,7 @@ func main() {
 
 	w.RegisterWorkflow(workflows.FeatureFlagETLWorkflow)
 	w.RegisterWorkflow(ghworkflows.GitHubExtractWorkflow)
+	w.RegisterWorkflow(ghworkflows.GitHubEnrichmentWorkflow)
 	w.RegisterWorkflow(ldworkflows.LaunchDarklyExtractWorkflow)
 
 	log.Printf("worker starting on task queue %q → temporal %s", taskQueue, temporalAddr)

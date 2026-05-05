@@ -3,9 +3,14 @@ package github
 import (
 	"errors"
 	"fmt"
+	"time"
+
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/datagill/datagill-core/shared"
 )
+
+const defaultRateLimitRetryAfter = 60 * time.Second
 
 // TooManyRequestsError is returned when the GitHub API rate limit is exceeded.
 type TooManyRequestsError struct {
@@ -46,9 +51,24 @@ func (e *UnexpectedStatusError) Error() string {
 	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Message)
 }
 
-// toServiceError maps client errors to shared service errors so the worker can
-// classify permanent GitHub auth/config failures as non-retryable.
+// toServiceError maps client errors to Temporal application errors:
+//   - TooManyRequestsError  → retryable, next retry delayed by Retry-After header
+//   - UnauthorizedError     → non-retryable (bad credentials won't fix on retry)
+//   - NotFoundError         → non-retryable (missing resource won't appear on retry)
+//   - anything else         → retryable (transient server/network errors)
 func toServiceError(err error) error {
+	var rateLimited *TooManyRequestsError
+	if errors.As(err, &rateLimited) {
+		delay := time.Duration(rateLimited.RetryAfter) * time.Second
+		if delay <= 0 {
+			delay = defaultRateLimitRetryAfter
+		}
+		return temporal.NewApplicationErrorWithOptions(err.Error(), "RateLimited", temporal.ApplicationErrorOptions{
+			Cause:          err,
+			NextRetryDelay: delay,
+		})
+	}
+
 	var unauthorized *UnauthorizedError
 	if errors.As(err, &unauthorized) {
 		return &shared.NonRetryableServiceError{Message: err.Error(), Cause: err}
