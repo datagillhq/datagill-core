@@ -61,7 +61,12 @@ func TestFeatureFlagETLWorkflow_RoutesGitHub(t *testing.T) {
 	}
 
 	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).Return(integration, nil)
-	env.OnWorkflow(ghworkflows.GitHubExtractWorkflow, mock.Anything, mock.Anything).Return(nil)
+	env.OnWorkflow(ghworkflows.GitHubExtractWorkflow, mock.Anything, mock.MatchedBy(func(input ghworkflows.ExtractInput) bool {
+		return input.Integration.Key == integrationKey &&
+			input.Integration.OrgID == orgID &&
+			input.Integration.Source == models.SourceGitHub &&
+			input.RunOnce
+	})).Return(nil)
 
 	env.ExecuteWorkflow(workflows.FeatureFlagETLWorkflow, workflows.ETLWorkflowInput{
 		OrgID:          orgID,
