@@ -8,6 +8,7 @@ func RegisterAll(r *Registry, repo AnalyticsRepository) error {
 		NewTopTeamsPlugin(repo),
 		NewVelocityPlugin(repo),
 		NewAuditLogPlugin(repo),
+		NewPullRequestsPlugin(repo),
 	}
 	for _, p := range plugins {
 		if err := r.Register(p); err != nil {

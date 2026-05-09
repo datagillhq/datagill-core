@@ -22,6 +22,8 @@ type fakeAnalyticsRepo struct {
 	velocityErr     error
 	auditLog        repository.AuditLogResult
 	auditLogErr     error
+	pullRequests    repository.PullRequestsResult
+	pullRequestsErr error
 }
 
 func (f *fakeAnalyticsRepo) QueryLaunchedWins(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string) (repository.LaunchedWinsResult, error) {
@@ -35,4 +37,7 @@ func (f *fakeAnalyticsRepo) QueryVelocity(_ context.Context, _ uuid.UUID, _, _ t
 }
 func (f *fakeAnalyticsRepo) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string, _, _ int) (repository.AuditLogResult, error) {
 	return f.auditLog, f.auditLogErr
+}
+func (f *fakeAnalyticsRepo) QueryPullRequests(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ int) (repository.PullRequestsResult, error) {
+	return f.pullRequests, f.pullRequestsErr
 }
