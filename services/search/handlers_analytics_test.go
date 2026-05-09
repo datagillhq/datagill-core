@@ -67,6 +67,30 @@ func TestAnalyticsHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("pull_requests metric returns data key in envelope", func(t *testing.T) {
+		srv := newAnalyticsTestServer(t, &stubPlugin{
+			metric: "pull_requests",
+			result: analytics.PullRequestsResponse{},
+		})
+		defer srv.Close()
+
+		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=pull_requests&"+validDateRange, testOrgID, testUserID)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode error: %v", err)
+		}
+		data, ok := body["data"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected data to be a map, got %T", body["data"])
+		}
+		if data["pull_requests"] == nil {
+			t.Error("expected data[pull_requests] to be present")
+		}
+	})
+
 	t.Run("missing metric returns 400", func(t *testing.T) {
 		srv := newTestServer(t)
 		defer srv.Close()

@@ -87,4 +87,7 @@ type Repository interface {
 
 	// QueryAuditLog returns a paginated changelog scoped to org and date range.
 	QueryAuditLog(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string, page, limit int) (AuditLogResult, error)
+
+	// QueryPullRequests returns merged GitHub pull requests scoped to org and source merged_at date range.
+	QueryPullRequests(ctx context.Context, orgID uuid.UUID, from, to time.Time, page, limit int) (PullRequestsResult, error)
 }

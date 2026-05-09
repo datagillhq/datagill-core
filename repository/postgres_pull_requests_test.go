@@ -156,6 +156,75 @@ func TestSavePullRequest(t *testing.T) {
 	}
 }
 
+func TestQueryPullRequests(t *testing.T) {
+	ctx := context.Background()
+	repo, pool := newTestRepo(t, ctx)
+
+	orgKey := setupTestOrg(ctx, t, pool)
+	otherOrgKey := setupTestOrg(ctx, t, pool)
+	integrationKey := setupTestGitHubIntegration(ctx, t, pool, orgKey)
+	otherIntegrationKey := setupTestGitHubIntegration(ctx, t, pool, otherOrgKey)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	windowStart := now.Add(-2 * time.Hour)
+	windowEnd := now.Add(2 * time.Hour)
+
+	oldPR := saveAnalyticsPR(ctx, t, repo, orgKey, integrationKey, "old", now.Add(-90*time.Minute), models.PullRequestStateMerged)
+	newPR := saveAnalyticsPR(ctx, t, repo, orgKey, integrationKey, "new", now.Add(-15*time.Minute), models.PullRequestStateMerged)
+	saveAnalyticsPR(ctx, t, repo, orgKey, integrationKey, "outside", now.Add(-24*time.Hour), models.PullRequestStateMerged)
+	saveAnalyticsPR(ctx, t, repo, orgKey, integrationKey, "closed", now.Add(-10*time.Minute), models.PullRequestStateClosed)
+	saveAnalyticsPR(ctx, t, repo, otherOrgKey, otherIntegrationKey, "other-org", now.Add(-5*time.Minute), models.PullRequestStateMerged)
+	saveAnalyticsPR(ctx, t, repo, orgKey, integrationKey, "nil-merged", time.Time{}, models.PullRequestStateMerged)
+
+	if err := repo.SaveEnrichmentResult(ctx, newPR.Key, models.PullRequestEnrichmentData{
+		FeatureFlags: models.PullRequestFeatureFlagRefs{
+			Added:   []string{"flag-added"},
+			Removed: []string{"flag-removed"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveEnrichmentResult: %v", err)
+	}
+
+	res, err := repo.QueryPullRequests(ctx, orgKey, windowStart, windowEnd, 1, 25)
+	if err != nil {
+		t.Fatalf("QueryPullRequests: %v", err)
+	}
+	if res.Total != 2 || len(res.Rows) != 2 {
+		t.Fatalf("expected total=2 rows=2, got total=%d rows=%d", res.Total, len(res.Rows))
+	}
+	if res.Rows[0].Key != newPR.Key || res.Rows[1].Key != oldPR.Key {
+		t.Fatalf("expected newest merged PRs first, got %v then %v", res.Rows[0].Key, res.Rows[1].Key)
+	}
+	if res.Rows[0].EnrichmentStatus != models.PREnrichmentStatusCompleted {
+		t.Errorf("expected completed enrichment, got %q", res.Rows[0].EnrichmentStatus)
+	}
+	if res.Rows[0].EnrichmentData == nil || len(res.Rows[0].EnrichmentData.FeatureFlags.Added) != 1 {
+		t.Errorf("expected enrichment feature flags, got %+v", res.Rows[0].EnrichmentData)
+	}
+	if res.Rows[1].EnrichmentStatus != models.PREnrichmentStatusPending {
+		t.Errorf("expected pending enrichment for nil enrichment JSON, got %q", res.Rows[1].EnrichmentStatus)
+	}
+	if res.Rows[1].EnrichmentData != nil {
+		t.Errorf("expected nil enrichment data, got %+v", res.Rows[1].EnrichmentData)
+	}
+
+	res, err = repo.QueryPullRequests(ctx, orgKey, windowStart, windowEnd, 2, 1)
+	if err != nil {
+		t.Fatalf("QueryPullRequests page 2: %v", err)
+	}
+	if res.Total != 2 || len(res.Rows) != 1 || res.Rows[0].Key != oldPR.Key {
+		t.Fatalf("expected page 2 to contain old PR with total=2, got %+v", res)
+	}
+
+	res, err = repo.QueryPullRequests(ctx, orgKey, windowStart, windowEnd, 3, 1)
+	if err != nil {
+		t.Fatalf("QueryPullRequests page past last: %v", err)
+	}
+	if res.Total != 2 || len(res.Rows) != 0 {
+		t.Fatalf("expected page past last to preserve total=2 with no rows, got %+v", res)
+	}
+}
+
 func mustEncryptTestAPIKey(t *testing.T, apiKey string) string {
 	t.Helper()
 	encrypted, err := encryptAPIKey(testEncryptionKey, apiKey)
@@ -167,4 +236,69 @@ func mustEncryptTestAPIKey(t *testing.T, apiKey string) string {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+func setupTestGitHubIntegration(ctx context.Context, t *testing.T, pool *pgxpool.Pool, orgKey uuid.UUID) uuid.UUID {
+	t.Helper()
+	integrationKey := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO integrations (key, org_id, source, api_key, config, state, created_at, updated_at)
+		VALUES ($1, $2, 'github', $3, '{}'::jsonb, 'active', NOW(), NOW())
+	`, integrationKey, orgKey, mustEncryptTestAPIKey(t, "")); err != nil {
+		t.Fatalf("failed to create github integration: %v", err)
+	}
+	return integrationKey
+}
+
+func saveAnalyticsPR(ctx context.Context, t *testing.T, repo *PostgresRepository, orgKey, integrationKey uuid.UUID, sourceKey string, mergedAt time.Time, state models.PullRequestState) models.PullRequest {
+	t.Helper()
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	var mergedAtPtr *time.Time
+	if !mergedAt.IsZero() {
+		merged := mergedAt.UTC().Truncate(time.Microsecond)
+		mergedAtPtr = &merged
+	}
+	pr := models.PullRequest{
+		Key:             models.ComputePullRequestKey(orgKey, sourceKey),
+		SourceRecordKey: uuid.New(),
+		IntegrationID:   integrationKey,
+		OrgID:           orgKey,
+		State:           state,
+		Data: models.PullRequestData{
+			Title: "PR " + sourceKey,
+			Source: models.PullRequestSource{
+				Key:          sourceKey,
+				Provider:     models.SourceGitHub,
+				RepositoryID: "repo-" + sourceKey,
+				CreatedAt:    ptrTime(now.Add(-24 * time.Hour)),
+				MergedAt:     mergedAtPtr,
+			},
+			Actor: models.PullRequestActor{
+				Author: models.PullRequestAuthor{Login: "author-" + sourceKey, ID: 123},
+			},
+			Details: models.PullRequestDetails{
+				URL:    "https://github.com/acme/web/pull/1",
+				Number: 1,
+				Repository: models.PullRequestRepository{
+					Owner: "acme",
+					Name:  "web",
+				},
+				Diff: models.PullRequestDiff{
+					SHA: "abc123",
+					Branches: models.PullRequestDiffBranches{
+						Source: "feature",
+						Target: "main",
+					},
+					Stats: models.PullRequestDiffStats{Additions: 1, Deletions: 2, ChangedFiles: 3},
+				},
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := repo.SavePullRequest(ctx, pr); err != nil {
+		t.Fatalf("SavePullRequest %s: %v", sourceKey, err)
+	}
+	return pr
 }

@@ -16,4 +16,5 @@ type AnalyticsRepository interface {
 	QueryTopTeams(ctx context.Context, orgID uuid.UUID, from, to time.Time) (repository.TopTeamsResult, error)
 	QueryVelocity(ctx context.Context, orgID uuid.UUID, from, to time.Time) (repository.VelocityResult, error)
 	QueryAuditLog(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string, page, limit int) (repository.AuditLogResult, error)
+	QueryPullRequests(ctx context.Context, orgID uuid.UUID, from, to time.Time, page, limit int) (repository.PullRequestsResult, error)
 }

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 // LaunchedWin is a single flag that reached 100% rollout within a query window.
@@ -56,6 +58,22 @@ type AuditEntry struct {
 type AuditLogResult struct {
 	Total   int
 	Entries []AuditEntry
+}
+
+// PullRequestAnalyticsRow is a pull request plus its optional enrichment data.
+type PullRequestAnalyticsRow struct {
+	Key              uuid.UUID
+	State            models.PullRequestState
+	Data             models.PullRequestData
+	EnrichmentStatus models.PREnrichmentStatus
+	EnrichmentData   *models.PullRequestEnrichmentData
+	EnrichedAt       *time.Time
+}
+
+// PullRequestsResult is the paginated response from QueryPullRequests.
+type PullRequestsResult struct {
+	Total int
+	Rows  []PullRequestAnalyticsRow
 }
 
 // QueryLaunchedWins returns one deduped production rollout event per flag in [from, to].
@@ -250,6 +268,86 @@ func (r *PostgresRepository) QueryAuditLog(ctx context.Context, orgID uuid.UUID,
 	}
 	if err := rows.Err(); err != nil {
 		return AuditLogResult{}, fmt.Errorf("QueryAuditLog rows: %w", err)
+	}
+	return result, nil
+}
+
+// QueryPullRequests returns merged GitHub pull requests for an org within [from, to],
+// ordered by provider merged_at newest first. PRs without merged_at are excluded.
+func (r *PostgresRepository) QueryPullRequests(ctx context.Context, orgID uuid.UUID, from, to time.Time, page, limit int) (PullRequestsResult, error) {
+	const countQ = `
+		SELECT COUNT(*)::int
+		FROM pull_requests pr
+		WHERE pr.org_id = $1
+		  AND pr.state = 'merged'
+		  AND NULLIF(pr.data->'source'->>'merged_at', '')::timestamptz >= $2
+		  AND NULLIF(pr.data->'source'->>'merged_at', '')::timestamptz <= $3`
+
+	var result PullRequestsResult
+	if err := r.pool.QueryRow(ctx, countQ, orgID, from, to).Scan(&result.Total); err != nil {
+		return PullRequestsResult{}, fmt.Errorf("QueryPullRequests count: %w", err)
+	}
+
+	const q = `
+		SELECT
+			pr.key,
+			pr.state,
+			pr.data,
+			COALESCE(pre.status, 'pending') AS enrichment_status,
+			pre.enrichment,
+			pre.enriched_at
+		FROM pull_requests pr
+		LEFT JOIN pull_request_enrichments pre
+		       ON pre.pull_request_key = pr.key
+		      AND pre.org_id = pr.org_id
+		WHERE pr.org_id = $1
+		  AND pr.state = 'merged'
+		  AND NULLIF(pr.data->'source'->>'merged_at', '')::timestamptz >= $2
+		  AND NULLIF(pr.data->'source'->>'merged_at', '')::timestamptz <= $3
+		ORDER BY NULLIF(pr.data->'source'->>'merged_at', '')::timestamptz DESC, pr.key DESC
+		LIMIT $4 OFFSET $5`
+
+	offset := (page - 1) * limit
+	rows, err := r.pool.Query(ctx, q, orgID, from, to, limit, offset)
+	if err != nil {
+		return PullRequestsResult{}, fmt.Errorf("QueryPullRequests: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			row            PullRequestAnalyticsRow
+			state          string
+			dataJSON       []byte
+			enrichmentJSON []byte
+			status         string
+		)
+		if err := rows.Scan(
+			&row.Key,
+			&state,
+			&dataJSON,
+			&status,
+			&enrichmentJSON,
+			&row.EnrichedAt,
+		); err != nil {
+			return PullRequestsResult{}, fmt.Errorf("QueryPullRequests scan: %w", err)
+		}
+		if err := json.Unmarshal(dataJSON, &row.Data); err != nil {
+			return PullRequestsResult{}, fmt.Errorf("QueryPullRequests unmarshal data: %w", err)
+		}
+		row.State = models.PullRequestState(state)
+		row.EnrichmentStatus = models.PREnrichmentStatus(status)
+		if enrichmentJSON != nil {
+			var enrichment models.PullRequestEnrichmentData
+			if err := json.Unmarshal(enrichmentJSON, &enrichment); err != nil {
+				return PullRequestsResult{}, fmt.Errorf("QueryPullRequests unmarshal enrichment: %w", err)
+			}
+			row.EnrichmentData = &enrichment
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return PullRequestsResult{}, fmt.Errorf("QueryPullRequests rows: %w", err)
 	}
 	return result, nil
 }
