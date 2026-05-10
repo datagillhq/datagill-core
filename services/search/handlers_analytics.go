@@ -78,12 +78,14 @@ func (a *app) analyticsHandler(w http.ResponseWriter, r *http.Request) {
 
 	orgID, err := uuid.Parse(orgIDFromCtx(r))
 	if err != nil {
+		log.Warn().Str("code", "INVALID_ORG_ID").Msg("analytics request rejected")
 		writeCode(w, http.StatusBadRequest, "INVALID_ORG_ID")
 		return
 	}
 
 	req, errCode := parseAnalyticsQuery(orgID, r.URL.Query())
 	if errCode != "" {
+		log.Warn().Str("code", errCode).Msg("analytics request rejected")
 		writeCode(w, http.StatusBadRequest, errCode)
 		return
 	}
@@ -91,6 +93,7 @@ func (a *app) analyticsHandler(w http.ResponseWriter, r *http.Request) {
 	plugin, err := a.analyticsRegistry.Get(req.metric)
 	if err != nil {
 		if errors.Is(err, analytics.ErrUnknownMetric) {
+			log.Warn().Str("code", "ANALYTICS_UNKNOWN_METRIC").Str("metric", req.metric).Msg("analytics request rejected")
 			writeCode(w, http.StatusBadRequest, "ANALYTICS_UNKNOWN_METRIC")
 			return
 		}
