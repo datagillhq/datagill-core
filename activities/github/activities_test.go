@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/shared"
@@ -153,6 +154,32 @@ func (r *stubRepository) SavePullRequest(_ context.Context, pr models.PullReques
 	r.pullRequests = append(r.pullRequests, pr)
 	return nil
 }
+
+func (r *stubRepository) GetPullRequestByKey(_ context.Context, _ uuid.UUID) (models.PullRequest, error) {
+	return models.PullRequest{}, nil
+}
+
+func (r *stubRepository) GetFeatureFlagsBySourceKeys(_ context.Context, _ uuid.UUID, _ []string) ([]models.FeatureFlag, error) {
+	return nil, nil
+}
+
+func (r *stubRepository) ListFeatureFlagSourceKeys(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (r *stubRepository) ListPendingEnrichments(_ context.Context, _ uuid.UUID, _ int) ([]models.PullRequestEnrichment, error) {
+	return nil, nil
+}
+
+func (r *stubRepository) ClaimEnrichment(_ context.Context, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (r *stubRepository) SaveEnrichmentResult(_ context.Context, _ uuid.UUID, _ models.PullRequestEnrichmentData) error {
+	return nil
+}
+
+func (r *stubRepository) MarkEnrichmentFailed(_ context.Context, _ uuid.UUID) error { return nil }
 
 func TestSearchPullRequests(t *testing.T) {
 	orgID := uuid.New()
@@ -562,6 +589,33 @@ func TestNormalizePullRequest_UsesFallbackRepository(t *testing.T) {
 	}
 	if pr.Data.Details.Repository.Owner != "acme" || pr.Data.Details.Repository.Name != "backend" {
 		t.Fatalf("unexpected fallback repository: %+v", pr.Data.Details.Repository)
+	}
+}
+
+func TestToServiceError_RateLimitedSetsNextRetryDelay(t *testing.T) {
+	err := toServiceError(&TooManyRequestsError{RetryAfter: 120})
+
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected *temporal.ApplicationError, got %T", err)
+	}
+	if appErr.NextRetryDelay() != 120*time.Second {
+		t.Fatalf("expected 120s retry delay, got %v", appErr.NextRetryDelay())
+	}
+	if appErr.NonRetryable() {
+		t.Fatal("rate limit error should be retryable")
+	}
+}
+
+func TestToServiceError_RateLimitedUsesDefaultWhenRetryAfterIsZero(t *testing.T) {
+	err := toServiceError(&TooManyRequestsError{RetryAfter: 0})
+
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected *temporal.ApplicationError, got %T", err)
+	}
+	if appErr.NextRetryDelay() != defaultRateLimitRetryAfter {
+		t.Fatalf("expected default retry delay %v, got %v", defaultRateLimitRetryAfter, appErr.NextRetryDelay())
 	}
 }
 
