@@ -63,7 +63,9 @@ func toServiceError(err error) error {
 		if delay <= 0 {
 			delay = defaultRateLimitRetryAfter
 		}
-		return temporal.NewApplicationErrorWithOptions(err.Error(), "RateLimited", temporal.ApplicationErrorOptions{
+		// Returned unwrapped on purpose: Temporal only honors NextRetryDelay when the
+		// activity's returned error is itself an ApplicationError.
+		return temporal.NewApplicationErrorWithOptions(err.Error(), "RateLimited", temporal.ApplicationErrorOptions{ //nolint:wrapcheck // see comment above
 			Cause:          err,
 			NextRetryDelay: delay,
 		})

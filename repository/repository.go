@@ -42,11 +42,11 @@ type Repository interface {
 	// ListFeatureFlagSourceKeys returns all provider key strings for non-deleted flags in an org.
 	ListFeatureFlagSourceKeys(ctx context.Context, orgID uuid.UUID) ([]string, error)
 
-	// ListPendingEnrichments returns up to limit enrichment rows with status = 'pending' for an org, oldest first.
+	// ListPendingEnrichments returns up to limit claimable enrichment rows for an org, oldest first.
 	ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error)
 
-	// ClaimEnrichment sets status = 'in_progress' and increments attempts for a pending row.
-	ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) error
+	// ClaimEnrichment sets status = 'in_progress' and increments attempts; false if the row was not claimable.
+	ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error)
 
 	// SaveEnrichmentResult writes enrichment output and sets status = 'completed'.
 	SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error

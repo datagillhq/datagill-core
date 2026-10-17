@@ -171,7 +171,9 @@ func (r *stubRepository) ListPendingEnrichments(_ context.Context, _ uuid.UUID, 
 	return nil, nil
 }
 
-func (r *stubRepository) ClaimEnrichment(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *stubRepository) ClaimEnrichment(_ context.Context, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
 
 func (r *stubRepository) SaveEnrichmentResult(_ context.Context, _ uuid.UUID, _ models.PullRequestEnrichmentData) error {
 	return nil

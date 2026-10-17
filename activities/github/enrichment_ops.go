@@ -24,12 +24,14 @@ func (a *Activities) ListPendingEnrichments(ctx context.Context, input ListPendi
 	return rows, nil
 }
 
-// ClaimEnrichment transitions a pending enrichment to in_progress.
-func (a *Activities) ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) error {
-	if err := a.repo.ClaimEnrichment(ctx, pullRequestKey); err != nil {
-		return fmt.Errorf("ClaimEnrichment: %w", err)
+// ClaimEnrichment transitions a claimable enrichment to in_progress.
+// It returns false when another run already holds or finished the row.
+func (a *Activities) ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error) {
+	claimed, err := a.repo.ClaimEnrichment(ctx, pullRequestKey)
+	if err != nil {
+		return false, fmt.Errorf("ClaimEnrichment: %w", err)
 	}
-	return nil
+	return claimed, nil
 }
 
 // SaveEnrichmentResultInput is the input for SaveEnrichmentResult.

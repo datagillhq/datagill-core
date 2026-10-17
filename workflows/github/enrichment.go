@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/log"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
 	ghactivities "github.com/datagill/datagill-core/activities/github"
@@ -22,7 +23,12 @@ const (
 
 	enrichmentBatchSize   = 100
 	enrichmentConcurrency = 10
-	enrichmentSleepPeriod = 30 * time.Minute
+
+	// enrichmentMaxActivityAttempts bounds Temporal's retries within one run. Temporal's
+	// default is unlimited, which would leave a persistently failing PR in_progress forever
+	// and block the batch. Once retries are exhausted the PR is marked failed and the
+	// attempts cap in pull_request_enrichments decides whether a later run tries again.
+	enrichmentMaxActivityAttempts = 3
 )
 
 // EnrichmentInput is the input for GitHubEnrichmentWorkflow.
@@ -30,18 +36,14 @@ type EnrichmentInput struct {
 	OrgID uuid.UUID
 }
 
-// GitHubEnrichmentWorkflow processes pending PR enrichments for one org.
-// It fetches a batch, scans each PR diff for feature flag references in parallel,
-// sleeps, then continues as new.
+// GitHubEnrichmentWorkflow processes one batch of pending PR enrichments for one org,
+// scanning each PR diff for feature flag references in parallel. It runs once per
+// invocation; the per-org Temporal schedule owns the cadence.
 func GitHubEnrichmentWorkflow(ctx workflow.Context, input EnrichmentInput) error {
 	logger := workflow.GetLogger(ctx)
 
-	listCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: listPendingTimeout,
-	})
-	flagsCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: listFlagKeysTimeout,
-	})
+	listCtx := withEnrichmentActivityOptions(ctx, listPendingTimeout)
+	flagsCtx := withEnrichmentActivityOptions(ctx, listFlagKeysTimeout)
 
 	var rows []models.PullRequestEnrichment
 	if err := workflow.ExecuteActivity(listCtx, (*ghactivities.Activities).ListPendingEnrichments, ghactivities.ListPendingEnrichmentsInput{
@@ -62,27 +64,24 @@ func GitHubEnrichmentWorkflow(ctx workflow.Context, input EnrichmentInput) error
 	}
 
 	processEnrichments(ctx, logger, rows, flagKeys)
+	return nil
+}
 
-	if err := workflow.Sleep(ctx, enrichmentSleepPeriod); err != nil {
-		return err
-	}
-	return workflow.NewContinueAsNewError(ctx, GitHubEnrichmentWorkflow, input)
+// withEnrichmentActivityOptions applies the timeout and bounded retry policy shared by
+// every activity in GitHubEnrichmentWorkflow.
+func withEnrichmentActivityOptions(ctx workflow.Context, timeout time.Duration) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: timeout,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: enrichmentMaxActivityAttempts},
+	})
 }
 
 // processEnrichments fans out enrichment across rows in batches of enrichmentConcurrency.
 func processEnrichments(ctx workflow.Context, logger log.Logger, rows []models.PullRequestEnrichment, flagKeys []string) {
-	claimCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: claimEnrichmentTimeout,
-	})
-	enrichCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: enrichPRTimeout,
-	})
-	saveCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: saveResultTimeout,
-	})
-	markCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: markFailedTimeout,
-	})
+	claimCtx := withEnrichmentActivityOptions(ctx, claimEnrichmentTimeout)
+	enrichCtx := withEnrichmentActivityOptions(ctx, enrichPRTimeout)
+	saveCtx := withEnrichmentActivityOptions(ctx, saveResultTimeout)
+	markCtx := withEnrichmentActivityOptions(ctx, markFailedTimeout)
 
 	for start := 0; start < len(rows); start += enrichmentConcurrency {
 		end := start + enrichmentConcurrency
@@ -113,8 +112,13 @@ func enrichOne(
 	prKey := row.PullRequestKey
 	orgID := row.OrgID
 
-	if err := workflow.ExecuteActivity(claimCtx, (*ghactivities.Activities).ClaimEnrichment, prKey).Get(ctx, nil); err != nil {
-		logger.Warn("skipping enrichment: claim failed", "pr_key", prKey, "error", err)
+	var claimed bool
+	if err := workflow.ExecuteActivity(claimCtx, (*ghactivities.Activities).ClaimEnrichment, prKey).Get(ctx, &claimed); err != nil {
+		logger.Error("skipping enrichment: claim failed", "pr_key", prKey, "error", err)
+		return
+	}
+	if !claimed {
+		logger.Info("skipping enrichment: already claimed or finished", "pr_key", prKey)
 		return
 	}
 
@@ -124,7 +128,7 @@ func enrichOne(
 		OrgID:          orgID,
 		FlagKeys:       flagKeys,
 	}).Get(ctx, &enrichData); err != nil {
-		logger.Warn("enrichment failed", "pr_key", prKey, "error", err)
+		logger.Error("enrichment failed after retries", "pr_key", prKey, "error", err)
 		markEnrichmentFailed(ctx, markCtx, logger, prKey)
 		return
 	}
@@ -133,7 +137,7 @@ func enrichOne(
 		PullRequestKey: prKey,
 		Data:           enrichData,
 	}).Get(ctx, nil); err != nil {
-		logger.Warn("save enrichment result failed", "pr_key", prKey, "error", err)
+		logger.Error("save enrichment result failed after retries", "pr_key", prKey, "error", err)
 		markEnrichmentFailed(ctx, markCtx, logger, prKey)
 	}
 }

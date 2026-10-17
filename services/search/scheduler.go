@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/datagill/datagill-core/models"
 )
@@ -112,7 +113,9 @@ func (s *temporalScheduler) ensureEnrichmentSchedule(ctx context.Context, orgID 
 		Overlap:            enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
 		TriggerImmediately: true,
 	})
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
+	// The SDK maps Temporal's duplicate-schedule response to ErrScheduleAlreadyRunning;
+	// a second GitHub integration in the same org reuses the existing schedule.
+	if err != nil && !errors.Is(err, temporal.ErrScheduleAlreadyRunning) {
 		return fmt.Errorf("create enrichment schedule %s: %w", scheduleID, err)
 	}
 	return nil
