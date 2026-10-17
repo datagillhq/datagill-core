@@ -45,7 +45,6 @@ func (a *app) router() http.Handler {
 	// Middleware order per IMPLEMENTATION_PLAN.md §1C.2.
 	r.Use(middleware.RequestID)
 	r.Use(requestLoggerMiddleware)
-	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(prometheusMiddleware)
