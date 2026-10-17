@@ -50,11 +50,14 @@ Enrichment data is stored in a dedicated 1:1 table rather than as columns on `pu
 | Value | Meaning |
 |-------|---------|
 | `pending` | Not yet enriched. Default on insert. |
-| `in_progress` | Currently being processed by a Temporal activity. |
+| `in_progress` | Claimed by a workflow run. Treated as abandoned, and claimable again, if not updated for 1 hour. |
 | `completed` | Enrichment finished successfully. |
 | `failed` | Enrichment exceeded the retry cap. Will not be retried automatically. |
 
-Temporal activity-level retries handle transient errors (rate limits, network). The `attempts` column is incremented on each attempt. Once it exceeds the retry cap (v1: 5), status is set to `failed`.
+Retries happen at two levels:
+
+1. **Within a run:** Temporal retries each activity up to 3 attempts to absorb transient errors (rate limits, network). The bound matters: Temporal's default is unlimited retries, which would leave a persistently failing PR `in_progress` forever and block the rest of the batch.
+2. **Across runs:** once Temporal's attempts are exhausted, the PR is marked failed for this run. The `attempts` column is incremented on each claim. Below the cap (v1: 5) the row returns to `pending` for the next run; at the cap, status is set to `failed`.
 
 ### `enrichment` JSONB shape
 
@@ -145,31 +148,39 @@ No explicit byte-size truncation in application code. GitHub API limits apply:
 
 ## Enrichment Workflow
 
-A completely separate Temporal schedule, independent of the ETL sync workflow. It does not run as part of `FeatureFlagETLWorkflow` or `GitHubExtractWorkflow`.
+A separate Temporal schedule per org, independent of the ETL sync workflow. It does not run as part of `FeatureFlagETLWorkflow` or `GitHubExtractWorkflow`.
 
-**Schedule cadence: every 30 minutes.**
+**Schedule cadence: every 30 minutes, per org.**
+
+- Schedule ID `github-pr-enrichment-{orgID}`, created when the org's first GitHub integration is connected. Connecting a second GitHub integration in the same org reuses the existing schedule.
+- Per-org scheduling isolates orgs from each other: one org's failures or GitHub rate limits (which are per installation) do not delay another org's enrichment. Temporal schedules are cheap, so one per org costs about the same as one global schedule.
+- Each run processes one batch and completes. The schedule owns the cadence; the workflow does not sleep or continue-as-new. Overlap policy `SKIP` prevents two runs for the same org at once.
+- The schedule is not removed when GitHub is disconnected. A run with no pending rows finishes immediately.
 
 ### Batch query
 
-Each run fetches a bounded batch of pending enrichment rows:
+Each run fetches a bounded batch of claimable enrichment rows for its org: pending rows, plus `in_progress` rows whose claim is stale (not updated for 1 hour, e.g. the worker died mid-run).
 
 ```sql
-SELECT e.*, pr.data
-FROM pull_request_enrichments e
-JOIN pull_requests pr ON pr.key = e.pull_request_key
-WHERE e.status = 'pending'
-ORDER BY e.created_at ASC
+SELECT pull_request_key, org_id, status, attempts, enrichment, enriched_at, created_at, updated_at
+FROM pull_request_enrichments
+WHERE org_id = $1
+  AND (status = 'pending'
+       OR (status = 'in_progress' AND updated_at < NOW() - INTERVAL '1 hour'))
+ORDER BY created_at ASC
 LIMIT 100;
 ```
 
-Status is set to `in_progress` before processing begins. On success, `enriched_at` and `enrichment` are written and status is set to `completed`. On failure, `attempts` is incremented; if attempts exceed the cap, status is set to `failed`; otherwise status is reset to `pending` for the next run.
+The org's flag keys are loaded once per batch. PRs in the batch are processed in parallel, 10 at a time.
 
-The `status = 'pending'` condition is the cursor. No cursor state is stored in Temporal.
+Each PR is claimed before processing: the claim sets `status = 'in_progress'` and increments `attempts`, and reports whether it actually claimed the row. If not (another run holds it, or it already finished), the PR is skipped. Writing the result and marking failure only update rows that are still `in_progress`, so a stale or duplicate run cannot overwrite a finished row. On success, `enriched_at` and `enrichment` are written and status is set to `completed`. On failure, if attempts reached the cap, status is set to `failed`; otherwise status is reset to `pending` for the next run.
+
+The status condition is the cursor. No cursor state is stored in Temporal.
 
 ### Per-PR enrichment steps
 
-1. Set `pull_request_enrichments.status = 'in_progress'`, increment `attempts`.
-2. Load the org's flag keys from `feature_flags` for the PR's `org_id`.
+1. Claim the row: set `status = 'in_progress'`, increment `attempts`. Skip the PR if the claim was not acquired.
+2. Use the org's flag keys, loaded once for the batch.
 3. Fetch the raw unified diff using the installation access token.
 4. Parse and scan the diff for flag key matches.
 5. Resolve matched flag keys to DataGill flag UUIDs.
@@ -217,7 +228,7 @@ CREATE INDEX idx_pr_enrichment_flags_removed ON pull_request_enrichments
 |----------|-------|
 | Re-enrichment for new flags | Flags created after a PR is merged will not be associated with that PR in v1. Re-enrichment triggered by flag creation events is deferred. If needed, a backfill job can reset `pull_request_enrichments.status = 'pending'` for PRs merged within a relevant window. |
 | Matching delimiter configuration | The exact delimiter set used for flag-key matching is TBD at implementation time. Start with no delimiter requirement and tighten if false-positive rates are high. |
-| Enrichment schedule per org vs. global | v1 runs a single global enrichment schedule across all orgs. Per-org scheduling is deferred. |
+| Backfill enrichment schedules | Orgs that connected GitHub before per-org schedules shipped have no enrichment schedule. A one-time script is needed only if such orgs exist outside local development. |
 | Failed PR manual retry | v1 has no API endpoint to manually reset a `failed` PR back to `pending`. Ops workaround is a direct SQL update. |
 
 ---

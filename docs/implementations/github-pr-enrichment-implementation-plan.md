@@ -105,18 +105,18 @@ Add to `Repository` interface and `PostgresRepository`:
 ### `ListPendingEnrichments`
 
 ```go
-ListPendingEnrichments(ctx context.Context, limit int) ([]models.PullRequestEnrichment, error)
+ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error)
 ```
 
-Fetches up to `limit` enrichment rows with `status = 'pending'`, ordered by `created_at ASC`.
+Fetches up to `limit` claimable enrichment rows for the org, ordered by `created_at ASC`. Claimable means `status = 'pending'`, or `status = 'in_progress'` with `updated_at` older than 1 hour (an abandoned claim).
 
 ### `ClaimEnrichment`
 
 ```go
-ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) error
+ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error)
 ```
 
-Sets `status = 'in_progress'`, increments `attempts`. No-op if row is already `in_progress` or `completed`.
+Sets `status = 'in_progress'`, increments `attempts` on a claimable row. Returns `false` when the row was not claimable (held by another run, `completed`, or `failed`) so the caller skips it.
 
 ### `SaveEnrichmentResult`
 
@@ -124,7 +124,7 @@ Sets `status = 'in_progress'`, increments `attempts`. No-op if row is already `i
 SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
 ```
 
-Writes `enrichment` JSONB, sets `enriched_at = now()`, sets `status = 'completed'`.
+Writes `enrichment` JSONB, sets `enriched_at = now()`, sets `status = 'completed'`. Only updates an `in_progress` row.
 
 ### `MarkEnrichmentFailed`
 
@@ -132,7 +132,7 @@ Writes `enrichment` JSONB, sets `enriched_at = now()`, sets `status = 'completed
 MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
 ```
 
-If `attempts >= 5`, sets `status = 'failed'`. Otherwise sets `status = 'pending'` (retry next run).
+If `attempts >= 5`, sets `status = 'failed'`. Otherwise sets `status = 'pending'` (retry next run). Only updates an `in_progress` row.
 
 Add repository integration tests in `repository/postgres_pull_request_enrichments_test.go` covering:
 - enrichment row created automatically on `SavePullRequest`
@@ -140,6 +140,9 @@ Add repository integration tests in `repository/postgres_pull_request_enrichment
 - status transitions: pending → in_progress → completed
 - retry below cap: failed → pending
 - retry cap reached: failed → failed
+- listing is scoped to one org
+- a second claim reports not claimed; a stale `in_progress` row is reclaimable
+- save and mark-failed do not overwrite a row that is not `in_progress`
 
 ---
 
@@ -245,31 +248,34 @@ Add unit tests in `activities/github/enrich_pull_request_test.go`.
 Add `GitHubEnrichmentWorkflow`:
 
 ```go
-func GitHubEnrichmentWorkflow(ctx workflow.Context) error
+func GitHubEnrichmentWorkflow(ctx workflow.Context, input EnrichmentInput) error // EnrichmentInput{OrgID}
 ```
 
-No input — runs globally across all orgs.
+Runs for one org. Processes one batch and returns; the per-org schedule (Task 10) owns the cadence.
 
 Steps:
-1. Call `ListPendingEnrichments` activity (batch of 100).
+1. Call `ListPendingEnrichments` for the org (batch of 100). Includes stale `in_progress` rows.
 2. If batch is empty, return.
-3. For each enrichment row in the batch:
-   a. Call `ClaimEnrichment`.
-   b. Load the org's flag keys via `ListFeatureFlagKeys` activity.
-   c. Call `EnrichPullRequest`.
-   d. On success: call `SaveEnrichmentResult`.
-   e. On failure: call `MarkEnrichmentFailed`.
-4. Process sequentially in v1. Fan-out can be added later if throughput requires it.
+3. Load the org's flag keys once via `ListFlagSourceKeys`.
+4. For each enrichment row, 10 in parallel:
+   a. Call `ClaimEnrichment`. If it reports not claimed, skip the row.
+   b. Call `EnrichPullRequest`.
+   c. On success: call `SaveEnrichmentResult`.
+   d. On failure: call `MarkEnrichmentFailed`.
 
 Activity options:
-- `StartToCloseTimeout`: 30s per PR
-- Temporal retries handle transient GitHub errors (rate limits, network)
+- `StartToCloseTimeout`: 5 min for `EnrichPullRequest`, 10–30s for the database activities
+- `RetryPolicy`: `MaximumAttempts: 3` on every activity. Temporal's default is unlimited, which would block the batch on a persistently failing PR.
 
-Add workflow tests in `workflows/github/enrichment_test.go` covering:
+Workflow tests in `workflows/github/enrichment_test.go` cover:
 - empty batch (no-op)
 - successful enrichment
-- failed enrichment below retry cap → reset to `pending`
-- failed enrichment at retry cap → set to `failed`
+- unclaimed row is skipped
+- enrichment failure stops after 3 attempts and marks the row failed
+- save failure marks the row failed
+- one failing PR does not block the others
+
+The below-cap/at-cap status transitions of `MarkEnrichmentFailed` are covered by the repository tests (Task 3).
 
 ---
 
@@ -285,16 +291,14 @@ No new activity registration needed — `EnrichPullRequest`, `FetchPRDiff`, and 
 
 ## Task 10 — Temporal schedule
 
-**File:** `services/search/scheduler.go` (or equivalent schedule setup)
+**File:** `services/search/scheduler.go`
 
-Create a Temporal schedule for the enrichment workflow:
+Create a per-org Temporal schedule for the enrichment workflow when a GitHub integration is connected:
 
-- Schedule ID: `github-pr-enrichment`
-- Workflow: `GitHubEnrichmentWorkflow`
-- Cadence: every 30 minutes
-- No per-org input — the workflow queries pending rows globally
-
-The schedule should be created once at startup, idempotent (use `CreateSchedule` with conflict policy `Skip`).
+- Schedule ID: `github-pr-enrichment-{orgID}`
+- Workflow: `GitHubEnrichmentWorkflow` with `EnrichmentInput{OrgID}`
+- Cadence: every 30 minutes, overlap policy `SKIP`
+- Idempotent: a second GitHub integration in the same org reuses the schedule. Detect the duplicate with `errors.Is(err, temporal.ErrScheduleAlreadyRunning)`; the SDK maps Temporal's duplicate response to that error.
 
 ---
 
@@ -327,4 +331,4 @@ This should land as its own PR so the removal is clearly intentional.
 - **Flag key resolution**: flag keys in code may be string literals that match the `key` field on `feature_flags`, not the UUID. Confirm the match field before Task 7.
 - **Diff 406 fallback**: the compare API fallback for oversized diffs has not been tested against a real 406 case. Validate early in Task 5.
 - **`SavePullRequest` transaction**: the enrichment row insert must be in the same transaction as the PR insert. If they split, a PR can exist without an enrichment row and be silently skipped.
-- **Sequential enrichment throughput**: 100 PRs × 2 GitHub API calls each = up to 200 API calls per 30-minute run. Installation token rate limits are 5,000 requests/hour — well within budget for early usage, but watch as PR volume grows.
+- **Enrichment throughput**: 100 PRs per org × 2 GitHub API calls each = up to 200 API calls per 30-minute run. Installation token rate limits are 5,000 requests/hour — well within budget for early usage, but watch as PR volume grows.
