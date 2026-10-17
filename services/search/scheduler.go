@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/datagill/datagill-core/models"
 )
@@ -17,6 +19,9 @@ const (
 	etlWorkflowType = "FeatureFlagETLWorkflow"
 	etlInterval     = 30 * time.Minute
 	etlJitter       = 30 * time.Second
+
+	enrichmentWorkflowType = "GitHubEnrichmentWorkflow"
+	enrichmentInterval     = 30 * time.Minute
 )
 
 // etlWorkflowInput mirrors workflows.ETLWorkflowInput for JSON serialization.
@@ -24,6 +29,11 @@ const (
 type etlWorkflowInput struct {
 	OrgID          uuid.UUID
 	IntegrationKey uuid.UUID
+}
+
+// enrichmentWorkflowInput mirrors workflows/github.EnrichmentInput.
+type enrichmentWorkflowInput struct {
+	OrgID uuid.UUID
 }
 
 // Scheduler manages Temporal schedules for ETL integrations.
@@ -49,6 +59,18 @@ func newTemporalScheduler(tc client.Client) Scheduler {
 }
 
 func (s *temporalScheduler) Create(ctx context.Context, integration models.Integration) error {
+	if err := s.createETLSchedule(ctx, integration); err != nil {
+		return err
+	}
+	if integration.Source == models.SourceGitHub {
+		if err := s.ensureEnrichmentSchedule(ctx, integration.OrgID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *temporalScheduler) createETLSchedule(ctx context.Context, integration models.Integration) error {
 	scheduleID := scheduleIDFor(integration.Key)
 	_, err := s.client.ScheduleClient().Create(ctx, client.ScheduleOptions{
 		ID: scheduleID,
@@ -67,7 +89,34 @@ func (s *temporalScheduler) Create(ctx context.Context, integration models.Integ
 		TriggerImmediately: true, // kick off the first sync right away
 	})
 	if err != nil {
-		return fmt.Errorf("create schedule %s: %w", scheduleID, err)
+		return fmt.Errorf("create etl schedule %s: %w", scheduleID, err)
+	}
+	return nil
+}
+
+// ensureEnrichmentSchedule creates a per-org PR enrichment schedule if one does not exist.
+func (s *temporalScheduler) ensureEnrichmentSchedule(ctx context.Context, orgID uuid.UUID) error {
+	scheduleID := enrichmentScheduleIDFor(orgID)
+	_, err := s.client.ScheduleClient().Create(ctx, client.ScheduleOptions{
+		ID: scheduleID,
+		Spec: client.ScheduleSpec{
+			Intervals: []client.ScheduleIntervalSpec{
+				{Every: enrichmentInterval},
+			},
+		},
+		Action: &client.ScheduleWorkflowAction{
+			ID:        scheduleID,
+			Workflow:  enrichmentWorkflowType,
+			Args:      []any{enrichmentWorkflowInput{OrgID: orgID}},
+			TaskQueue: etlTaskQueue,
+		},
+		Overlap:            enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
+		TriggerImmediately: true,
+	})
+	// The SDK maps Temporal's duplicate-schedule response to ErrScheduleAlreadyRunning;
+	// a second GitHub integration in the same org reuses the existing schedule.
+	if err != nil && !errors.Is(err, temporal.ErrScheduleAlreadyRunning) {
+		return fmt.Errorf("create enrichment schedule %s: %w", scheduleID, err)
 	}
 	return nil
 }
@@ -75,4 +124,9 @@ func (s *temporalScheduler) Create(ctx context.Context, integration models.Integ
 // scheduleIDFor returns the deterministic Temporal schedule ID for an integration.
 func scheduleIDFor(integrationKey uuid.UUID) string {
 	return "etl-" + integrationKey.String()
+}
+
+// enrichmentScheduleIDFor returns the deterministic enrichment schedule ID for an org.
+func enrichmentScheduleIDFor(orgID uuid.UUID) string {
+	return "github-pr-enrichment-" + orgID.String()
 }
