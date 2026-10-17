@@ -400,11 +400,12 @@ Uses an in-memory repository so frontend work can proceed before Postgres is wir
 In `router.go`, build the middleware chain in this order:
 1. `RequestID` — generate UUID v4 request ID, set `X-Request-Id` response header
 2. zerolog request logger — log `method`, `path`, `request_id`, `status`, `duration_ms` at request end
-3. `RealIP` — trust `X-Forwarded-For` from trusted proxies
-4. `Recoverer` — catch panics, log with stack trace, return 500
-5. `Timeout(30s)` — cancel context after 30s
-6. `OrgID` — extract `X-Org-Id` header, add to context and zerolog context logger
-7. Prometheus middleware — record `http_requests_total` (by handler+method+status) and `http_request_duration_seconds` histogram
+3. `Recoverer` — catch panics, log with stack trace, return 500
+4. `Timeout(30s)` — cancel context after 30s
+5. `OrgID` — extract `X-Org-Id` header, add to context and zerolog context logger
+6. Prometheus middleware — record `http_requests_total` (by handler+method+status) and `http_request_duration_seconds` histogram
+
+No client-IP middleware: nothing reads the client IP today. chi's `RealIP` was removed because it trusts `X-Forwarded-For` / `X-Real-IP` from any client (IP spoofing, deprecated in chi v5.3.0). If client IPs are needed behind a load balancer, use `middleware.ClientIPFromXFF(<proxy CIDRs>)` and read the IP with `middleware.GetClientIP`.
 
 **1C.3 — Route structure**
 
