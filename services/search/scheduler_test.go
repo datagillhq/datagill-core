@@ -74,6 +74,39 @@ func TestTemporalScheduler_CreateGitHubReturnsOtherEnrichmentErrors(t *testing.T
 	}
 }
 
+// Existing orgs' schedules are looked up by this ID, so changing the format would orphan
+// them and create a duplicate schedule on the next GitHub connect.
+func TestEnrichmentScheduleIDFor(t *testing.T) {
+	tests := []struct {
+		name  string
+		orgID uuid.UUID
+		want  string
+	}{
+		{
+			name:  "typical org",
+			orgID: uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
+			want:  "github-pr-enrichment-6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		},
+		{
+			name:  "another org gets its own ID",
+			orgID: uuid.MustParse("f47ac10b-58cc-4372-a567-0e02b2c3d479"),
+			want:  "github-pr-enrichment-f47ac10b-58cc-4372-a567-0e02b2c3d479",
+		},
+		{
+			name:  "nil org",
+			orgID: uuid.Nil,
+			want:  "github-pr-enrichment-00000000-0000-0000-0000-000000000000",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := enrichmentScheduleIDFor(tt.orgID); got != tt.want {
+				t.Errorf("enrichmentScheduleIDFor(%s) = %q, want %q", tt.orgID, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTemporalScheduler_CreateLaunchDarklySkipsEnrichmentSchedule(t *testing.T) {
 	scheduler, scheduleClient := newMockScheduler(t)
 	integration := models.Integration{Key: uuid.New(), OrgID: uuid.New(), Source: models.SourceLaunchDarkly}
