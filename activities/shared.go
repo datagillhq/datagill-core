@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/temporal"
@@ -22,6 +23,7 @@ type sharedRepository interface {
 	SaveFeatureFlag(ctx context.Context, f models.FeatureFlag) error
 	SaveChangelog(ctx context.Context, c models.FeatureFlagChangelog) error
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
+	UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error
 }
 
 // SharedActivities wraps the repository for Temporal activity registration.
@@ -75,6 +77,16 @@ func (a *SharedActivities) GetIntegration(ctx context.Context, orgID, key uuid.U
 		return models.Integration{}, fmt.Errorf("get integration: %w", err)
 	}
 	return integration, nil
+}
+
+// UpdateIntegrationLastSyncedAt records how far an integration's sync has searched, so the
+// next run continues from there. Call it only after a run succeeds.
+// Safe to retry: it always overwrites with the given timestamp.
+func (a *SharedActivities) UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error {
+	if err := a.repo.UpdateIntegrationLastSyncedAt(ctx, key, syncedAt); err != nil {
+		return fmt.Errorf("update integration last synced at: %w", err)
+	}
+	return nil
 }
 
 // IsIntegrationNotFound reports whether an error returned to a workflow by GetIntegration

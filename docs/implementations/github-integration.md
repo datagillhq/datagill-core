@@ -231,7 +231,11 @@ FeatureFlagETLWorkflow (routes by source)
               └─ SavePullRequest (shared)
 ```
 
-Same incremental sync pattern as LD: a merged-at cursor stored in Temporal workflow state, not a DB column on `integrations`. First run = bounded backfill. Subsequent runs = only PRs merged since the last successful sync window.
+Same incremental sync pattern as LD: a merged-at cursor in `integrations.last_synced_at`. Each scheduled run is a separate workflow, so the cursor cannot live in Temporal workflow state between runs.
+
+- Each run searches from `last_synced_at` minus a 5-minute overlap up to now, and updates `last_synced_at` only after the whole run succeeds. A failed run leaves it unchanged, so the next run covers the gap.
+- First run (no `last_synced_at`): backfill the last 30 days.
+- One run searches at most 24 hours. A backfill, or a catch-up after a long outage, continues chunk by chunk via Continue-As-New, which keeps each run's workflow history small.
 
 ### Rate Limiting and Concurrency
 
@@ -240,7 +244,7 @@ Initial implementation should hardcode conservative limits and make them configu
 - Search requests: sequential within a single date window
 - PR detail fetches: max 10 concurrent requests per workflow run
 - On GitHub rate limiting, rely on Temporal retries with backoff rather than custom retry loops
-- If a run cannot complete because rate limits persist, fail the run and resume from the last successful merged-at cursor on retry
+- If a run cannot complete because rate limits persist, fail the run; the next run resumes from `last_synced_at`, the last successful position
 
 ---
 

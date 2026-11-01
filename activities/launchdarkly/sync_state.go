@@ -15,7 +15,6 @@ type UpdateLastSyncedAtInput struct {
 }
 
 // UpdateLastSyncedAt records the high-water mark for incremental syncs.
-// LaunchDarkly-only compatibility: new providers must store cursor state in Temporal.
 // Safe to retry — always overwrites with the provided timestamp.
 func (a *Activities) UpdateLastSyncedAt(ctx context.Context, input UpdateLastSyncedAtInput) error {
 	if err := a.repo.UpdateIntegrationLastSyncedAt(ctx, input.IntegrationKey, input.SyncedAt); err != nil {
