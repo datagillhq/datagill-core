@@ -141,6 +141,39 @@ func TestListPendingEnrichments_IncludesStaleInProgress(t *testing.T) {
 	}
 }
 
+// PRs of a paused or deleted integration must not be listed, so nothing calls GitHub for
+// them. They stay pending and are listed again once the integration is active.
+func TestListPendingEnrichments_SkipsInactiveIntegrations(t *testing.T) {
+	ctx := context.Background()
+	repo, pool := newTestRepo(t, ctx)
+
+	orgKey := setupTestOrg(ctx, t, pool)
+	activePR := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-list-active-integration")
+	pausedPR := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-list-paused-integration")
+	deletedPR := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-list-deleted-integration")
+	setIntegrationState(ctx, t, pool, pausedPR.IntegrationID, models.IntegrationStatePaused)
+	setIntegrationState(ctx, t, pool, deletedPR.IntegrationID, models.IntegrationStateDeleted)
+
+	listed := listedPRKeys(ctx, t, repo, orgKey)
+	if !listed[activePR.Key] {
+		t.Error("PR of an active integration should be listed")
+	}
+	if listed[pausedPR.Key] {
+		t.Error("PR of a paused integration should not be listed")
+	}
+	if listed[deletedPR.Key] {
+		t.Error("PR of a deleted integration should not be listed")
+	}
+	if status := enrichmentStatus(ctx, t, pool, pausedPR.Key); status != "pending" {
+		t.Errorf("paused integration's PR should stay pending, got %q", status)
+	}
+
+	setIntegrationState(ctx, t, pool, pausedPR.IntegrationID, models.IntegrationStateActive)
+	if !listedPRKeys(ctx, t, repo, orgKey)[pausedPR.Key] {
+		t.Error("PR should be listed again once its integration is resumed")
+	}
+}
+
 func TestClaimEnrichment(t *testing.T) {
 	ctx := context.Background()
 	repo, pool := newTestRepo(t, ctx)
@@ -444,4 +477,24 @@ func insertTestPR(ctx context.Context, t *testing.T, repo *PostgresRepository, p
 		t.Fatalf("SavePullRequest: %v", err)
 	}
 	return pr
+}
+
+func setIntegrationState(ctx context.Context, t *testing.T, pool *pgxpool.Pool, integrationKey uuid.UUID, state models.IntegrationState) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `UPDATE integrations SET state = $2 WHERE key = $1`, integrationKey, state); err != nil {
+		t.Fatalf("set integration state: %v", err)
+	}
+}
+
+func listedPRKeys(ctx context.Context, t *testing.T, repo *PostgresRepository, orgKey uuid.UUID) map[uuid.UUID]bool {
+	t.Helper()
+	pending, err := repo.ListPendingEnrichments(ctx, orgKey, 100)
+	if err != nil {
+		t.Fatalf("ListPendingEnrichments: %v", err)
+	}
+	keys := make(map[uuid.UUID]bool, len(pending))
+	for _, e := range pending {
+		keys[e.PullRequestKey] = true
+	}
+	return keys
 }

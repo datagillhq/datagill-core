@@ -2,12 +2,20 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/datagill/datagill-core/models"
+	"github.com/datagill/datagill-core/repository"
 )
+
+// IntegrationNotFoundErrorType is the Temporal error type GetIntegration returns when the
+// integration no longer exists (for example, it was deleted). Workflows treat it as a
+// signal to stop, not as a failure.
+const IntegrationNotFoundErrorType = "IntegrationNotFound"
 
 type sharedRepository interface {
 	SaveSourceRecord(ctx context.Context, r models.SourceRecord) error
@@ -55,10 +63,23 @@ func (a *SharedActivities) SaveChangelog(ctx context.Context, c models.FeatureFl
 }
 
 // GetIntegration returns the integration for the given org and key.
+// A deleted integration returns a non-retryable IntegrationNotFoundErrorType error, since
+// retrying will not bring it back.
 func (a *SharedActivities) GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error) {
 	integration, err := a.repo.GetIntegration(ctx, orgID, key)
+	if errors.Is(err, repository.ErrNotFound) {
+		return models.Integration{}, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("integration %s not found", key), IntegrationNotFoundErrorType, err)
+	}
 	if err != nil {
 		return models.Integration{}, fmt.Errorf("get integration: %w", err)
 	}
 	return integration, nil
+}
+
+// IsIntegrationNotFound reports whether an error returned to a workflow by GetIntegration
+// means the integration no longer exists.
+func IsIntegrationNotFound(err error) bool {
+	var appErr *temporal.ApplicationError
+	return errors.As(err, &appErr) && appErr.Type() == IntegrationNotFoundErrorType
 }

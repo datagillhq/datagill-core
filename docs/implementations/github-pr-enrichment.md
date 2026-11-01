@@ -152,10 +152,11 @@ A separate Temporal schedule per org, independent of the ETL sync workflow. It d
 
 **Schedule cadence: every 30 minutes, per org.**
 
-- Schedule ID `github-pr-enrichment-{orgID}`, created when the org's first GitHub integration is connected. Connecting a second GitHub integration in the same org reuses the existing schedule.
+- Schedule ID `github-pr-enrichment-{orgID}`, created when the org's first GitHub integration is connected. Connecting a second GitHub integration in the same org, or reconnecting after a failed connect, reuses the existing schedule.
+- Each org gets a stable offset within the 30 minutes, hashed from its org ID. Temporal interval schedules fire at fixed clock times (not relative to the last run), so the offset keeps orgs from all running at :00 and :30.
 - Per-org scheduling isolates orgs from each other: one org's failures or GitHub rate limits (which are per installation) do not delay another org's enrichment. Temporal schedules are cheap, so one per org costs about the same as one global schedule.
 - Each run processes one batch and completes. The schedule owns the cadence; the workflow does not sleep or continue-as-new. Overlap policy `SKIP` prevents two runs for the same org at once.
-- The schedule is not removed when GitHub is disconnected. A run with no pending rows finishes immediately.
+- The schedule is not removed when GitHub is paused or disconnected. Each run only lists PRs whose integration is `active`, so PRs of a paused or deleted integration stay `pending` without calling GitHub, and are picked up again once the integration is active. A run with nothing to do finishes immediately.
 
 ### Batch query
 

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -157,7 +158,8 @@ func TestGitHubAuthComplete(t *testing.T) {
 		}
 	})
 
-	t.Run("duplicate installation updates without schedule create", func(t *testing.T) {
+	installationAPI := func(t *testing.T) *httptest.Server {
+		t.Helper()
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/login/oauth/access_token":
@@ -173,11 +175,16 @@ func TestGitHubAuthComplete(t *testing.T) {
 				t.Fatalf("unexpected path: %s", r.URL.Path)
 			}
 		}))
-		defer api.Close()
+		t.Cleanup(api.Close)
+		return api
+	}
 
-		repo := &stubIntegrationsRepo{
-			upsertResult: models.Integration{Key: uuid.New(), OrgID: orgID, Source: models.SourceGitHub},
-		}
+	// Schedule creation is idempotent, so a reconnect for an existing integration still
+	// calls Create. That is how a connect that failed after inserting the row recovers.
+	t.Run("duplicate installation still ensures schedules", func(t *testing.T) {
+		api := installationAPI(t)
+		integration := models.Integration{Key: uuid.New(), OrgID: orgID, Source: models.SourceGitHub}
+		repo := &stubIntegrationsRepo{upsertResult: integration}
 		scheduler := &stubScheduler{}
 		svc := newCallbackTestService(t, callbackTestConfig(privateKeyPEM), repo, &stubOrgRepo{}, scheduler, now, api.URL+"/login/oauth/access_token", api.URL)
 
@@ -188,8 +195,27 @@ func TestGitHubAuthComplete(t *testing.T) {
 		if redirectURL != "http://localhost:3001/settings/integrations?provider=github&status=connected" {
 			t.Fatalf("unexpected redirect: %s", redirectURL)
 		}
-		if scheduler.createCall != nil {
-			t.Fatal("did not expect schedule create for existing integration")
+		if scheduler.createCall == nil || scheduler.createCall.Key != integration.Key {
+			t.Fatalf("expected schedule create for existing integration %s, got %v", integration.Key, scheduler.createCall)
+		}
+	})
+
+	t.Run("schedule create failure redirects with integration_create_failed", func(t *testing.T) {
+		api := installationAPI(t)
+		repo := &stubIntegrationsRepo{
+			upsertResult:  models.Integration{Key: uuid.New(), OrgID: orgID, Source: models.SourceGitHub},
+			upsertCreated: true,
+		}
+		temporalDown := errors.New("temporal unavailable")
+		scheduler := &stubScheduler{createErr: temporalDown}
+		svc := newCallbackTestService(t, callbackTestConfig(privateKeyPEM), repo, &stubOrgRepo{}, scheduler, now, api.URL+"/login/oauth/access_token", api.URL)
+
+		redirectURL, err := svc.Complete(t.Context(), callbackQuery(t, svc, orgID, "/settings/integrations"))
+		if !errors.Is(err, temporalDown) {
+			t.Fatalf("expected schedule error, got %v", err)
+		}
+		if !strings.Contains(redirectURL, "integration_create_failed") {
+			t.Fatalf("expected integration_create_failed redirect, got %s", redirectURL)
 		}
 	})
 

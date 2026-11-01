@@ -134,3 +134,40 @@ func TestFeatureFlagETLWorkflow_SkipsPausedIntegration(t *testing.T) {
 	}
 	env.AssertExpectations(t)
 }
+
+// A deleted integration's schedule keeps firing; each run must stop quietly instead of
+// failing.
+func TestFeatureFlagETLWorkflow_SkipsDeletedIntegration(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).
+		Return(models.Integration{}, temporal.NewNonRetryableApplicationError("integration not found", activities.IntegrationNotFoundErrorType, nil))
+
+	env.ExecuteWorkflow(workflows.FeatureFlagETLWorkflow, workflows.ETLWorkflowInput{
+		OrgID:          uuid.New(),
+		IntegrationKey: uuid.New(),
+	})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("expected deleted integration to be skipped, got %v", err)
+	}
+	env.AssertExpectations(t)
+}
+
+func TestFeatureFlagETLWorkflow_ReturnsOtherGetIntegrationErrors(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, mock.Anything, mock.Anything).
+		Return(models.Integration{}, temporal.NewNonRetryableApplicationError("db down", "DBError", nil))
+
+	env.ExecuteWorkflow(workflows.FeatureFlagETLWorkflow, workflows.ETLWorkflowInput{
+		OrgID:          uuid.New(),
+		IntegrationKey: uuid.New(),
+	})
+
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("expected other GetIntegration errors to fail the workflow")
+	}
+}

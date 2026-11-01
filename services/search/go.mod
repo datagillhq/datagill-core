@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.34.0
+	github.com/stretchr/testify v1.11.1
 	go.temporal.io/api v1.62.8
 	go.temporal.io/sdk v1.41.1
 )
@@ -43,7 +44,6 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
