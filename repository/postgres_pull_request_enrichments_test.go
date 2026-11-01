@@ -340,7 +340,7 @@ func TestMarkEnrichmentFailed_BelowCap(t *testing.T) {
 	}
 }
 
-// Each failure pushes the next attempt further out: 30m, 1h, 2h, 4h, 8h, then 24h.
+// Each failure pushes the next attempt further out: 30m, doubling, capped at 24h.
 func TestMarkEnrichmentFailed_BacksOff(t *testing.T) {
 	ctx := context.Background()
 	repo, pool := newTestRepo(t, ctx)
@@ -355,7 +355,8 @@ func TestMarkEnrichmentFailed_BacksOff(t *testing.T) {
 		{3, 2 * time.Hour},
 		{4, 4 * time.Hour},
 		{5, 8 * time.Hour},
-		{6, 24 * time.Hour},
+		{6, 16 * time.Hour},
+		{7, 24 * time.Hour},
 		{9, 24 * time.Hour},
 	}
 	for _, tt := range tests {

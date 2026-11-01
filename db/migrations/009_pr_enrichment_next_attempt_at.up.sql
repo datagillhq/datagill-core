@@ -1,7 +1,7 @@
 -- 009_pr_enrichment_next_attempt_at.up.sql
 -- Adds next_attempt_at to pull_request_enrichments for retry backoff.
 --
--- A failed enrichment waits longer before each retry (30m, 1h, 2h, 4h, 8h, then 24h), so a
+-- A failed enrichment waits longer before each retry (30m doubling, capped at 24h), so a
 -- multi-day GitHub outage does not use up every PR's attempts within a few hours.
 -- Pending rows are only claimable once next_attempt_at <= NOW().
 --

@@ -132,7 +132,7 @@ Writes `enrichment` JSONB, sets `enriched_at = now()`, sets `status = 'completed
 MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
 ```
 
-If `attempts >= 5`, sets `status = 'failed'`. Otherwise sets `status = 'pending'` (retry next run). Only updates an `in_progress` row.
+If `attempts >= 10`, sets `status = 'failed'`. Otherwise sets `status = 'pending'` and pushes `next_attempt_at` out with backoff (30m doubling, capped at 24h; see `github-pr-enrichment.md`). Only updates an `in_progress` row. (Originally 5 attempts with retry on the next run; changed by migration `009`.)
 
 Add repository integration tests in `repository/postgres_pull_request_enrichments_test.go` covering:
 - enrichment row created automatically on `SavePullRequest`

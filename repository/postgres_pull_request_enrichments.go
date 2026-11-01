@@ -12,16 +12,24 @@ import (
 )
 
 // enrichmentMaxAttempts is how many failed attempts a PR gets before it is marked failed.
-// With the backoff below, the 10th failure lands about 4.5 days after the first, so a
+// With the backoff below, the 10th failure lands about 4.3 days after the first, so a
 // multi-day GitHub outage does not permanently fail PRs.
 const enrichmentMaxAttempts = 10
 
-// enrichmentBackoff sets next_attempt_at after a failure: 30m, 1h, 2h, 4h, 8h, then 24h.
-// attempts is at least 1 here, since the row was claimed before it failed.
-const enrichmentBackoff = `NOW() + CASE
-		WHEN attempts >= 6 THEN INTERVAL '24 hours'
-		ELSE INTERVAL '30 minutes' * POWER(2, GREATEST(attempts, 1) - 1)
-	END`
+// After each failure the next attempt waits enrichmentBackoffBase, doubling per failure,
+// capped at enrichmentBackoffMax: 30m, 1h, 2h, 4h, 8h, 16h, then 24h. These are minimum
+// waits; the retry happens on the first scheduled run after the wait.
+const (
+	enrichmentBackoffBase = 30 * time.Minute
+	enrichmentBackoffMax  = 24 * time.Hour
+)
+
+// enrichmentBackoff is the SQL for next_attempt_at after a failure. $3 is
+// enrichmentBackoffBase and $4 is enrichmentBackoffMax, both in seconds. attempts is at
+// least 1 here, since the row was claimed before it failed.
+const enrichmentBackoff = `NOW() + LEAST(
+		make_interval(secs => $3 * POWER(2, GREATEST(attempts, 1) - 1)),
+		make_interval(secs => $4))`
 
 // enrichmentStaleAfterSeconds is how long a row may sit in 'in_progress' before it is
 // treated as abandoned (e.g. the worker died mid-run) and becomes claimable again.
@@ -123,7 +131,7 @@ func (r *PostgresRepository) MarkEnrichmentFailed(ctx context.Context, pullReque
 		    updated_at      = NOW()
 		WHERE pull_request_key = $1
 		  AND status = 'in_progress'
-	`, pullRequestKey, enrichmentMaxAttempts)
+	`, pullRequestKey, enrichmentMaxAttempts, enrichmentBackoffBase.Seconds(), enrichmentBackoffMax.Seconds())
 	if err != nil {
 		return fmt.Errorf("MarkEnrichmentFailed: %w", err)
 	}

@@ -57,10 +57,10 @@ Enrichment data is stored in a dedicated 1:1 table rather than as columns on `pu
 
 Retries happen at two levels:
 
-1. **Within a run:** Temporal retries each activity up to 3 attempts to absorb transient errors (rate limits, network). The bound matters: Temporal's default is unlimited retries, which would leave a persistently failing PR `in_progress` forever and block the rest of the batch.
-2. **Across runs, with backoff:** once Temporal's attempts are exhausted, the PR is marked failed for this run. The `attempts` column is incremented on each claim. Below the cap (10) the row returns to `pending` with `next_attempt_at` pushed out: 30m, 1h, 2h, 4h, 8h, then 24h for each later failure. At the cap, about 4.5 days after the first failure, status is set to `failed`.
+1. **Within a run:** Temporal retries each activity up to 3 attempts to absorb transient errors (rate limits, network). The bound matters: Temporal's default is unlimited retries, which would leave a persistently failing PR `in_progress` forever and block the rest of the batch. Each activity also has a total time limit (its 3 attempts plus 5 minutes of retry waits), so a long rate-limit wait ends the activity instead of keeping the PR `in_progress` past the 1-hour stale window. Worst case per PR is under 40 minutes.
+2. **Across runs, with backoff:** once Temporal's attempts are exhausted, the PR is marked failed for this run. The `attempts` column is incremented on each claim. Below the cap (10) the row returns to `pending` with `next_attempt_at` pushed out by a wait that starts at 30m and doubles per failure, capped at 24h: 30m, 1h, 2h, 4h, 8h, 16h, 24h, 24h, 24h. These are minimum waits: the retry happens on the first scheduled run (every 30 minutes) after the wait, so in practice each is up to one run longer. At the cap, about 4.3 days after the first failure, status is set to `failed`. The values are Go constants in `repository/postgres_pull_request_enrichments.go`.
 
-Activity errors are classified by a worker interceptor (`activities.ErrorClassificationInterceptor`). Permanent errors (401 bad credentials, 404 missing installation or PR) fail the activity on the first try instead of using up Temporal's in-run retries; rate limits keep their `Retry-After` delay. The backoff is what lets a multi-day GitHub outage pass without permanently failing every pending PR.
+Activity errors are classified by a worker interceptor (`activities.ErrorClassificationInterceptor`). Permanent errors (401 bad credentials, 404 missing installation or PR) fail the activity on the first try instead of using up Temporal's in-run retries; rate limits keep their `Retry-After` delay. GitHub's 403 rate-limit responses (`x-ratelimit-remaining: 0`, or `Retry-After` on a secondary limit) are treated as rate limits, not as bad credentials. Permanent errors still go through the cross-run backoff: a 401 usually means the integration's credentials are bad rather than the PR, and failing PRs at once would lose them if the user fixes the credentials. The backoff is what lets a multi-day GitHub outage pass without permanently failing every pending PR.
 
 ### `enrichment` JSONB shape
 
@@ -211,7 +211,8 @@ CREATE TABLE pull_request_enrichments (
     enrichment       JSONB,
     enriched_at      TIMESTAMPTZ,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    next_attempt_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()  -- added in 009_pr_enrichment_next_attempt_at.up.sql
 );
 
 CREATE INDEX idx_pr_enrichments_status ON pull_request_enrichments(status)
