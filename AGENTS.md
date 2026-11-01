@@ -147,7 +147,7 @@ Extract and transform workflows are provider-specific. Shared code lives in save
 | Jitter | Up to 30s at startup to spread load |
 | Cursor | Stored in workflow durable state (before timestamp, Unix ms) — no DB column |
 | History | Continue-As-New every 100 pages |
-| Lifecycle | Created on integration enable; paused/deleted on enabled = false |
+| Lifecycle | Created on integration connect (idempotent, so a reconnect fills in a missing schedule). Not paused or deleted with the integration: each run reads the integration state and stops without calling the provider when it is paused or deleted. |
 
 ### Pagination (LaunchDarkly)
 

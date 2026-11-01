@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/datagill/datagill-core/models"
+	"github.com/datagill/datagill-core/repository"
 )
 
 // errorRepository returns errors on save operations for testing error handling.
@@ -158,5 +160,47 @@ func TestSharedActivities_GetIntegration_Success(t *testing.T) {
 	}
 	if integration.Key != key {
 		t.Errorf("expected key %s, got %s", key, integration.Key)
+	}
+}
+
+// getIntegrationErrRepository returns a fixed error from GetIntegration.
+type getIntegrationErrRepository struct {
+	mockRepository
+	err error
+}
+
+func (r *getIntegrationErrRepository) GetIntegration(_ context.Context, _, _ uuid.UUID) (models.Integration, error) {
+	return models.Integration{}, r.err
+}
+
+// A deleted integration must stop the workflow instead of being retried forever.
+func TestSharedActivities_GetIntegration_NotFoundIsNonRetryable(t *testing.T) {
+	acts := NewSharedActivities(&getIntegrationErrRepository{mockRepository: *newMockRepository(), err: repository.ErrNotFound})
+
+	_, err := acts.GetIntegration(context.Background(), uuid.New(), uuid.New())
+
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected ApplicationError, got %T: %v", err, err)
+	}
+	if !appErr.NonRetryable() {
+		t.Error("expected not-found error to be non-retryable")
+	}
+	if !IsIntegrationNotFound(err) {
+		t.Errorf("expected IsIntegrationNotFound to match, got type %q", appErr.Type())
+	}
+}
+
+func TestSharedActivities_GetIntegration_OtherErrorsStayRetryable(t *testing.T) {
+	dbDown := errors.New("connection refused")
+	acts := NewSharedActivities(&getIntegrationErrRepository{mockRepository: *newMockRepository(), err: dbDown})
+
+	_, err := acts.GetIntegration(context.Background(), uuid.New(), uuid.New())
+
+	if !errors.Is(err, dbDown) {
+		t.Fatalf("expected wrapped db error, got %v", err)
+	}
+	if IsIntegrationNotFound(err) {
+		t.Error("a transient error must not be treated as not found")
 	}
 }

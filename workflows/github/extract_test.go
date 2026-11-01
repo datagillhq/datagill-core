@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/datagill/datagill-core/activities"
@@ -229,6 +230,23 @@ func TestGitHubExtractWorkflow_SkipsPausedIntegration(t *testing.T) {
 
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("GitHubExtractWorkflow failed: %v", err)
+	}
+	env.AssertExpectations(t)
+}
+
+// If the integration is deleted while the extract runs, it stops without calling GitHub.
+func TestGitHubExtractWorkflow_SkipsDeletedIntegration(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	integration := models.Integration{Key: uuid.New(), OrgID: uuid.New(), Source: models.SourceGitHub, State: models.IntegrationStateActive}
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, integration.OrgID, integration.Key).
+		Return(models.Integration{}, temporal.NewNonRetryableApplicationError("integration not found", activities.IntegrationNotFoundErrorType, nil)).Once()
+
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("expected deleted integration to be skipped, got %v", err)
 	}
 	env.AssertExpectations(t)
 }

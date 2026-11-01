@@ -37,6 +37,10 @@ func FeatureFlagETLWorkflow(ctx workflow.Context, input ETLWorkflowInput) error 
 
 	var integration models.Integration
 	if err := workflow.ExecuteActivity(ctx, (*activities.SharedActivities).GetIntegration, input.OrgID, input.IntegrationKey).Get(ctx, &integration); err != nil {
+		// A deleted integration is not a failure: stop quietly, like a paused one.
+		if activities.IsIntegrationNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("FeatureFlagETLWorkflow: get integration: %w", err)
 	}
 	if integration.State != models.IntegrationStateActive {

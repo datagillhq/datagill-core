@@ -23,13 +23,21 @@ const enrichmentStaleAfterSeconds = 60 * 60
 const claimableEnrichment = `(status = 'pending' OR (status = 'in_progress' AND updated_at < NOW() - make_interval(secs => $2)))`
 
 // ListPendingEnrichments returns up to limit claimable enrichment rows for an org,
-// ordered oldest first.
+// ordered oldest first. Rows whose PR belongs to a paused or deleted integration are
+// skipped and stay pending, so enrichment resumes when the integration is active again.
 func (r *PostgresRepository) ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT pull_request_key, org_id, status, attempts, enrichment, enriched_at, created_at, updated_at
 		FROM pull_request_enrichments
 		WHERE org_id = $1
 		  AND `+claimableEnrichment+`
+		  AND EXISTS (
+		      SELECT 1
+		      FROM pull_requests pr
+		      JOIN integrations i ON i.key = pr.integration_id
+		      WHERE pr.key = pull_request_enrichments.pull_request_key
+		        AND i.state = 'active'
+		  )
 		ORDER BY created_at ASC
 		LIMIT $3
 	`, orgID, enrichmentStaleAfterSeconds, limit)

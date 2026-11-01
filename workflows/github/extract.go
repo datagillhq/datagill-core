@@ -39,6 +39,10 @@ type ExtractInput struct {
 func GitHubExtractWorkflow(ctx workflow.Context, input ExtractInput) error {
 	integration, err := currentIntegration(ctx, input.Integration)
 	if err != nil {
+		// Deleted mid-run: stop quietly, like a paused integration.
+		if activities.IsIntegrationNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("GitHubExtractWorkflow: get integration: %w", err)
 	}
 	if integration.State != models.IntegrationStateActive {
