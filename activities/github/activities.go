@@ -56,7 +56,7 @@ func (a *Activities) getInstallationToken(ctx context.Context, orgID, key uuid.U
 
 	token, err := a.client.CreateInstallationToken(ctx, integration.Config.InstallationID)
 	if err != nil {
-		return InstallationToken{}, toServiceError(fmt.Errorf("create installation token: %w", err))
+		return InstallationToken{}, toInstallationError(fmt.Errorf("create installation token: %w", err))
 	}
 	return token, nil
 }

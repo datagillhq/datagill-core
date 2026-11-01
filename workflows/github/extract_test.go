@@ -250,3 +250,55 @@ func TestGitHubExtractWorkflow_SkipsDeletedIntegration(t *testing.T) {
 	}
 	env.AssertExpectations(t)
 }
+
+// A PR deleted between search and detail fetch is skipped; the other PRs are still saved
+// and the run succeeds.
+func TestGitHubExtractWorkflow_SkipsNotFoundPullRequest(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetStartTime(time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC))
+
+	integration := models.Integration{Key: uuid.New(), OrgID: uuid.New(), Source: models.SourceGitHub, State: models.IntegrationStateActive}
+	gone := ghactivities.PullRequestRef{Owner: "acme", Repo: "backend", Number: 1}
+	kept := ghactivities.PullRequestRef{Owner: "acme", Repo: "backend", Number: 2}
+	pr := models.PullRequest{Key: uuid.New(), OrgID: integration.OrgID, IntegrationID: integration.Key}
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, integration.OrgID, integration.Key).Return(integration, nil).Once()
+	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.Anything).
+		Return(ghactivities.SearchPullRequestsOutput{Refs: []ghactivities.PullRequestRef{gone, kept}}, nil).Once()
+	env.OnActivity(ghActs.GetPullRequestDetail, mock.Anything, mock.MatchedBy(func(in ghactivities.GetPullRequestDetailInput) bool { return in.Ref.Number == gone.Number })).
+		Return(ghactivities.GetPullRequestDetailOutput{}, temporal.NewNonRetryableApplicationError("not found (404)", ghactivities.NotFoundErrorType, nil)).Once()
+	env.OnActivity(ghActs.GetPullRequestDetail, mock.Anything, mock.MatchedBy(func(in ghactivities.GetPullRequestDetailInput) bool { return in.Ref.Number == kept.Number })).
+		Return(ghactivities.GetPullRequestDetailOutput{Ref: kept, Detail: models.GitHubPullRequestDetail{ID: 2, Number: 2}, SourceRecordKey: uuid.New()}, nil).Once()
+	env.OnActivity(ghActs.NormalizePullRequest, mock.Anything, mock.Anything).Return(pr, nil).Once()
+	env.OnActivity(ghActs.SavePullRequest, mock.Anything, pr).Return(nil).Once()
+
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("expected not-found PR to be skipped, got %v", err)
+	}
+	env.AssertExpectations(t)
+}
+
+// Bad credentials affect every PR, so the run must fail rather than skip them all.
+func TestGitHubExtractWorkflow_FailsOnNonSkippableDetailError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetStartTime(time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC))
+
+	integration := models.Integration{Key: uuid.New(), OrgID: uuid.New(), Source: models.SourceGitHub, State: models.IntegrationStateActive}
+	ref := ghactivities.PullRequestRef{Owner: "acme", Repo: "backend", Number: 1}
+
+	env.OnActivity(sharedActs.GetIntegration, mock.Anything, integration.OrgID, integration.Key).Return(integration, nil).Once()
+	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.Anything).
+		Return(ghactivities.SearchPullRequestsOutput{Refs: []ghactivities.PullRequestRef{ref}}, nil).Once()
+	env.OnActivity(ghActs.GetPullRequestDetail, mock.Anything, mock.Anything).
+		Return(ghactivities.GetPullRequestDetailOutput{}, temporal.NewNonRetryableApplicationError("unauthorized (401)", "NonRetryableServiceError", nil)).Once()
+
+	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
+
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("expected workflow to fail on a non-skippable error")
+	}
+}

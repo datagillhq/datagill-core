@@ -58,6 +58,13 @@ func TestClassifyActivityError(t *testing.T) {
 			wantMessage:      "lookup: gone",
 			wantNonRetryable: true,
 		},
+		{
+			name:             "non-retryable intent wins over a retryable error in the chain",
+			err:              &shared.NonRetryableServiceError{Message: "installation removed", Cause: rateLimited},
+			wantType:         NonRetryableServiceErrorType,
+			wantMessage:      (&shared.NonRetryableServiceError{Message: "installation removed", Cause: rateLimited}).Error(),
+			wantNonRetryable: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

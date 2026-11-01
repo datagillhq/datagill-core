@@ -21,8 +21,9 @@ const NonRetryableServiceErrorType = "NonRetryableServiceError"
 // is retried by the activity's retry policy, which defaults to forever. So:
 //   - a *temporal.ApplicationError wrapped by fmt.Errorf is brought back to the top, keeping
 //     its type, non-retryable flag and next retry delay (e.g. a GitHub rate limit);
-//   - a shared.NonRetryableServiceError anywhere in the chain becomes a non-retryable
-//     ApplicationError (e.g. 401 bad credentials, 404 missing installation);
+//   - a shared.NonRetryableServiceError anywhere in the chain makes it non-retryable
+//     (e.g. 401 bad credentials, 404 missing installation), even if a retryable
+//     ApplicationError is also in the chain;
 //   - everything else is returned unchanged and stays retryable.
 func ClassifyActivityError(err error) error {
 	if err == nil {
@@ -33,9 +34,21 @@ func ClassifyActivityError(err error) error {
 	}
 
 	var appErr *temporal.ApplicationError
-	if errors.As(err, &appErr) {
+	foundAppErr := errors.As(err, &appErr)
+
+	// "Do not retry" wins: a NonRetryableServiceError makes the error non-retryable even
+	// if a retryable ApplicationError is also in the chain. A non-retryable ApplicationError
+	// keeps its own, more specific type (e.g. GitHubNotFound).
+	var nonRetryable *shared.NonRetryableServiceError
+	if errors.As(err, &nonRetryable) && (!foundAppErr || !appErr.NonRetryable()) {
+		// No cause: err.Error() already includes it.
+		return temporal.NewNonRetryableApplicationError(err.Error(), NonRetryableServiceErrorType, nil) //nolint:wrapcheck // must be outermost for Temporal
+	}
+
+	if foundAppErr {
 		// Keep the wrapping context ("EnrichPullRequest get token: ...") without repeating
-		// the inner error's type and cause, which the new error adds back.
+		// the inner error's type and cause, which the new error adds back. Details are not
+		// copied: they are already encoded and no activity sets them.
 		msg := strings.Replace(err.Error(), appErr.Error(), appErr.Message(), 1)
 		return temporal.NewApplicationErrorWithOptions(msg, appErr.Type(), temporal.ApplicationErrorOptions{ //nolint:wrapcheck // must be outermost for Temporal
 			NonRetryable:   appErr.NonRetryable(),
@@ -43,12 +56,6 @@ func ClassifyActivityError(err error) error {
 			Category:       appErr.Category(),
 			Cause:          appErr.Unwrap(),
 		})
-	}
-
-	var nonRetryable *shared.NonRetryableServiceError
-	if errors.As(err, &nonRetryable) {
-		// No cause: err.Error() already includes it.
-		return temporal.NewNonRetryableApplicationError(err.Error(), NonRetryableServiceErrorType, nil) //nolint:wrapcheck // must be outermost for Temporal
 	}
 
 	return err

@@ -619,6 +619,52 @@ func TestToServiceError_RateLimitedUsesDefaultWhenRetryAfterIsZero(t *testing.T)
 	}
 }
 
+// A 404 on a single PR or repo is skippable; a 404 creating the installation token means
+// the app was uninstalled and must not be skipped.
+func TestToServiceError_NotFoundIsSkippable(t *testing.T) {
+	err := toServiceError(fmt.Errorf("get pull request detail: %w", &NotFoundError{StatusCode: 404}))
+
+	if !IsNotFound(err) {
+		t.Fatalf("expected %s, got %v", NotFoundErrorType, err)
+	}
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) || !appErr.NonRetryable() {
+		t.Fatalf("expected non-retryable ApplicationError, got %v", err)
+	}
+}
+
+func TestToInstallationError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"installation not found", &NotFoundError{StatusCode: 404}},
+		{"bad credentials", &UnauthorizedError{StatusCode: 401}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := toInstallationError(fmt.Errorf("create installation token: %w", tt.err))
+
+			if IsNotFound(err) {
+				t.Fatal("installation errors must not be skippable as a single missing item")
+			}
+			var nonRetryable *shared.NonRetryableServiceError
+			if !errors.As(err, &nonRetryable) {
+				t.Fatalf("expected NonRetryableServiceError, got %T: %v", err, err)
+			}
+		})
+	}
+
+	if err := toInstallationError(&TooManyRequestsError{RetryAfter: 30}); IsNotFound(err) || !isRateLimited(err) {
+		t.Fatalf("expected rate limit to stay retryable with delay, got %v", err)
+	}
+}
+
+func isRateLimited(err error) bool {
+	var appErr *temporal.ApplicationError
+	return errors.As(err, &appErr) && appErr.Type() == "RateLimited" && appErr.NextRetryDelay() == 30*time.Second
+}
+
 func TestSavePullRequest(t *testing.T) {
 	repo := &stubRepository{}
 	acts := New(nil, repo)

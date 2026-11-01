@@ -128,6 +128,75 @@ func TestCreateInstallationToken_RateLimit(t *testing.T) {
 	}
 }
 
+// GitHub signals rate limits with 403 as well as 429. Those must be retried after the
+// wait, not treated as bad credentials.
+func TestRateLimitFromResponse(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithNow(func() time.Time { return now }))
+
+	tests := []struct {
+		name     string
+		status   int
+		headers  map[string]string
+		wantWait int // 0: not a rate limit
+	}{
+		{"429 with Retry-After", http.StatusTooManyRequests, map[string]string{"Retry-After": "30"}, 30},
+		{"429 without headers", http.StatusTooManyRequests, nil, defaultRetryWait},
+		{"403 secondary limit", http.StatusForbidden, map[string]string{"Retry-After": "90"}, 90},
+		{
+			"403 hourly quota used up waits until reset",
+			http.StatusForbidden,
+			map[string]string{"X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": strconv.FormatInt(now.Add(20*time.Minute).Unix(), 10)},
+			1200,
+		},
+		{"403 quota used up, reset already passed", http.StatusForbidden, map[string]string{"X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": strconv.FormatInt(now.Add(-time.Minute).Unix(), 10)}, defaultRetryWait},
+		{"403 permissions error", http.StatusForbidden, map[string]string{"X-Ratelimit-Remaining": "4999"}, 0},
+		{"401", http.StatusUnauthorized, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: tt.status, Header: http.Header{}}
+			for k, v := range tt.headers {
+				resp.Header.Set(k, v)
+			}
+
+			got := client.rateLimitFromResponse(resp)
+			if tt.wantWait == 0 {
+				if got != nil {
+					t.Fatalf("expected no rate limit, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("expected a rate limit")
+			}
+			if got.RetryAfter != tt.wantWait {
+				t.Errorf("RetryAfter = %d, want %d", got.RetryAfter, tt.wantWait)
+			}
+		})
+	}
+}
+
+func TestFetchRawDiff_ForbiddenRateLimitIsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("You have exceeded a secondary rate limit"))
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	_, err := client.FetchRawDiff(context.Background(), "token", "acme", "backend", 42, "main", "abc123")
+
+	var rateLimitErr *TooManyRequestsError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("expected TooManyRequestsError, got %T: %v", err, err)
+	}
+	if rateLimitErr.RetryAfter != 45 {
+		t.Errorf("RetryAfter = %d, want 45", rateLimitErr.RetryAfter)
+	}
+}
+
 func TestCreateInstallationToken_ContextCancelled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
