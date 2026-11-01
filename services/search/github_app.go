@@ -167,7 +167,7 @@ func (s *githubAuthService) Complete(ctx context.Context, query url.Values) (str
 		return buildGitHubErrorRedirect(s.cfg.FrontendURL, state.ReturnTo, "integration_create_failed"), err
 	}
 
-	integration, created, err := s.repo.UpsertGitHubIntegration(ctx, state.OrgID, models.IntegrationConfig{
+	integration, _, err := s.repo.UpsertGitHubIntegration(ctx, state.OrgID, models.IntegrationConfig{
 		InstallationID:      installation.ID,
 		AccountLogin:        installation.Account.Login,
 		AccountType:         installation.Account.Type,
@@ -177,10 +177,10 @@ func (s *githubAuthService) Complete(ctx context.Context, query url.Values) (str
 		return buildGitHubErrorRedirect(s.cfg.FrontendURL, state.ReturnTo, "integration_create_failed"), err
 	}
 
-	if created {
-		if err := s.scheduler.Create(ctx, integration); err != nil {
-			return buildGitHubErrorRedirect(s.cfg.FrontendURL, state.ReturnTo, "integration_create_failed"), err
-		}
+	// Create is idempotent, so it runs on every connect: a reconnect after a failed
+	// schedule creation fills in whatever is missing.
+	if err := s.scheduler.Create(ctx, integration); err != nil {
+		return buildGitHubErrorRedirect(s.cfg.FrontendURL, state.ReturnTo, "integration_create_failed"), err
 	}
 
 	return buildGitHubSuccessRedirect(s.cfg.FrontendURL, state.ReturnTo), nil

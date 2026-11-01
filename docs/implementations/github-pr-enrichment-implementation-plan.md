@@ -297,8 +297,8 @@ Create a per-org Temporal schedule for the enrichment workflow when a GitHub int
 
 - Schedule ID: `github-pr-enrichment-{orgID}`
 - Workflow: `GitHubEnrichmentWorkflow` with `EnrichmentInput{OrgID}`
-- Cadence: every 30 minutes, overlap policy `SKIP`
-- Idempotent: a second GitHub integration in the same org reuses the schedule. Detect the duplicate with `errors.Is(err, temporal.ErrScheduleAlreadyRunning)`; the SDK maps Temporal's duplicate response to that error.
+- Cadence: every 30 minutes, overlap policy `SKIP`, with a stable per-org offset (0–30 min, hashed from the org ID). Temporal interval schedules fire at fixed clock times, so without an offset every org would run at :00 and :30.
+- Idempotent: a second GitHub integration in the same org reuses the schedule. Detect the duplicate with `errors.Is(err, temporal.ErrScheduleAlreadyRunning)`; the SDK maps Temporal's duplicate response to that error. The ETL schedule does the same, and the GitHub callback calls `Create` on every connect, so a reconnect after a failed schedule creation fills in whatever is missing.
 
 ---
 

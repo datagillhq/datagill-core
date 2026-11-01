@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,9 @@ type enrichmentWorkflowInput struct {
 
 // Scheduler manages Temporal schedules for ETL integrations.
 type Scheduler interface {
+	// Create ensures every schedule the integration needs exists. It is idempotent:
+	// schedules that already exist are left as they are, so callers can retry after a
+	// partial failure.
 	Create(ctx context.Context, integration models.Integration) error
 }
 
@@ -88,7 +92,9 @@ func (s *temporalScheduler) createETLSchedule(ctx context.Context, integration m
 		Overlap:            enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
 		TriggerImmediately: true, // kick off the first sync right away
 	})
-	if err != nil {
+	// The SDK maps Temporal's duplicate-schedule response to ErrScheduleAlreadyRunning;
+	// a retried connect finds the schedule from the earlier attempt.
+	if err != nil && !errors.Is(err, temporal.ErrScheduleAlreadyRunning) {
 		return fmt.Errorf("create etl schedule %s: %w", scheduleID, err)
 	}
 	return nil
@@ -101,7 +107,7 @@ func (s *temporalScheduler) ensureEnrichmentSchedule(ctx context.Context, orgID 
 		ID: scheduleID,
 		Spec: client.ScheduleSpec{
 			Intervals: []client.ScheduleIntervalSpec{
-				{Every: enrichmentInterval},
+				{Every: enrichmentInterval, Offset: enrichmentOffsetFor(orgID)},
 			},
 		},
 		Action: &client.ScheduleWorkflowAction{
@@ -113,8 +119,8 @@ func (s *temporalScheduler) ensureEnrichmentSchedule(ctx context.Context, orgID 
 		Overlap:            enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
 		TriggerImmediately: true,
 	})
-	// The SDK maps Temporal's duplicate-schedule response to ErrScheduleAlreadyRunning;
-	// a second GitHub integration in the same org reuses the existing schedule.
+	// A second GitHub integration in the same org, or a retried connect, reuses the
+	// existing schedule.
 	if err != nil && !errors.Is(err, temporal.ErrScheduleAlreadyRunning) {
 		return fmt.Errorf("create enrichment schedule %s: %w", scheduleID, err)
 	}
@@ -129,4 +135,14 @@ func scheduleIDFor(integrationKey uuid.UUID) string {
 // enrichmentScheduleIDFor returns the deterministic enrichment schedule ID for an org.
 func enrichmentScheduleIDFor(orgID uuid.UUID) string {
 	return "github-pr-enrichment-" + orgID.String()
+}
+
+// enrichmentOffsetFor returns a stable per-org offset within the enrichment interval.
+// Temporal interval schedules fire at fixed clock times (epoch + n*every + offset), not
+// relative to the last run, so without an offset every org would run at :00 and :30.
+func enrichmentOffsetFor(orgID uuid.UUID) time.Duration {
+	h := fnv.New64a()
+	_, _ = h.Write(orgID[:])
+	seconds := uint64(enrichmentInterval / time.Second)
+	return time.Duration(h.Sum64()%seconds) * time.Second
 }
