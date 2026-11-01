@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/datagill/datagill-core/activities"
@@ -42,7 +43,11 @@ func main() {
 	}
 	defer tc.Close()
 
-	w := worker.New(tc, taskQueue, worker.Options{})
+	w := worker.New(tc, taskQueue, worker.Options{
+		// Makes non-retryable activity errors (bad credentials, missing installation) stop
+		// retrying, and keeps rate-limit retry delays when errors are wrapped.
+		Interceptors: []interceptor.WorkerInterceptor{&activities.ErrorClassificationInterceptor{}},
+	})
 
 	// Shared activities (SaveSourceRecord, SaveFeatureFlag, SaveChangelog, GetIntegration).
 	w.RegisterActivity(activities.NewSharedActivities(repo))
