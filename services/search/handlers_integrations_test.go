@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/repository"
@@ -409,4 +412,64 @@ func TestDeleteIntegrationHandler(t *testing.T) {
 			t.Fatalf("expected 404 (not 403) for wrong org, got %d", resp.StatusCode)
 		}
 	})
+}
+
+// A failed GitHub connect reaches the browser only as an error code in a redirect, so the
+// cause has to be logged or it is lost.
+func TestGitHubAuthHandlers_LogFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		auth    *stubGitHubAuth
+		method  string
+		path    string
+		wantMsg string
+	}{
+		{
+			name:    "start",
+			auth:    &stubGitHubAuth{startErr: errors.New("github auth is not configured")},
+			method:  http.MethodPost,
+			path:    "/v1/auth/github",
+			wantMsg: "github auth is not configured",
+		},
+		{
+			name: "callback",
+			auth: &stubGitHubAuth{
+				completeRedirect: "http://localhost:3001/settings/integrations?provider=github&status=error&code=integration_create_failed",
+				completeErr:      errors.New("create etl schedule: temporal unavailable"),
+			},
+			method:  http.MethodGet,
+			path:    "/v1/auth/github?state=signed&code=c&installation_id=1",
+			wantMsg: "temporal unavailable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			testApp := newAppWithGitHubAuth(loadConfig(), zerolog.New(&logs), &stubIntegrationsRepo{}, &stubOrgRepo{}, &stubValidator{}, &stubScheduler{}, testJWTKeyfunc, analytics.NewRegistry(), tt.auth)
+			srv := httptest.NewServer(testApp.router())
+			defer srv.Close()
+
+			client := &http.Client{
+				Timeout:       5 * time.Second,
+				CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+			}
+			var resp *http.Response
+			if tt.method == http.MethodPost {
+				resp = requestWithToken(t, tt.method, srv.URL+tt.path, map[string]any{})
+			} else {
+				req, err := http.NewRequestWithContext(context.Background(), tt.method, srv.URL+tt.path, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if resp, err = client.Do(req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_ = resp.Body.Close()
+
+			if !strings.Contains(logs.String(), tt.wantMsg) {
+				t.Errorf("expected the failure %q to be logged, got logs:\n%s", tt.wantMsg, logs.String())
+			}
+		})
+	}
 }
