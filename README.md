@@ -252,4 +252,5 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md). To report a vulnerability, see
 
 ## License
 
-Not yet chosen.
+[Apache License 2.0](./LICENSE). We may move future versions to a different license as the
+project grows. Code already released under Apache-2.0 stays available under it.
