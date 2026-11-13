@@ -126,7 +126,7 @@ func saveSyncedThrough(ctx workflow.Context, integration models.Integration, syn
 	syncCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: updateLastSyncedTimeout,
 	})
-	return workflow.ExecuteActivity(syncCtx, (*activities.SharedActivities).UpdateIntegrationLastSyncedAt, integration.Key, syncedThrough).Get(ctx, nil)
+	return workflow.ExecuteActivity(syncCtx, (*activities.SharedActivities).UpdateIntegrationLastSyncedAt, integration.Key, syncedThrough, integration.OrgID).Get(ctx, nil)
 }
 
 func currentIntegration(ctx workflow.Context, integration models.Integration) (models.Integration, error) {
