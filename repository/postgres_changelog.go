@@ -34,8 +34,8 @@ func (r *PostgresRepository) SaveChangelog(ctx context.Context, c models.Feature
 		c.State,
 		c.OccurredAt,
 		dataJSON,
-		c.CreatedAt,
-		c.UpdatedAt,
+		orNow(c.CreatedAt),
+		orNow(c.UpdatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("SaveChangelog: %w", err)

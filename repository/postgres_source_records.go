@@ -22,7 +22,7 @@ func (r *PostgresRepository) SaveSourceRecord(ctx context.Context, rec models.So
 		rec.OrgID,
 		rec.SourceType,
 		rec.Data,
-		rec.CreatedAt,
+		orNow(rec.CreatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("SaveSourceRecord: %w", err)
