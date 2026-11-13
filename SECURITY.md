@@ -7,8 +7,11 @@ security reports seriously, especially anything that could affect people who sel
 
 **Please do not open a public issue, discussion, or pull request for security problems.**
 
-Report privately through GitHub instead: go to the repository's **Security** tab and choose
-**Report a vulnerability**. Only the maintainers can see the report.
+Report it privately instead, using either of these:
+
+- **Email:** [email.ozgurcan@gmail.com](mailto:email.ozgurcan@gmail.com), with "DataGill security" in the subject.
+- **GitHub:** go to the repository's **Security** tab and choose **Report a vulnerability**.
+  Only the maintainers can see these reports.
 
 Please include:
 
