@@ -17,6 +17,7 @@ type mockRepository struct {
 	featureFlags  []models.FeatureFlag
 	changelogs    []models.FeatureFlagChangelog
 	integrations  map[uuid.UUID]models.Integration
+	lastSyncedAt  map[uuid.UUID]time.Time
 }
 
 func newMockRepository() *mockRepository {
@@ -40,6 +41,14 @@ func (r *mockRepository) SaveChangelog(_ context.Context, c models.FeatureFlagCh
 
 func (r *mockRepository) GetIntegration(_ context.Context, _ uuid.UUID, key uuid.UUID) (models.Integration, error) {
 	return r.integrations[key], nil
+}
+
+func (r *mockRepository) UpdateIntegrationLastSyncedAt(_ context.Context, key uuid.UUID, syncedAt time.Time) error {
+	if r.lastSyncedAt == nil {
+		r.lastSyncedAt = make(map[uuid.UUID]time.Time)
+	}
+	r.lastSyncedAt[key] = syncedAt
+	return nil
 }
 
 func (r *mockRepository) ListIntegrations(_ context.Context, _ uuid.UUID) ([]models.Integration, error) {
@@ -82,6 +91,3 @@ func (r *mockRepository) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time
 	return repository.AuditLogResult{}, nil
 }
 
-func (r *mockRepository) UpdateIntegrationLastSyncedAt(_ context.Context, _ uuid.UUID, _ time.Time) error {
-	return nil
-}

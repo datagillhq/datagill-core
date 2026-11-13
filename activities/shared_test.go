@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/temporal"
@@ -202,5 +203,19 @@ func TestSharedActivities_GetIntegration_OtherErrorsStayRetryable(t *testing.T) 
 	}
 	if IsIntegrationNotFound(err) {
 		t.Error("a transient error must not be treated as not found")
+	}
+}
+
+func TestSharedActivities_UpdateIntegrationLastSyncedAt(t *testing.T) {
+	repo := newMockRepository()
+	acts := NewSharedActivities(repo)
+	key := uuid.New()
+	syncedAt := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := acts.UpdateIntegrationLastSyncedAt(context.Background(), key, syncedAt); err != nil {
+		t.Fatalf("UpdateIntegrationLastSyncedAt: %v", err)
+	}
+	if got := repo.lastSyncedAt[key]; !got.Equal(syncedAt) {
+		t.Errorf("last synced at = %v, want %v", got, syncedAt)
 	}
 }

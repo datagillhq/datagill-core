@@ -145,7 +145,7 @@ Extract and transform workflows are provider-specific. Shared code lives in save
 | Frequency | Every 5–60 min (configurable per integration) |
 | Overlap | ScheduleOverlapPolicy.SKIP — in-progress runs are not interrupted |
 | Jitter | Up to 30s at startup to spread load |
-| Cursor | Stored in workflow durable state (before timestamp, Unix ms) — no DB column |
+| Cursor | `integrations.last_synced_at`: how far the last successful run got. Each run resumes from it (with a small overlap) and updates it only after succeeding, so failed runs leave no gap. Needed because each scheduled run is a separate workflow with no state carried between runs. Within a run, paging state (e.g. LD's `before` timestamp) stays in workflow state. |
 | History | Continue-As-New every 100 pages |
 | Lifecycle | Created on integration connect (idempotent, so a reconnect fills in a missing schedule). Not paused or deleted with the integration: each run reads the integration state and stops without calling the provider when it is paused or deleted. |
 
@@ -552,6 +552,11 @@ Docker Compose services: `temporal-postgres`, `temporal`, `temporal-ui` (:8080),
 ---
 
 ## 10. Changelog
+
+### v1.1 — 2026-11-01
+
+- Sync cursor moved from Temporal workflow state to `integrations.last_synced_at`, for all providers. Since each scheduled run became a separate workflow (one run per schedule), workflow state no longer carried between runs, and the GitHub ETL only searched a fixed 35-minute window. Runs now resume from the last successful position and update it only on success.
+- Schedules stay in place when an integration is paused or deleted; each run checks the integration state instead.
 
 ### v1.0 — 2026-03-18
 

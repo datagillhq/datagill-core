@@ -17,11 +17,17 @@ const (
 	pullRequestDetailTimeout  = 30 * time.Second
 	normalizeTimeout          = 30 * time.Second
 	savePullRequestTimeout    = 30 * time.Second
+	updateLastSyncedTimeout   = 10 * time.Second
 
-	syncCadence         = 30 * time.Minute
-	searchOverlap       = 5 * time.Minute
-	initialSearchWindow = syncCadence + searchOverlap
-	minSearchWindow     = 5 * time.Minute
+	syncCadence   = 30 * time.Minute
+	searchOverlap = 5 * time.Minute
+	// initialBackfillWindow is how far back an integration's first sync searches.
+	initialBackfillWindow = 30 * 24 * time.Hour
+	// maxSearchWindowPerRun bounds the time range one workflow run searches. A first sync
+	// or a sync after a long outage catches up in chunks, one Continue-As-New per chunk,
+	// so no single run builds an oversized workflow history.
+	maxSearchWindowPerRun = 24 * time.Hour
+	minSearchWindow       = 5 * time.Minute
 	searchPageSize      = 100
 	searchSplitLimit    = 900
 	detailConcurrency   = 10
@@ -36,6 +42,12 @@ type ExtractInput struct {
 }
 
 // GitHubExtractWorkflow ingests merged pull requests for one GitHub integration.
+//
+// It searches from where the last successful run stopped (integrations.last_synced_at,
+// minus searchOverlap) up to now, and records the new position only after the run
+// succeeds, so a failed run leaves no gap. The first sync searches initialBackfillWindow.
+// At most maxSearchWindowPerRun is searched per run; if that leaves it behind, it
+// continues with the next chunk right away.
 func GitHubExtractWorkflow(ctx workflow.Context, input ExtractInput) error {
 	integration, err := currentIntegration(ctx, input.Integration)
 	if err != nil {
@@ -49,8 +61,12 @@ func GitHubExtractWorkflow(ctx workflow.Context, input ExtractInput) error {
 		return nil
 	}
 
-	to := workflow.Now(ctx)
-	from := searchFrom(input, to)
+	now := workflow.Now(ctx)
+	from := searchFrom(input, integration, now)
+	to := searchTo(from, now)
+	if !from.Before(to) {
+		return nil // nothing new to search
+	}
 
 	refs, err := searchPullRequests(ctx, integration, from, to)
 	if err != nil {
@@ -59,26 +75,58 @@ func GitHubExtractWorkflow(ctx workflow.Context, input ExtractInput) error {
 	if err := processPullRequests(ctx, integration, refs); err != nil {
 		return fmt.Errorf("GitHubExtractWorkflow: process pull requests: %w", err)
 	}
-	if input.RunOnce {
+	if err := saveSyncedThrough(ctx, integration, to); err != nil {
+		return fmt.Errorf("GitHubExtractWorkflow: save sync position: %w", err)
+	}
+
+	caughtUp := !to.Before(now)
+	if caughtUp && input.RunOnce {
 		return nil
 	}
-	if err := workflow.Sleep(ctx, syncCadence); err != nil {
-		return err
+	if caughtUp {
+		if err := workflow.Sleep(ctx, syncCadence); err != nil {
+			return err
+		}
 	}
-	return workflow.NewContinueAsNewError(ctx, GitHubExtractWorkflow, ExtractInput{
-		Integration:         integration,
-		LastSearchedThrough: &to,
-	})
+	next := ExtractInput{Integration: integration, RunOnce: input.RunOnce}
+	if !input.RunOnce {
+		next.LastSearchedThrough = &to
+	}
+	// In RunOnce mode the next chunk starts from the last_synced_at saved above.
+	return workflow.NewContinueAsNewError(ctx, GitHubExtractWorkflow, next)
 }
 
-func searchFrom(input ExtractInput, to time.Time) time.Time {
+// searchFrom picks where this run's search starts, in order of precedence:
+// the previous loop iteration, an explicit SearchFrom, the integration's last successful
+// sync, or initialBackfillWindow before now for a first sync. Resumed positions overlap by
+// searchOverlap to catch PRs indexed late by GitHub search.
+func searchFrom(input ExtractInput, integration models.Integration, now time.Time) time.Time {
 	if input.LastSearchedThrough != nil {
 		return input.LastSearchedThrough.Add(-searchOverlap)
 	}
 	if input.SearchFrom != nil {
 		return *input.SearchFrom
 	}
-	return to.Add(-initialSearchWindow)
+	if integration.LastSyncedAt != nil {
+		return integration.LastSyncedAt.Add(-searchOverlap)
+	}
+	return now.Add(-initialBackfillWindow)
+}
+
+// searchTo ends the search at now, or after maxSearchWindowPerRun if that is sooner.
+func searchTo(from, now time.Time) time.Time {
+	if limit := from.Add(maxSearchWindowPerRun); limit.Before(now) {
+		return limit
+	}
+	return now
+}
+
+// saveSyncedThrough records that every PR merged up to syncedThrough has been ingested.
+func saveSyncedThrough(ctx workflow.Context, integration models.Integration, syncedThrough time.Time) error {
+	syncCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: updateLastSyncedTimeout,
+	})
+	return workflow.ExecuteActivity(syncCtx, (*activities.SharedActivities).UpdateIntegrationLastSyncedAt, integration.Key, syncedThrough).Get(ctx, nil)
 }
 
 func currentIntegration(ctx workflow.Context, integration models.Integration) (models.Integration, error) {

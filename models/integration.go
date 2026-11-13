@@ -52,8 +52,9 @@ type Integration struct {
 	APIKey string // AES-256-GCM encrypted at rest
 	Config IntegrationConfig
 	State  IntegrationState
-	// LastSyncedAt is temporary LaunchDarkly compatibility state.
-	// New providers must keep their sync cursor in Temporal workflow state instead.
+	// LastSyncedAt is how far the last successful sync got. The next scheduled run resumes
+	// from it, so a failed run leaves no gap. Each scheduled run is a separate workflow,
+	// so this cannot live in Temporal workflow state.
 	LastSyncedAt *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
