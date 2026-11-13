@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -103,11 +105,27 @@ func (a *app) createIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := a.scheduler.Create(r.Context(), created); err != nil {
 		log.Error().Err(err).Str("integration_key", created.Key.String()).Msg("create schedule failed")
+		a.rollbackIntegration(r.Context(), created)
 		writeCode(w, http.StatusInternalServerError, "INTERNAL_ERROR")
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, toIntegrationResponse(created))
+}
+
+// rollbackIntegrationTimeout bounds the cleanup after a failed create. It runs on a context
+// detached from the request, since the request may be the thing that timed out.
+const rollbackIntegrationTimeout = 5 * time.Second
+
+// rollbackIntegration soft-deletes an integration whose schedule could not be created.
+// Without a schedule it would never sync, and the duplicate-provider check would reject
+// every retry with 409, leaving the user stuck until they found and deleted it.
+func (a *app) rollbackIntegration(ctx context.Context, created models.Integration) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackIntegrationTimeout)
+	defer cancel()
+	if _, err := a.integrationsRepo.SoftDeleteIntegration(ctx, created.OrgID, created.Key); err != nil {
+		zerolog.Ctx(ctx).Error().Err(err).Str("integration_key", created.Key.String()).Msg("rollback integration after schedule failure failed")
+	}
 }
 
 // listIntegrationsHandler returns all active and paused integrations for the org.
