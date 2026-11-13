@@ -90,10 +90,10 @@ func TestNormalizeChangelog_NonFlagKind(t *testing.T) {
 
 func TestNormalizeChangelog_ActorName(t *testing.T) {
 	tests := []struct {
-		name       string
-		member     *models.LDAuditMember
-		wantEmail  string
-		wantName   string
+		name      string
+		member    *models.LDAuditMember
+		wantEmail string
+		wantName  string
 	}{
 		{
 			name:      "first and last name joined",
@@ -147,9 +147,9 @@ func TestNormalizeChangelog_ActorName(t *testing.T) {
 
 func TestNormalizeChangelog_TokenActor(t *testing.T) {
 	entry := models.LDAuditEntry{
-		ID:   "audit-token",
-		Kind: "flag",
-		Date: time.Now().UnixMilli(),
+		ID:    "audit-token",
+		Kind:  "flag",
+		Date:  time.Now().UnixMilli(),
 		Token: &models.LDAuditToken{Name: "my-service-token", ServiceToken: true},
 		Accesses: []models.LDAccess{
 			{Action: "updateRules", Resource: "proj/my-project:env/production:flag/my-flag"},

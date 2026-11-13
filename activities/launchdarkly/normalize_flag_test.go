@@ -248,6 +248,7 @@ func TestExtractRolloutPercentage(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatalf("expected %v, got nil", *tt.expected)
+				return // unreachable; tells staticcheck got is non-nil below
 			}
 			if *got != *tt.expected {
 				t.Errorf("expected %v, got %v", *tt.expected, *got)
