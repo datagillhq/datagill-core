@@ -123,11 +123,10 @@ member of the org. The plan:
 | [golang-migrate](https://github.com/golang-migrate/migrate) | 4.x (`brew install golang-migrate`) |
 | [golangci-lint](https://golangci-lint.run/) | v1.64.8, only needed for `make lint` |
 
-The web UI lives in a **separate repository**, `datagill-ui`. The commands below assume it
-is checked out next to this one as `../datagill-ui`. The search service fetches signing keys
-(JWKS) from the UI's auth server on startup and **exits if it can't reach them**. Start
-`datagill-ui` first if you want the API to stay up. The worker, databases, and Temporal run
-without it.
+The web UI and auth server live in a separate repo,
+[datagill-ui](https://github.com/datagillhq/datagill-ui). The search service fetches signing keys
+(JWKS) from it on startup and exits if it can't reach them, so start `datagill-ui` first (see its
+README). The worker, databases, and Temporal run without it.
 
 ### Quick start
 
