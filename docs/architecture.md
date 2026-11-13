@@ -212,6 +212,8 @@ a visible history of every run. Without it, all of that would be a hand-built jo
 
 Every raw API response goes into `source_records` before any normalization. The table is
 append-only, and each normalized row keeps a `source_record_key` back to its raw source.
+A raw record's key must change whenever the payload does, or the newer payload is never
+stored: LaunchDarkly flag details are keyed by project, flag and `_version`.
 
 **Why:** Normalization is where bugs live. With the raw payloads stored, a mapping fix can be
 replayed over history **without calling the provider again**. That matters when providers
