@@ -23,7 +23,7 @@ func (a *Activities) EnrichPullRequest(ctx context.Context, input EnrichPRInput)
 		return models.PullRequestEnrichmentData{}, nil
 	}
 
-	pr, err := a.repo.GetPullRequestByKey(ctx, input.PullRequestKey)
+	pr, err := a.repo.GetPullRequestByKey(ctx, input.OrgID, input.PullRequestKey)
 	if err != nil {
 		return models.PullRequestEnrichmentData{}, fmt.Errorf("EnrichPullRequest load pr: %w", err)
 	}

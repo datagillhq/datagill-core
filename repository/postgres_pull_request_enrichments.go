@@ -81,15 +81,16 @@ func (r *PostgresRepository) ListPendingEnrichments(ctx context.Context, orgID u
 // ClaimEnrichment sets status = 'in_progress' and increments attempts for a claimable row.
 // It reports false when the row was not claimable (already claimed, completed, or failed),
 // so the caller can skip it instead of racing another run.
-func (r *PostgresRepository) ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error) {
+func (r *PostgresRepository) ClaimEnrichment(ctx context.Context, orgID, pullRequestKey uuid.UUID) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE pull_request_enrichments
 		SET status     = 'in_progress',
 		    attempts   = attempts + 1,
 		    updated_at = NOW()
-		WHERE pull_request_key = $1
+		WHERE org_id = $1
+		  AND pull_request_key = $3
 		  AND `+claimableEnrichment+`
-	`, pullRequestKey, enrichmentStaleAfterSeconds)
+	`, orgID, enrichmentStaleAfterSeconds, pullRequestKey)
 	if err != nil {
 		return false, fmt.Errorf("ClaimEnrichment: %w", err)
 	}
@@ -98,7 +99,7 @@ func (r *PostgresRepository) ClaimEnrichment(ctx context.Context, pullRequestKey
 
 // SaveEnrichmentResult writes the enrichment output and marks the row completed.
 // Only an in_progress row is updated, so a stale run cannot overwrite a finished row.
-func (r *PostgresRepository) SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error {
+func (r *PostgresRepository) SaveEnrichmentResult(ctx context.Context, orgID, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("SaveEnrichmentResult marshal: %w", err)
@@ -107,13 +108,14 @@ func (r *PostgresRepository) SaveEnrichmentResult(ctx context.Context, pullReque
 	now := time.Now().UTC()
 	_, err = r.pool.Exec(ctx, `
 		UPDATE pull_request_enrichments
-		SET enrichment  = $2,
-		    enriched_at = $3,
+		SET enrichment  = $3,
+		    enriched_at = $4,
 		    status      = 'completed',
-		    updated_at  = $3
-		WHERE pull_request_key = $1
+		    updated_at  = $4
+		WHERE org_id = $1
+		  AND pull_request_key = $2
 		  AND status = 'in_progress'
-	`, pullRequestKey, dataJSON, now)
+	`, orgID, pullRequestKey, dataJSON, now)
 	if err != nil {
 		return fmt.Errorf("SaveEnrichmentResult: %w", err)
 	}
@@ -123,15 +125,17 @@ func (r *PostgresRepository) SaveEnrichmentResult(ctx context.Context, pullReque
 // MarkEnrichmentFailed resets the row to 'pending' and schedules the next attempt with
 // backoff, or sets 'failed' if the attempt cap has been reached. Only an in_progress row
 // is updated.
-func (r *PostgresRepository) MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error {
+func (r *PostgresRepository) MarkEnrichmentFailed(ctx context.Context, orgID, pullRequestKey uuid.UUID) error {
+	// $3 and $4 are fixed by enrichmentBackoff, so the org is $5.
 	_, err := r.pool.Exec(ctx, `
 		UPDATE pull_request_enrichments
 		SET status          = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'pending' END,
 		    next_attempt_at = `+enrichmentBackoff+`,
 		    updated_at      = NOW()
-		WHERE pull_request_key = $1
+		WHERE org_id = $5
+		  AND pull_request_key = $1
 		  AND status = 'in_progress'
-	`, pullRequestKey, enrichmentMaxAttempts, enrichmentBackoffBase.Seconds(), enrichmentBackoffMax.Seconds())
+	`, pullRequestKey, enrichmentMaxAttempts, enrichmentBackoffBase.Seconds(), enrichmentBackoffMax.Seconds(), orgID)
 	if err != nil {
 		return fmt.Errorf("MarkEnrichmentFailed: %w", err)
 	}

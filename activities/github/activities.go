@@ -18,13 +18,13 @@ type githubRepository interface {
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 	SaveSourceRecord(ctx context.Context, r models.SourceRecord) error
 	SavePullRequest(ctx context.Context, pr models.PullRequest) error
-	GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error)
+	GetPullRequestByKey(ctx context.Context, orgID, key uuid.UUID) (models.PullRequest, error)
 	GetFeatureFlagsBySourceKeys(ctx context.Context, orgID uuid.UUID, sourceKeys []string) ([]models.FeatureFlag, error)
 	ListFeatureFlagSourceKeys(ctx context.Context, orgID uuid.UUID) ([]string, error)
 	ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error)
-	ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error)
-	SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
-	MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
+	ClaimEnrichment(ctx context.Context, orgID, pullRequestKey uuid.UUID) (bool, error)
+	SaveEnrichmentResult(ctx context.Context, orgID, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
+	MarkEnrichmentFailed(ctx context.Context, orgID, pullRequestKey uuid.UUID) error
 }
 
 // Activities contains Temporal activities for GitHub ETL.

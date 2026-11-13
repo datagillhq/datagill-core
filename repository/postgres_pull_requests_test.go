@@ -176,8 +176,8 @@ func TestQueryPullRequests(t *testing.T) {
 	saveAnalyticsPR(ctx, t, repo, otherOrgKey, otherIntegrationKey, "other-org", now.Add(-5*time.Minute), models.PullRequestStateMerged)
 	saveAnalyticsPR(ctx, t, repo, orgKey, integrationKey, "nil-merged", time.Time{}, models.PullRequestStateMerged)
 
-	mustClaim(ctx, t, repo, newPR.Key)
-	if err := repo.SaveEnrichmentResult(ctx, newPR.Key, models.PullRequestEnrichmentData{
+	mustClaim(ctx, t, repo, newPR.OrgID, newPR.Key)
+	if err := repo.SaveEnrichmentResult(ctx, newPR.OrgID, newPR.Key, models.PullRequestEnrichmentData{
 		FeatureFlags: models.PullRequestFeatureFlagRefs{
 			Added:   []string{"flag-added"},
 			Removed: []string{"flag-removed"},
