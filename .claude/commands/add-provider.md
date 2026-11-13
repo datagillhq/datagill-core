@@ -178,8 +178,8 @@ File: `activities/{provider}_integration_test.go` (build tag: `//go:build integr
 ## Definition of done
 
 - [ ] `go build ./...` passes
-- [ ] `golangci-lint run ./...` passes with zero warnings
-- [ ] `go test -short ./...` passes (unit tests only)
+- [ ] `make lint` passes with zero warnings
+- [ ] `make test-unit` passes (unit tests only)
 - [ ] All normalize functions have table-driven unit tests covering at least 5 scenarios each
 - [ ] All workflows have testsuite unit tests
 - [ ] Integration test exists and is tagged `//go:build integration`

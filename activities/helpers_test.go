@@ -10,7 +10,6 @@ import (
 	"github.com/datagill/datagill-core/repository"
 )
 
-
 // mockRepository implements repository.Repository for testing.
 type mockRepository struct {
 	sourceRecords []models.SourceRecord
@@ -90,4 +89,3 @@ func (r *mockRepository) QueryVelocity(_ context.Context, _ uuid.UUID, _, _ time
 func (r *mockRepository) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time.Time, _, _ string, _, _ int) (repository.AuditLogResult, error) {
 	return repository.AuditLogResult{}, nil
 }
-

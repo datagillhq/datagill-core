@@ -1,4 +1,5 @@
 # Compiled binaries
+/bin/
 /ingestion
 /processing
 /search
