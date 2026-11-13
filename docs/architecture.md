@@ -402,8 +402,11 @@ make test-int    # needs Docker
 - **Migrations are forward-only.**
 - **Worker observability is thin.** No worker metrics endpoint and no structured worker logs
   yet (see [Observability](#observability)).
-- **Velocity is measured from ingestion.** The `velocity` metric uses `feature_flags.created_at`,
-  which is when DataGill first stored the flag, not when it was created in LaunchDarkly.
+- **Velocity can fall back to ingestion time.** The `velocity` metric uses
+  `feature_flags.created_at`, which is the flag's LaunchDarkly `creationDate`. When LaunchDarkly
+  omits it, it is the time DataGill first stored the flag. The upsert never changes
+  `created_at`, so flags first stored before creation dates were recorded (#72) keep their
+  ingestion time.
 
 ---
 

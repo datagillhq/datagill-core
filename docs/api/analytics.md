@@ -59,9 +59,11 @@ maintainer team (`feature_flags.data.maintainer.team.name`); flags without one a
 
 ### `velocity`
 
-Org-wide average minutes from when DataGill first stored a flag to its first change in the
-window, for flags now at 100% rollout in some environment. A rough signal: it is measured from
-ingestion, not from creation in the provider. Show a caveat when `sampleSize` is small.
+Org-wide average minutes from a flag's creation in the provider to its first change in the
+window, for flags now at 100% rollout in some environment. Creation time is LaunchDarkly's
+`creationDate`; when that is missing, or the flag was first stored before it was recorded, it
+falls back to when DataGill first stored the flag. A rough signal: show a caveat when
+`sampleSize` is small.
 
 ```json
 { "averageTimeToFullRolloutMinutes": 12.4, "sampleSize": 14 }
