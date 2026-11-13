@@ -74,10 +74,16 @@ type PullRequestDiff struct {
 	Stats    PullRequestDiffStats    `json:"stats"`
 }
 
-// PullRequestDiffBranches stores the source and target branch names.
+// PullRequestDiffBranches stores the source and target branch names, and the commits
+// they pointed at when the PR was fetched. The commits are what the compare API needs
+// to rebuild a diff that is too large for the diff endpoint: after a merge the target
+// branch already contains the PR, so comparing against the branch name finds nothing.
+// The SHAs are empty on rows ingested before they were recorded.
 type PullRequestDiffBranches struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	SourceSHA string `json:"source_sha,omitempty"`
+	TargetSHA string `json:"target_sha,omitempty"`
 }
 
 // PullRequestDiffStats stores summarized file-change counts.

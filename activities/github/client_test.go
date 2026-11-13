@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -449,4 +450,78 @@ func parseTestPrivateKey(t *testing.T, pemBytes []byte) *rsa.PrivateKey {
 		t.Fatalf("parse private key: %v", err)
 	}
 	return key
+}
+
+func TestFetchRawDiff_TooLargeFallsBackToCompare(t *testing.T) {
+	var comparePath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/backend/pulls/42":
+			w.WriteHeader(http.StatusNotAcceptable)
+		default:
+			comparePath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(compareResponse{Files: []compareFile{
+				{Filename: "flags.go", Patch: "@@ -1 +1 @@\n-old\n+new-flag"},
+			}})
+		}
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	diff, err := client.FetchRawDiff(context.Background(), "token", "acme", "backend", 42, "base111", "head222")
+	if err != nil {
+		t.Fatalf("FetchRawDiff failed: %v", err)
+	}
+	if comparePath != "/repos/acme/backend/compare/base111...head222" {
+		t.Errorf("compare path = %q, want the PR's base...head commits", comparePath)
+	}
+	if !strings.Contains(diff, "+new-flag") {
+		t.Errorf("diff missing compare patch: %q", diff)
+	}
+}
+
+func TestFetchRawDiff_TooLargeWithoutCommitsFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotAcceptable)
+	}))
+	defer server.Close()
+
+	client := mustNewClient(t, "123456", testGitHubPrivateKeyPEM(t), WithBaseURL(server.URL))
+	if _, err := client.FetchRawDiff(context.Background(), "token", "acme", "backend", 42, "", ""); err == nil {
+		t.Fatal("expected an error, not an empty diff")
+	}
+}
+
+func TestCompareRange(t *testing.T) {
+	tests := []struct {
+		name               string
+		diff               models.PullRequestDiff
+		wantBase, wantHead string
+	}{
+		{
+			name: "PR commits recorded",
+			diff: models.PullRequestDiff{SHA: "merge333", Branches: models.PullRequestDiffBranches{
+				Target: "main", TargetSHA: "base111", SourceSHA: "head222",
+			}},
+			wantBase: "base111", wantHead: "head222",
+		},
+		{
+			name:     "legacy row uses merge commit parent",
+			diff:     models.PullRequestDiff{SHA: "merge333", Branches: models.PullRequestDiffBranches{Target: "main"}},
+			wantBase: "merge333^", wantHead: "merge333",
+		},
+		{
+			name: "nothing to compare",
+			diff: models.PullRequestDiff{Branches: models.PullRequestDiffBranches{Target: "main"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base, head := CompareRange(tt.diff)
+			if base != tt.wantBase || head != tt.wantHead {
+				t.Errorf("CompareRange = %q...%q, want %q...%q", base, head, tt.wantBase, tt.wantHead)
+			}
+		})
+	}
 }
