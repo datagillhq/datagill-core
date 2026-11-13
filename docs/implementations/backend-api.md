@@ -452,7 +452,7 @@ active simultaneously.
 - **Frontend (datagill-ui):** Separate repo, separate plan. The contracts above are the
   interface boundary — frontend can be built against these once the API is stable (or mocked
   locally in the interim).
-- **ETL Worker (Phase 2A):** Covered in the root `IMPLEMENTATION_PLAN.md`. The data model
+- **ETL Worker (Phase 2A):** Covered in `docs/IMPLEMENTATION_PLAN.md`. The data model
   changes in Step A above (particularly `rollout_percentage` population) extend the ETL
   worker's normalization, but the worker scaffolding itself is tracked separately.
 - **BetterAuth setup:** Auth infrastructure (JWT plugin config, JWKS endpoint) is a BetterAuth

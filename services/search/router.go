@@ -42,7 +42,7 @@ func (a *app) router() http.Handler {
 	// CORS must run before JWT so preflight OPTIONS requests are never blocked.
 	r.Use(corsMiddleware(a.config.AllowedOrigin))
 
-	// Middleware order per IMPLEMENTATION_PLAN.md §1C.2.
+	// Middleware order per docs/IMPLEMENTATION_PLAN.md §1C.2.
 	r.Use(middleware.RequestID)
 	r.Use(requestLoggerMiddleware)
 	r.Use(middleware.Recoverer)
