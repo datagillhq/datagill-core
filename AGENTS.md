@@ -1,944 +1,127 @@
-# AGENTS.md — DataGill Platform: Source of Truth
+# AGENTS.md
 
-> This document is the **single source of truth** for architecture decisions, product requirements, and open questions.
-> Every agent and every PR must trace back to this document.
-> Do not implement something that contradicts this document without updating it first.
-> When a section says **TBD**, that means the decision has NOT been made — do not invent one.
+Instructions for coding agents and contributors working in `datagill-core`. Read this before
+changing anything. Longer background lives in `docs/`:
 
----
+| Doc | Read it when |
+|-----|--------------|
+| [`docs/architecture.md`](docs/architecture.md) | Changing workflows, the data model, or anything with a trade-off. Explains how the system works and why. |
+| [`docs/engineering-standards.md`](docs/engineering-standards.md) | Writing Go, SQL, logs, or metrics. The full standards; the rules below are the summary. |
+| [`docs/product.md`](docs/product.md) | Building a feature. Requirements, roadmap, and **open questions**. |
+| [`README.md`](README.md) | You need the current feature list or the quick start. |
 
-## 0. North Star
+## What this repo is
 
-DataGill is a **business intelligence platform for engineering teams**. It connects to the tools engineers use to ship software, normalizes the data into a unified model, and surfaces it through a web UI so teams can answer hard questions about their work.
+The backend for DataGill. It ingests engineering events (LaunchDarkly flag changes, GitHub
+merged PRs), normalizes them into Postgres, enriches them (flag keys found in PR diffs), and
+serves analytics. The web UI and auth server are a separate repo, `datagill-ui`.
 
-| Data Source | Questions Unlocked |
-|-------------|-------------------|
-| Feature flags (LaunchDarkly, Unleash, Flagsmith) | What changed before the incident? How long to ship a flag? |
-| Code (GitHub) | Which PR shipped this flag? Time from commit → flag on in prod? |
-| Incidents (PagerDuty) | Was there an incident open when this flag was rolled back? |
-| Business metrics (Datadog) | Did this flag change correlate with a latency spike? |
-| Data warehouse (Snowflake) | What did conversion rate look like when this feature launched? |
+Two binaries, sharing only Postgres and Temporal:
 
-**MVP = feature flag providers only.** Architecture must accommodate future data source categories without rearchitecting the pipeline.
+- **Worker** (`cmd/worker`): runs every Temporal workflow and activity.
+- **Search service** (`services/search`): HTTP API on `:8082`. Auth, integrations, schedules,
+  analytics. No sync logic.
 
-**Implemented today:** LaunchDarkly (flags) and GitHub (merged PRs, with diffs scanned for flag keys). Unleash and Flagsmith are declared as `models.Source` values but have no extract workflow. The tables in §1 are the product target, not a statement of what is built — `README.md` lists what works today.
-
----
-
-## 1. Product Requirements
-
-"All 3" = LaunchDarkly, Unleash, Flagsmith. "LD" = LaunchDarkly only.
-
-### MVP — Lights On
-
-| Feature | Source | Notes |
-|---------|--------|-------|
-| Activity feed (who changed what, when) | All 3 | LD titleVerb is cleanest canonical description |
-| Flag status (off / on / partial) | All 3 | LD direct; Unleash/Flagsmith need inference |
-| Trend line (changes over time) | All 3 | Aggregate by day |
-| Actor attribution (last modified by) | All 3 | Normalize to actor_email |
-| Search by flag name / time range | All 3 | LD supports full-text; others: time range only |
-
-### P0 — Root Cause Analysis
-
-| Feature | Source | Notes |
-|---------|--------|-------|
-| "What changed in the last X hours?" scoped to prod | All 3 | Filter by environment + time window |
-| Automated vs. human change detection | LD | token.serviceToken field distinguishes API vs. human |
-| Rollback detection | All 3 | Flag toggled back within short window |
-| Per-flag timeline view | All 3 | Paginated history per flag, newest first |
-
-### P1 — Developer Velocity
-
-| Feature | Source | Notes |
-|---------|--------|-------|
-| Time from flag creation → on in prod | All 3 | Requires first_seen_at per flag |
-| Stale flag list (created, never launched) | All 3 | No "enabled" event past X days |
-| Dead flag list (launched 60+ days, no changes) | All 3 | Compare last_event_at |
-| Flag cleanup suggestions | Derived | Combine stale + dead signals |
-| Owner-level velocity | All 3 | Group by actor across flag history |
-
-### P1 — Monthly Snapshot
-
-| Feature | Source | Notes |
-|---------|--------|-------|
-| Flags launched this month | All 3 | Count enable/100% events |
-| Flags cleaned up (deleted) | All 3 | Count delete events |
-| Monthly digest | Derived | AI-generated narrative is a P2 enhancement |
-
-### P2 — Intelligence
-
-| Feature | Notes |
-|---------|-------|
-| Anomaly: high change frequency | Flag changed >N times in 24h |
-| Natural language search | LLM over stored embeddings — do not rely on source q param alone |
-| Risk score | Blast radius × recent change rate |
-| AI narrative summaries per flag | LLM over flag event history |
-
----
-
-## 2. Tech Stack
-
-### Decided
-
-| Layer | Choice | Rationale |
-|-------|--------|-----------|
-| Frontend | Next.js (App Router) + shadcn/ui | Best-in-class SSR; accessible components we own |
-| Backend | Go + Chi | Goroutines fit ETL concurrency; Chi is lightweight and stdlib-compatible |
-| Database | PostgreSQL 16 + pgvector | ACID, JSONB, vector search. Two instances: one for Temporal state, one for app data |
-| Auth | TBD (Clerk vs Better Auth under evaluation) | Need org model, JWT / session strategy, frontend / backend integration plan, and hosting tradeoff review |
-| Embeddings | OpenAI text-embedding-3-small / Ollama nomic-embed-text | Post-MVP. Swappable via EmbedProvider interface |
-| Orchestration | Self-hosted Temporal | Replaces queues. Durable state, retry, scheduling in one primitive |
-| Migrations | golang-migrate | Run at startup or as a separate job |
-| Metrics | Prometheus + Grafana | Scrape endpoint at /metrics on all services |
-| Secrets | AWS Secrets Manager (cloud) / env vars + Docker secrets (self-hosted) | |
-| Provider auth | API key (MVP) | Customer pastes read-only key; encrypted at rest with AES-256-GCM |
-| Webhooks | None in v1 — poll only | No inbound public endpoints; customers provide API key |
-
-### TBD
-
-| Decision | Options | Blocking On |
-|----------|---------|-------------|
-| Go DB access layer | sqlc, pgx raw, GORM | LLD session |
-| Hosting / compute | Railway, Fly.io, GCP Cloud Run, VPS | Cost analysis |
-| Frontend data fetching | TanStack Query, SWR, RSC-only | LLD session |
-| Auth provider | Clerk, Better Auth | Frontend / backend auth architecture review |
-| Provider auth V2 | OAuth (no manual key management) | Post-MVP |
-
----
-
-## 3. Architecture
-
-Two runtime components: a **Worker** (Temporal, handles all ETL) and a **Search Service** (HTTP query layer).
-
-### Data Flow
-
-| Step | Component |
-|------|-----------|
-| 1. Poll source APIs | LaunchDarkly / GitHub (Unleash / Flagsmith not implemented) |
-| 2. Orchestrate workflows | Temporal (self-hosted) — Worker binary |
-| 3. Store and query data | PostgreSQL app DB |
-| 4. Serve queries | Search Service :8082 |
-| 5. Display to users | Frontend |
-
-### Temporal Workflow Hierarchy
-
-Extract and transform logic is provider-specific. Shared code lives in save activities, canonical models, and the repository layer. Adding a new provider means writing a new extract workflow and activities — zero changes to existing provider code.
-
-- **FeatureFlagETLWorkflow** — one per integration, started by that integration's schedule. Loads the integration, exits quietly if it is paused or deleted, otherwise routes by `integration.source` to a child extract workflow.
-  - **LaunchDarklyExtractWorkflow** — child, waits for completion.
-    - `ScrollAuditLogs` — pages through the audit log since `last_synced_at`, saving each entry to `source_records`
-    - `GetFlagDetail` — parallel GET per unique flag (workflow.Go), saving each response to `source_records`
-    - `NormalizeChangelog` → `SaveChangelog` and `NormalizeFlagDetail` → `SaveFeatureFlag` — run as parallel activities inside the same workflow (no child transform workflows)
-    - `UpdateLastSyncedAt` — only after the run completes
-  - **GitHubExtractWorkflow** — child, `ParentClosePolicy: ABANDON`; the parent only confirms it started.
-    - Searches merged PRs in a window starting at `last_synced_at` (minus a 5-minute overlap; 30 days back on first sync), splitting the window when search results exceed GitHub's limits
-    - Fetches PR details in parallel batches, saves raw responses, normalizes, upserts `pull_requests` and queues a `pull_request_enrichments` row in the same transaction
-    - Advances `last_synced_at`; processes at most 24 hours per run and continues via Continue-As-New
-- **GitHubEnrichmentWorkflow** — one schedule per org. Claims pending `pull_request_enrichments` rows, fetches each PR diff, and records which known flag keys the PR added or removed. Long-term retry (30 min doubling to 24 h, 10 attempts) lives in the table, not in Temporal.
-
-**Tables written to:** `organizations` · `integrations` · `source_records` · `feature_flags` · `feature_flag_changelog` · `pull_requests` · `pull_request_enrichments`
-
-### Temporal Schedule (per integration)
-
-| Property | Value |
-|----------|-------|
-| Frequency | Every 30 min, fixed (`etlInterval` in `services/search/scheduler.go`); not configurable per integration yet |
-| Overlap | ScheduleOverlapPolicy.SKIP — in-progress runs are not interrupted |
-| Offset | 30s for ETL schedules; per-org hashed offset for enrichment schedules |
-| Cursor | `integrations.last_synced_at`: how far the last successful run got. Each run resumes from it (with a small overlap) and updates it only after succeeding, so failed runs leave no gap. Needed because each scheduled run is a separate workflow with no state carried between runs. Within a run, paging state (e.g. LD's `before` timestamp) stays in workflow state. |
-| History | GitHub: Continue-As-New after each 24h window. LaunchDarkly: one workflow run per sync |
-| Lifecycle | Created on integration connect (idempotent, so a reconnect fills in a missing schedule). Not paused or deleted with the integration: each run reads the integration state and stops without calling the provider when it is paused or deleted. |
-
-### Pagination (LaunchDarkly)
-
-LD audit log returns max 20 entries per page. `ScrollAuditLogs` follows LD's `_links.next` URLs sequentially, bounded by `after = last_synced_at`, inside a single activity. Flag detail fetches run in parallel using `workflow.Go` goroutines.
-
-### Child workflows
-
-`FeatureFlagETLWorkflow` waits for `LaunchDarklyExtractWorkflow` to complete. For GitHub it starts `GitHubExtractWorkflow` with `ParentClosePolicy: ABANDON` and calls `GetChildWorkflowExecution().Get()` only to confirm it started; an already-running extract is treated as success.
-
----
-
-## 4. Pipeline Flow
-
-### Step 1 — Schedule
-
-`FeatureFlagETLWorkflow` fires on a Temporal schedule (5–60 min) per integration. Routes to the correct provider-specific extract workflow based on `integration.source`. One workflow instance per integration row.
-
-### Step 2 — Extract
-
-Provider-specific. Owns all API calls, pagination logic, and raw data persistence. See the workflow hierarchy in §3 for the LaunchDarkly and GitHub specifics.
-
-- **Save raw data first** — every raw API response is persisted to the append-only `source_records` table before any transformation. Each record gets a deterministic key (UUID v5) for cross-table correlation.
-- **Resume from the cursor** — each run starts from `integrations.last_synced_at` and updates it only after the whole window is saved.
-
-### Step 3 — Transform
-
-Normalize activities (provider-specific) map raw payloads to canonical structs; shared save activities upsert them:
-
-- `NormalizeChangelog` → `SaveChangelog` — upserts `feature_flag_changelog`, deduped on its deterministic `key`. Maps LD actions to `event_type`, extracts the actor and affected environments.
-- `NormalizeFlagDetail` → `SaveFeatureFlag` — upserts `feature_flags`, deduped on its deterministic `key`.
-- GitHub PRs are normalized and upserted into `pull_requests` the same way.
-
-Not implemented yet (data model allows it): rollback detection, automated-vs-human detection (`token.serviceToken` is parsed but not stored).
-
-### Step 4 — Enrich (GitHubEnrichmentWorkflow)
-
-Per-org schedule. Scans each merged PR's diff for known flag keys (same approach as LaunchDarkly's `find-code-references-in-pull-request`) and stores `feature_flags.added` / `removed` in `pull_request_enrichments.enrichment`.
-
-### Step 5 — Serve (Search Service)
-
-Read-only for analytics. All queries scoped by `org_id` from the verified JWT.
-
-- **Analytics** — `GET /v1/analytics?metric=...` routes to a registered plugin (`launched_wins`, `top_teams`, `velocity`, `audit_log`, `pull_requests`), each a parameterized SQL query over the canonical tables.
-- **Semantic search (post-MVP)** — embed query → ANN search over embeddings → re-rank by recency → return top 20.
-
-### Post-MVP — Enrich
-
-- `FeatureFlagEnrichWorkflow` — fire-and-forget from Transform. Generates embeddings via `EmbedProvider` interface, stores vectors in `feature_flag_embeddings` table.
-- `FeatureFlagAnalysisWorkflow` — scheduled (daily). Computes risk scores, stale/dead flag detection, cross-flag associations. Updates `lifecycle.state` in `feature_flags.data` (e.g. `active` → `stale` → `dead`).
-
-### Invariants
-
-- **All writes are idempotent.** Upsert on stable keys throughout; reprocessing any event is always safe.
-- **Dedup at the DB layer.** `UNIQUE(key)` on every canonical table; keys are deterministic, so re-ingesting the same entity hits the same row.
-- **Every query filters by `org_id` first.** No cross-tenant leakage. Ever.
-- **Activities are the unit of retry.** Never retry in application code — let Temporal handle it.
-- **Extract is rerunnable.** Stateless API calls plus append-only writes to `source_records`.
-- **Transform is replayable without API calls.** Raw payloads live in `source_records`. Fix a normalization bug and re-run normalization over them — no provider calls. (No replay tooling exists yet.)
-- **Raw data is permanent.** `source_records` is append-only. Canonical tables carry a `source_record_key` reference back to the raw data.
-- **Deterministic keys.** Cross-table references use UUID v5. Flag keys are scoped to `org_id|source|project|source_key` — environment is **not** part of the key because all environments are stored in the same flag row (`data.environments`). Changelog keys are scoped to `org_id|source|project|source_key` where `source_key` is the provider's audit event ID. `org_id` is included in all keys to prevent collisions across tenants that share the same source, project, and flag/event identifiers (e.g. two orgs both using LaunchDarkly with the same project name). Both Extract and Transform workflows can independently compute the same key — no coordination required.
-
----
-
-## 5. Search Service
-
-### Endpoints
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /healthz` | Liveness (no auth) |
-| `GET /metrics` | Prometheus scrape (no auth) |
-| `GET /v1/auth/github` | GitHub App install callback (signed state, no JWT) |
-| `POST /v1/auth/github` | Start GitHub App install |
-| `GET /v1/integrations/providers` | Connectable providers (`launchdarkly`, `github`) |
-| `POST /v1/integrations` · `GET /v1/integrations` | Connect / list integrations |
-| `PUT /v1/integrations/{key}` · `DELETE /v1/integrations/{key}` | Update (API key, pause/resume) / soft delete |
-| `GET /v1/analytics?metric=...` | `launched_wins`, `top_teams`, `velocity`, `audit_log`, `pull_requests` |
-
-The earlier `/search`, `/flags`, `/flags/:flag_key[/history]` and `/timeline` endpoints were removed; `audit_log` replaced `/timeline`.
-
-### Constraints
-
-- Analytics endpoints never write. Integration endpoints write only `organizations` and `integrations` and create Temporal schedules.
-- All queries scoped by `org_id`.
-- Latency targets: p99 < 500ms structured search.
-- Post-MVP: p99 < 2s semantic search; query embedding must use the same model as stored embeddings.
-
-### Security model
-
-The search service validates JWTs itself. On startup it fetches the JWKS from BetterAuth (`AUTH_URL/.well-known/jwks.json`, served by the separate `datagill-ui` repo) and exits if it cannot. Each request must carry `Authorization: Bearer <JWT>`; the middleware verifies the RSA signature (other algorithms are rejected) and requires an expiry and reads `organizationId` and `userId` from the claims. The org ID is never taken from request parameters or headers. Only `/healthz`, `/metrics` and the GitHub install callback are unauthenticated.
-
-**Privacy (not built):** analytics currently return actor-level data (e.g. actor email on `launched_wins` and `audit_log`) to any member of the org. The intended model — team-level aggregates for leaders, self-only individual data, opt-in sharing, minimum team size — is described in `README.md` under Vision / Roadmap.
-
----
-
-## 6. Database Schema
-
-Two PostgreSQL 16 instances: `temporal-postgres` (Temporal internals — do not touch) and `app-postgres` (all tables below).
-
-Seven tables: `organizations`, `integrations`, `source_records`, `feature_flags`, `feature_flag_changelog`, `pull_requests`, `pull_request_enrichments` (the last two are not detailed below; see `db/migrations/006_*` and `007_*`). Data tables have FKs to `organizations(key)` and `integrations(key)` with `ON DELETE CASCADE`, and `pull_request_enrichments` references `pull_requests(key)`. References between data tables (`source_record_key`, `feature_flag_key`) are deterministic UUID keys with no FK, so Extract and Transform can compute them independently.
-
-### Key Conventions
-
-- `id` (bigserial) — internal auto-increment PK on every table
-- `key` (uuid UNIQUE) — deterministic UUID v5, used for cross-table correlation
-- `org_id`, `integration_id` — reference the `key` column on their respective tables
-- `source_key` — provider's identifier, stored for display and source API correlation
-- `state` — operational state enum on tables that need it
-- `data` (jsonb) — normalized structured data
-- `source_data` (jsonb) — raw provider response (only on `source_records`)
-- `created_at` / `updated_at` — on all tables (`source_records` has no `updated_at` — append-only)
-
-### Deterministic Keys
-
-Computed with UUID v5:
-
-```go
-var DataGillNamespace = uuid.MustParse("...") // hardcoded namespace
-
-// flag_key = uuid5(namespace, "launchdarkly|web-app|enable-checkout-v2")
-// Environment is NOT part of the key — all envs are stored in the same row.
-func ComputeFlagKey(source, projectKey, sourceFlagKey string) uuid.UUID {
-    raw := fmt.Sprintf("%s|%s|%s", source, projectKey, sourceFlagKey)
-    return uuid.NewSHA1(DataGillNamespace, []byte(raw))
-}
-
-// changelog_key = uuid5(namespace, "launchdarkly|web-app|evt-abc123")
-// sourceKey is the provider's audit event ID, unique within a project.
-func ComputeChangelogKey(source, projectKey, sourceKey string) uuid.UUID {
-    raw := fmt.Sprintf("%s|%s|%s", source, projectKey, sourceKey)
-    return uuid.NewSHA1(DataGillNamespace, []byte(raw))
-}
-```
-
-### `organizations`
-
-Thin indirection layer for auth-provider independence. Clerk/BetterAuth owns name, billing, and membership — local table exists only so a provider swap requires updating `external_org_id` in one place, not every row in every table.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | bigserial | PK |
-| key | uuid | UNIQUE — used as org_id across all tables |
-| external_org_id | text | Clerk/BetterAuth org ID for JWT correlation |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
-
-### `integrations`
-
-One row per provider connection per org. Each row gets its own Temporal Schedule.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | bigserial | PK |
-| key | uuid | UNIQUE — used as integration_id across tables |
-| org_id | uuid | References organizations.key |
-| source | text | `launchdarkly \| unleash \| flagsmith` |
-| api_key | text | AES-256-GCM encrypted |
-| config | jsonb | project_key, environment_key, poll_interval_minutes, backfill_days, etc. Provider-specific config fields |
-| state | text | `active \| paused \| deleted` |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
-
-Key indexes: `(org_id)`. `UNIQUE(org_id, source, (config->>'project_key'))`.
-
-### `source_records`
-
-Append-only store of raw provider API responses. Written by Extract before any transformation. Permanent, SQL-queryable reprocessing source. Never modified after insert.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic, for cross-table correlation |
-| integration_id | uuid | References integrations.key |
-| org_id | uuid | Denormalized for tenant scoping |
-| source_type | text | `flag_detail \| audit_log` |
-| data | jsonb | Full raw provider response, untouched |
-| created_at | timestamptz | |
-
-No `updated_at` — this table is append-only.
-
-Key indexes: `(org_id)`. `(integration_id)`. `(created_at)`.
-
-### `feature_flags`
-
-Current normalized state per flag. Populated by Transform from the provider's GET flag detail endpoint — this is ground truth, not derived from changelog events. Upserted on every ETL run.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic hash(org_id\|source\|project\|source_key) |
-| source_record_key | uuid | References source_records.key — traces back to raw data |
-| integration_id | uuid | References integrations.key |
-| org_id | uuid | Denormalized for tenant scoping |
-| state | text | `off \| on \| partial` |
-| data | jsonb | Normalized flag data (see Normalized Data Model below) |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
-
-Key indexes: `(org_id)`. `(integration_id)`.
-
-### `feature_flag_changelog`
-
-One row per change event. Populated by Transform from the provider's audit log endpoint.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | bigserial | PK |
-| key | uuid | UNIQUE — deterministic hash(org_id\|source\|project\|source_key) where source_key is the provider's audit event ID |
-| source_record_key | uuid | References source_records.key — traces back to raw data |
-| feature_flag_key | uuid | References feature_flags.key — which flag changed |
-| integration_id | uuid | References integrations.key |
-| org_id | uuid | Denormalized for tenant scoping |
-| event_type | text | `created \| updated \| toggled \| deleted \| rollback` |
-| state | text | Flag state at time of event |
-| occurred_at | timestamptz | Source timestamp — never ingestion time |
-| data | jsonb | Normalized event data |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
-
-Key indexes: `(org_id, occurred_at DESC)`. `(feature_flag_key, occurred_at DESC)`. `(integration_id)`.
-
-### Normalized Data Model — `feature_flags.data`
-
-All providers normalize into this JSON structure. Typed Go struct serialized as JSONB. Fields not available for a given provider are omitted (nullable).
-
-```json
-{
-  "name": "Enable checkout v2",
-  "description": "New checkout flow for premium users",
-
-  "source": {
-    "key": "enable-checkout-v2",
-    "provider": "launchdarkly",
-    "project": "web-app",
-    "created_at": "2024-01-15T10:00:00Z"
-  },
-
-  "maintainer": {
-    "person": {
-      "email": "ariel@acme.com"
-    },
-    "team": {
-      "name": "payments-team"
-    }
-  },
-
-  "lifecycle": {
-    "purpose": "temporary",
-    "state": "active"
-  },
-
-  "environments": {
-    "production": {
-      "enabled": true
-    },
-    "staging": {
-      "enabled": true
-    },
-    "development": {
-      "enabled": false
-    }
-  }
-}
-```
-
-| Path | Type | Notes |
-|------|------|-------|
-| name | string | Display name. LD: name, Unleash: name, Flagsmith: feature.name |
-| description | string | LD: description, Unleash: description, Flagsmith: feature.description |
-| source.key | string | Provider's flag identifier. LD: key, Unleash: name, Flagsmith: feature.name |
-| source.provider | string | `launchdarkly \| unleash \| flagsmith` |
-| source.project | string | Provider's project/workspace identifier |
-| source.created_at | string (ISO 8601) | When the flag was created at the source. Nullable — not all providers expose this |
-| maintainer.person.email | string | LD: _maintainer.email. Nullable — Unleash/Flagsmith don't have this |
-| maintainer.team.name | string | LD: _maintainerTeam.name. Nullable |
-| lifecycle.purpose | string | `temporary \| permanent` |
-| lifecycle.state | string | `active \| stale \| dead \| archived \| deprecated` |
-| environments.{key}.enabled | bool | Per-environment enabled state. LD: environments[env].on, Unleash: enabled per env, Flagsmith: enabled |
-
-Post-MVP additions (add when needed): `type`, `tags`, `environments.{key}.targeting`, `environments.{key}.variations`.
-
-### Normalized Data Model — `feature_flag_changelog.data`
-
-```json
-{
-  "flag_name": "Enable checkout v2",
-  "description": "Turned on flag",
-
-  "actor": {
-    "email": "ariel@acme.com",
-    "is_automated": false
-  },
-
-  "environment": "production",
-  "project": "web-app",
-  "is_rollback": false,
-  "previous_state": "off",
-  "new_state": "active"
-}
-```
-
-### JSONB Indexing Strategy
-
-Start with no GIN indexes at MVP — hundreds of flags per org will be fast regardless. Add indexes when slow queries appear:
-
-```sql
--- Full column (covers all containment queries at any depth)
-CREATE INDEX idx_flags_data ON feature_flags USING GIN (data);
-
--- Or partial path indexes for specific hot queries
-CREATE INDEX idx_flags_env ON feature_flags USING GIN ((data->'environments'));
-CREATE INDEX idx_changelog_actor ON feature_flag_changelog USING GIN ((data->'actor'));
-```
-
-### Migration
-
-Forward-only migrations in `db/migrations/` (`001`–`009` today), applied with golang-migrate (`make migrate`). No down migrations. The pgvector extension is available in the `app-postgres` image but not yet enabled by any migration.
-
----
-
-## 7. Open Questions
-
-Do not make implementation decisions that depend on unresolved questions.
-
-| Question | Options / Direction | Needed by |
-|----------|---------------------|-----------|
-| Statsig / PostHog support | Add to source enum? (roadmap, not implemented) | Before next flag provider |
-| Backfill concurrency cap | Max concurrent transform workflows during initial 30-day backfill — value TBD | Before backfill impl |
-| Weekly digest | Scheduled Temporal workflow vs. separate service | Phase 2 |
-| Go DB access layer | sqlc, pgx raw, GORM | LLD session |
-| Hosting / compute | Railway, Fly.io, GCP Cloud Run, VPS | Cost analysis |
-| Frontend data fetching | TanStack Query, SWR, RSC-only | LLD session |
-| PublishEvent downstream | Webhook, Slack, internal bus | Post-MVP |
-| feature_flags.data extensions | When to promote type, tags, targeting, variations from post-MVP to typed fields | When P1 features need them |
-
----
-
-## 8. Roadmap
-
-Do not build these yet. Do not design the MVP in a way that makes them hard to add.
-
-### Future Data Sources
-
-GitHub (merged PRs + flag references in diffs) is implemented; see §3.
-
-| Source | Category | Questions Unlocked |
-|--------|----------|-------------------|
-| PagerDuty | Incidents | Was there an incident open when this flag was rolled back? |
-| Datadog | Metrics | Did error rate spike when this flag was enabled? |
-| Snowflake | Warehouse | What was conversion rate during this flag's rollout? |
-| Jira / Linear | Project | Which ticket drove this flag? |
-
-Future capabilities: natural language querying, Slack/email alerting, public API, cross-source correlation, VP digest.
-
----
-
-## 9. Repo Structure
+## Repo map
 
 ```
-datagill-core/
-├── go.work                      # one Go module per directory below
-├── Makefile
-├── cmd/
-│   ├── worker/                  # Temporal worker entry point
-│   └── seed/                    # demo data seeder
-├── models/                      # canonical models, provider raw types, deterministic keys
-├── repository/                  # PostgresRepository, one file per entity, AES-256-GCM crypto
-├── shared/                      # cross-module error types
-├── activities/
-│   ├── shared.go                # GetIntegration, SaveSourceRecord, SaveChangelog, SaveFeatureFlag, ...
-│   ├── error_classification.go  # worker interceptor: retryable vs non-retryable errors
-│   ├── launchdarkly/            # LD client, audit log scroll, flag detail, normalize
-│   └── github/                  # GitHub App client, PR search/detail, diff fetch + scan
-├── workflows/
-│   ├── etl.go                   # FeatureFlagETLWorkflow (routes by source)
-│   ├── launchdarkly/            # LaunchDarklyExtractWorkflow
-│   └── github/                  # GitHubExtractWorkflow, GitHubEnrichmentWorkflow
-├── services/
-│   └── search/                  # Search Service (port 8082): auth, integrations, scheduler, analytics/
-├── db/migrations/               # forward-only SQL migrations
-└── infra/                       # Prometheus, Loki, Alloy, Grafana config
+cmd/worker/           Worker entry point: registers workflows, activities, error interceptor
+cmd/seed/             Demo data seeder
+services/search/      HTTP API; analytics/ holds one plugin per metric
+workflows/            etl.go routes by integration.source; launchdarkly/, github/
+activities/           shared.go (save/get), launchdarkly/, github/, error_classification.go
+models/               Canonical structs, provider raw types, deterministic keys (keys.go)
+repository/           pgx Postgres access, one file per entity; AES-256-GCM crypto
+shared/               Cross-module error types
+db/migrations/        Forward-only SQL migrations (source of truth for the schema)
+infra/                Prometheus, Loki, Alloy, Grafana config
+docs/                 Architecture, product, standards, historical design notes
 ```
 
-The frontend is a separate repository (`datagill-ui`).
+Each directory is its own Go module in one `go.work` workspace. `go test ./...` does not work
+from the root; use the make targets.
 
-**Adding a new provider (e.g. PostHog):**
+## Commands
 
-- `models/posthog.go` — provider-specific raw types
-- `activities/posthog/` — client, extract + normalize activities
-- `workflows/posthog/` — extract workflow (pagination, raw data persistence, normalize + save)
-- One routing case in `workflows/etl.go`
-- Register in `cmd/worker/main.go`
-
-Zero changes to existing LaunchDarkly code.
-
-Docker Compose services: `temporal-postgres`, `temporal`, `temporal-ui` (:8080), `app-postgres` (:5432), `prometheus` (:9090), `loki` (:3100), `alloy`, `grafana` (:3000), `worker`, `search` (:8082).
-
----
-
-## 10. Changelog
-
-### v1.2 — 2026-11-13
-
-- Docs synced with the code ahead of open-sourcing: GitHub ingestion + PR enrichment marked as implemented; workflow hierarchy, schedule settings, endpoints, security model (JWT/JWKS, not `X-Org-Id`), table list, FK statement, migrations and repo structure updated. No architecture decisions changed.
-
-### v1.1 — 2026-11-01
-
-- Sync cursor moved from Temporal workflow state to `integrations.last_synced_at`, for all providers. Since each scheduled run became a separate workflow (one run per schedule), workflow state no longer carried between runs, and the GitHub ETL only searched a fixed 35-minute window. Runs now resume from the last successful position and update it only on success.
-- Schedules stay in place when an integration is paused or deleted; each run checks the integration state instead.
-
-### v1.0 — 2026-03-18
-
-- Replaced generic workflow hierarchy with provider-specific extract/transform workflows: `LaunchDarklyExtractWorkflow`, `LaunchDarklyChangelogTransformWorkflow`, `LaunchDarklyFeatureFlagTransformWorkflow`
-- Added `FeatureFlagETLWorkflow` as scheduled entry point that routes by `integration.source`
-- Schema redesign — five tables: `organizations`, `integrations`, `source_records`, `feature_flags`, `feature_flag_changelog`
-- Added `source_records` table: append-only raw data store, written by Extract before transformation. Replaces inline `source_data` column on canonical tables
-- Canonical tables (`feature_flags`, `feature_flag_changelog`) now use `data jsonb` for normalized structured data, with `source_record_key` reference back to raw data
-- Dropped `raw_events` and `normalized_events` tables from previous design
-- Promoted `feature_flags` table from open question (P1) to MVP
-- Renamed `audit_log` → `changelog` throughout
-- New key convention: `id` (bigserial PK) + `key` (deterministic UUID v5) on all tables. No FK constraints — cross-table correlation via shared deterministic keys
-- Defined normalized data model for `feature_flags.data`: `name`, `description`, `source`, `maintainer`, `lifecycle`, `environments`
-- `lifecycle.purpose` (`temporary | permanent`) and `lifecycle.state` (`active | stale | dead | archived | deprecated`)
-- `state` column on tables represents operational state; `lifecycle.state` in data represents health state
-- All provider config fields moved to `integrations.config jsonb`
-- Auth provider indirection via `organizations.external_org_id` — swap Clerk/BetterAuth by updating one column
-- Added fire-and-forget with ack pattern: `GetChildWorkflowExecution().Get()` + `ParentClosePolicy: ABANDON`
-- Extract saves raw data to `source_records` before fanning out transforms
-- JSONB indexing strategy: start with no GIN indexes, add per-path when needed
-- Updated repo structure to reflect provider-specific code organization
-- Added post-MVP enrich workflows: `FeatureFlagEnrichWorkflow` (fire-and-forget), `FeatureFlagAnalysisWorkflow` (scheduled daily)
-
-### v0.8 — 2026-03-17
-
-- Renamed workflows to ETL pattern: `FeatureFlagExtractWorkflow`, `FeatureFlagTransformWorkflow`, `NormalizeWorkflow`
-- Deferred embeddings and `event_embeddings` table to post-MVP
-- Added `source_type` to integrations for workflow dispatch
-- Generalized `normalized_events`: `flag_key` → `entity_key`, `flag_name` → `entity_name`, dropped `flag_kind`, `flag_data`, `raw_event`; added metadata/column boundary rule
-- Removed `FetchFlagStates` activity (was only feeding `flag_data`)
-- Removed `flag_keys` from `raw_events`
-- Added `created_at`/`updated_at` to all tables
-- Collapsed migrations to single `001_initialize.sql`
-- Moved flag detail page into MVP scope
-- Updated `feature_flags` open question with P1 direction (derive at MVP, materialize at P1)
-
-### v0.7 — 2026-03-17
-
-- Dropped `flag_cache` table (in-memory dedup within a batch is sufficient)
-- Merged `enriched_events` into `normalized_events`
-- Thinned `organizations` table (Clerk owns name, billing, membership)
-- Added reasoning inline for each schema decision
-
-### v0.6 — 2026-03-13
-
-- Replaced BullMQ + Redis with self-hosted Temporal throughout
-- Added `integrations` table; cursor moved to Temporal durable workflow state
-- Removed `poll_locks` and `integration_cursors` tables
-- Added product requirements section (MVP, P0, P1, P2)
-
----
-
-## 11. Engineering Standards
-
-Every agent and every team member must follow these standards without exception. They are not guidelines — they are requirements. When making any decision not covered here, consult the relevant section of *Designing Data-Intensive Applications* (DDIA) by Martin Kleppmann and document the decision in this file.
-
----
-
-### 11.1 Go Server Development
-
-**Goroutine lifecycle**
-- Every goroutine must have an owner responsible for starting it, stopping it, and observing its exit
-- Use context cancellation to stop goroutines: `select { case <-ctx.Done(): return }`
-- Use `sync.WaitGroup` or `golang.org/x/sync/errgroup` to wait for all goroutines before shutdown
-- Never start a goroutine inside a short-lived function — pass ownership up or use a supervised manager
-- In Temporal workflows: use `workflow.Go` for concurrency — never raw `go` goroutines (Temporal cannot track them)
-
-**Graceful shutdown**
-
-Every server binary must handle SIGINT and SIGTERM identically:
-```go
-ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-defer stop()
-// start servers and workers
-<-ctx.Done()
-// drain with deadline
-shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-server.Shutdown(shutdownCtx)
-worker.Stop()
-pool.Close()
-```
-Shutdown order: stop accepting new work → drain in-flight → close DB connections → exit.
-
-**HTTP server — always set timeouts**
-
-Never use `http.DefaultServeMux` or `http.DefaultClient`. Both have no timeouts.
-```go
-// Inbound server
-&http.Server{
-    ReadHeaderTimeout: 5 * time.Second,
-    ReadTimeout:       30 * time.Second,
-    WriteTimeout:      30 * time.Second,
-    IdleTimeout:       120 * time.Second,
-}
-
-// Outbound client (LD API, etc.)
-&http.Client{Timeout: 10 * time.Second}
+```bash
+make test-unit   # unit tests, no dependencies (CI)
+make lint        # golangci-lint v1.64.8, all modules (CI)
+make build       # bin/worker, bin/search (CI)
+make vuln        # govulncheck per module (CI)
+make test-int    # repository integration tests; needs Docker
+make docker-up   # full local stack; see LOCALSETUP.md
+make migrate     # apply migrations; needs APP_DATABASE_URL
 ```
 
-**Interfaces**
-- Define interfaces in the *consuming* package, not the implementing package (Go proverb)
-- Keep interfaces small: 1–3 methods. Many small interfaces beat one large one
-- Do not create an interface until you have ≥2 implementations or need it for testing
-- Temporal activities: always register with pointer receivers on a struct — inject dependencies via the struct
-
-**Dependency injection**
-- All external dependencies (DB pool, HTTP clients, Temporal client, logger) injected via constructor
-- Constructor signature: `func NewXxx(cfg Config, deps ...) (*Xxx, error)` — fail fast if deps are invalid
-- Zero package-level mutable `var`. No `init()` functions with side effects
-
-**Error handling**
-- Wrap at every package boundary: `fmt.Errorf("NormalizeChangelog: %w", err)`
-- Log once, at the site where you *handle* the error (decide what to do). Never log and re-return the same error — it creates duplicate log lines
-- Never use `panic` except in `main()` for unrecoverable startup (`log.Fatal` is acceptable there)
-- `//nolint:errcheck` requires an inline comment explaining why the error is intentionally ignored
-
-**Concurrency patterns**
-- Parallel tasks with error collection: `errgroup.Group` (not goroutines + channel)
-- Check context in tight loops: `if err := ctx.Err(); err != nil { return err }`
-- Protect shared state with `sync.Mutex` — never access shared state from multiple goroutines without synchronization
-- Prefer immutable data passed between goroutines over shared mutable state
-
----
-
-### 11.2 PostgreSQL
-
-All data decisions are guided by *Designing Data-Intensive Applications* (DDIA). Chapter references are cited inline.
-
-**Column strategy (DDIA Ch. 2 — Data Models)**
-
-Use typed columns for anything you filter, sort, join, or index. Use JSONB for evolving, provider-specific, or flexible payload.
-
-| Typed column | JSONB |
-|-------------|-------|
-| `org_id`, `integration_id`, `occurred_at` | `data` (normalized payload) |
-| `state`, `event_type`, `source`, `key` | `config` (integration config) |
-| `source_key`, `feature_flag_key` | Provider-specific sub-fields |
-
-Rule: extend `data` JSONB first; promote a field to a typed column only when query performance requires it, and document the decision in AGENTS.md Section 7.
-
-**Indexing (DDIA Ch. 3 — Storage and Retrieval)**
-- B-tree (default): equality and range queries — `org_id`, `occurred_at`, `integration_id`
-- GIN: JSONB containment queries (`data @>`) — add only when a slow query is observed and `EXPLAIN ANALYZE` confirms index benefit
-- HNSW: vector ANN search — do not build during high-insert backfill (see Section 6 for strategy)
-- Rule: run `EXPLAIN (ANALYZE, BUFFERS)` before creating any index. Every index slows writes
-
-**Transactions (DDIA Ch. 7 — Transactions)**
-- Use `pgx.Tx` when multiple writes must be atomic
-- Keep transactions as short as possible — they hold row locks and block autovacuum
-- Never hold a transaction open while waiting for an external system (LD API, Temporal, etc.)
-- Default isolation: `READ COMMITTED` (Postgres default) is correct for all current use cases
-
-**Schema evolution (DDIA Ch. 4 — Encoding)**
-- JSONB: add fields freely (readers ignore unknown fields — forward compatible)
-- Never silently remove or rename a JSONB field — old readers will break
-- Rename protocol: add new field → migrate all writers → migrate all readers → remove old field
-- All timestamps: `timestamptz` always. Store and compare in UTC. Never `timestamp` without timezone
-- Enums stored as `text` — avoid Postgres native `ENUM` type (it is painful to `ALTER TYPE`)
-
-**Derived data and replayability (DDIA Ch. 10–11 — Batch/Stream Processing)**
-- `source_records` is the immutable event log — the Kafka equivalent in our architecture
-- `feature_flags` and `feature_flag_changelog` are derived/materialized data computed from `source_records`
-- Consequence: if normalization logic has a bug, fix the transform workflow and re-run — no data loss, no API calls, no manual intervention
-- Every derived row carries `source_record_key` to trace back to the raw input
-
-**Connection pooling**
-- Use `pgxpool` exclusively — never `database/sql` with pgx driver
-- Recommended config per service:
-  - `MaxConns`: 20 (Postgres default max is ~100–150; leave headroom for migrations and admin connections)
-  - `MinConns`: 2 (keep warm connections to avoid cold-start latency)
-  - `MaxConnIdleTime`: 5 minutes
-  - `HealthCheckPeriod`: 1 minute
-- Never hold a pool connection outside the scope of a single request or activity
-
-**Query hygiene**
-- Never `SELECT *` — always name every column
-- All queries on multi-tenant tables start with `WHERE org_id = $1` — enforced by code review and integration tests
-- Batch N fetches with `WHERE key = ANY($1::uuid[])` — never issue N separate queries in a loop
-- Use named arguments (`pgx` `NamedArgs`) for queries with more than 3 parameters
-
-**Read replicas (future-ready)**
-The Search Service is read-only today. When a read replica is added, routing all Search Service queries to it requires only a connection string env var change — no code changes — because the repository layer is already cleanly separated from the handler layer.
-
----
-
-### 11.3 Monitoring
-
-Follow the **RED method** for services and the **USE method** for infrastructure resources. (DDIA Ch. 1 — Reliability and observability.)
-
-**RED method (every HTTP service and Temporal worker)**
-| Signal | What to measure |
-|--------|----------------|
-| **R**ate | Requests/workflows per second |
-| **E**rrors | Rate of 5xx responses; failed workflow/activity executions |
-| **D**uration | p50, p95, p99 latency per endpoint/workflow |
-
-**USE method (Postgres, Temporal)**
-| Signal | What to measure |
-|--------|----------------|
-| **U**tilization | Connection pool in use %, DB CPU % |
-| **S**aturation | Connection wait queue depth, workflow task queue backlog |
-| **E**rrors | Failed queries, activity retries exhausted |
-
-**Metric naming convention**
-```
-datagill_{service}_{noun}_{unit}_{type}
-
-datagill_search_http_request_duration_seconds   histogram  (labels: method, handler)
-datagill_search_http_requests_total             counter    (labels: method, handler, status_code)
-datagill_search_db_query_duration_seconds       histogram  (label: query_name)
-datagill_worker_workflow_executions_total       counter    (labels: workflow, status)
-datagill_worker_activity_duration_seconds       histogram  (label: activity)
-```
-
-**Cardinality discipline**
-Label values must be bounded. Unbounded label values destroy Prometheus performance.
-- Allowed: `handler`, `method`, `status_code` (bucketed: 2xx/4xx/5xx), `workflow`, `activity`, `source`
-- Never use as labels: `org_id`, `flag_key`, `user_id`, `request_id`, `integration_id` — these are unbounded
-
-**Histogram buckets — define for your SLO, not Prometheus defaults**
-```go
-// Search HTTP latency (SLO: p99 < 500ms)
-Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1.0, 2.5, 5.0}
-
-// DB query latency
-Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5}
-
-// Temporal activity duration (ETL activities can take seconds)
-Buckets: []float64{.1, .5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0}
-```
-
-**Alerting philosophy: alert on symptoms, not causes**
-- Alert: search service error rate > 1% for 5 minutes → user-visible failure
-- Alert: p99 latency > 500ms for 5 minutes → SLO breach
-- Do not alert: CPU > 80% → not a user-visible symptom by itself
-- Do not alert: Temporal queue depth > N → only alert if correlated with latency or errors
-
----
-
-### 11.4 Logging
-
-Tool: **zerolog**. All log output is structured JSON. `fmt.Println`, `log.Printf`, and `slog` are forbidden in service code.
-
-**Log levels**
-
-| Level | Use for | Enabled in production? |
-|-------|---------|----------------------|
-| `TRACE` | Per-iteration loop details | No — compile out |
-| `DEBUG` | Verbose per-event details | No — disabled by default |
-| `INFO` | Normal operations: request received, workflow started, flag upserted, ETL run complete | Yes |
-| `WARN` | Unexpected but handled: 429 retry, unknown titleVerb, slow query | Yes |
-| `ERROR` | Operation failed and not recovered: DB write failed, activity exhausted retries | Yes — triggers alert |
-| `FATAL` | Unrecoverable startup failure | Yes — `main()` only |
-
-**What to log at INFO**
-- Service startup (config summary — never secrets)
-- ETL run complete: `integration_id`, pages fetched, records saved, duration
-- Workflow started/completed/failed: `workflow_id`, `integration_id`
-- HTTP request complete: `method`, `path`, `status`, `duration_ms`, `org_id`, `request_id`
-
-**What to log at WARN**
-- Retrying after 429: `integration_id`, attempt number, wait duration
-- Unrecognized `titleVerb` in LD audit log: log the raw value (helps catch new LD event types)
-- DB query exceeded 100ms: `query_name`, `duration_ms`
-
-**What to never log**
-- API keys, tokens, passwords — in any log at any level
-- Full HTTP request or response bodies (may contain secrets)
-- PII: email addresses at INFO or above (DEBUG only, disabled in production)
-
-**Context propagation pattern**
-```go
-// Middleware attaches request_id and org_id to the context logger
-log := zerolog.Ctx(ctx).With().
-    Str("request_id", requestID).
-    Str("org_id", orgID).
-    Logger()
-ctx = log.WithContext(ctx)
-
-// Any downstream code retrieves it — carries all parent fields automatically
-zerolog.Ctx(ctx).Info().
-    Str("flag_key", key).
-    Msg("feature flag upserted")
-// Output: {"level":"info","request_id":"...","org_id":"...","flag_key":"...","message":"feature flag upserted"}
-```
-
-For Temporal activities: use `activity.GetLogger(ctx)` as the base — it carries workflow and activity metadata. Wrap it with zerolog for consistent JSON format.
-
-**Volume discipline**
-High-frequency events (per-audit-log-entry, per-Temporal-activity) must be logged at DEBUG. In production, emit aggregate counts at INFO: `"pages_fetched": 5, "entries_processed": 97`. Never one log line per entry at INFO — log volume must be proportional to operations, not data volume.
-
----
-
-### 11.5 Clean Code
-
-**Functions**
-- Do one thing. If the name contains "and", it is two functions
-- If it does not fit on one screen (~40 lines), it is doing too much
-- Pure functions (no I/O, no side effects) are preferred — isolate I/O at the boundary
-- In this codebase: activities are the I/O boundary. Workflows are pure orchestration. Normalize functions are pure transformations. Keep these roles strict
-
-**Naming**
-- Explicit over terse. Scope determines length: `i` is fine in a 3-line loop; package-level functions need descriptive names
-- Booleans: always prefix — `isRollback`, `isAutomated`, `shouldEmbed`, `hasEnvironment`
-- No abbreviations unless universal: `ctx`, `err`, `id`, `cfg` — yes. `nr`, `flg`, `chg`, `mgr` — no
-- Avoid stutter: `models.FeatureFlagModel` → `models.FeatureFlag`. The package name is part of the name
-
-**Comments**
-- Comment WHY, not WHAT. The code shows what it does; the comment explains why it does it that way
-  - Good: `// LD audit log has no cursor token; we walk pages by passing the earliest timestamp as 'before'`
-  - Bad: `// get audit logs`
-- Every exported symbol must have a doc comment (enforced by `godot` linter)
-- Mark unresolved decisions with a reference: `// TODO(AGENTS.md §7): set rollback detection window`
-
-**Packages**
-- A package has one clear responsibility. If you cannot describe it in one sentence, split it
-- No circular imports — they indicate a structural design problem
-- `internal/` sub-packages for code that must not leak outside the module
-
-**File organization**
-- Split files by entity when a single file exceeds ~400 lines or an entity has 3+ methods
-- Naming convention: `{implementation}_{entity}.go` — e.g., `postgres_feature_flags.go`, `postgres_integrations.go`
-- Keep the main implementation file (`postgres.go`) for struct definition, constructor, Close, and shared helpers
-- Go allows methods on a type to be spread across multiple files in the same package — use this to keep files focused
-- One file per entity makes it easier to find code, reduces merge conflicts, and keeps each file under ~100 lines
-
-**Avoid**
-- Premature abstraction: do not generalize until you have three concrete cases
-- Defensive coding for impossible states: do not add `if err != nil` after calling your own pure function that cannot error
-- Magic numbers: `const ldMaxPageSize = 20` not the literal `20` in a loop condition
-- Deeply nested conditionals: prefer early return over `if { if { if { } } }`
-
----
-
-### 11.7 Git Workflow
-
-**Never push directly to `main`.** Every change — including single-line fixes — must go through a branch and pull request. There are no exceptions.
-
-- Branch naming: `ku/<short-description>` (e.g. `ku/fix-dockerfile-build`)
-- Every PR must pass tests and lint before merging
-- A passing CI check is not a substitute for a PR — the PR is where review, context, and history live
-
-**Why:** A single-line change can cause an incident. Direct pushes to `main` bypass review, skip the audit trail, and cannot be reverted cleanly if the branch was never created.
-
----
-
-### 11.6 DDIA Principles
-
-*Designing Data-Intensive Applications* (Kleppmann) is the primary architectural reference for all storage, consistency, and data flow decisions. When a design decision is not covered by this document, consult the relevant DDIA chapter and add the decision to AGENTS.md Section 7.
-
-**Reliability — design for partial failure (DDIA Ch. 1)**
-Any component can fail: LD API, Postgres, Temporal, the network. Every operation must be:
-- *Idempotent*: safe to retry without changing the outcome after the first success. This is why every write uses `ON CONFLICT (key) DO UPDATE`.
-- *Recoverable*: no manual intervention required to resume after a failure. Temporal's durable execution provides this for ETL.
-- *Observable*: failures are visible in logs and metrics before a user reports them.
-
-**Scalability — stateless services (DDIA Ch. 1)**
-Worker and Search Service are stateless — all durable state lives in Temporal (workflow state) and Postgres (data). Horizontal scaling requires no coordination and no distributed locking at the application layer.
-
-**Maintainability — three dimensions (DDIA Ch. 1)**
-- *Operability*: health endpoints, structured logs, Prometheus metrics, and runbooks for every operational task
-- *Simplicity*: prefer the boring solution. Sequential pagination beats concurrent pagination with distributed locking.
-- *Evolvability*: adding a provider is 4 files + 1 routing case. The rest of the system is untouched.
-
-**Data models — choose the right tool (DDIA Ch. 2)**
-Our hybrid model: relational for structure, integrity, and queryability; JSONB for schema flexibility and provider-specific fields. Do not fight this model — if a JSONB query becomes awkward, promote the field to a typed column.
-
-**Derived data and the immutable log (DDIA Ch. 10–11)**
-`source_records` is the immutable log. `feature_flags` and `feature_flag_changelog` are derived views materialized from it. This pattern gives us:
-- Free reprocessing: fix a normalization bug, re-run the transform workflow — zero data loss, zero API calls
-- Auditability: every derived record links back to its raw source via `source_record_key`
-- Independent evolvability: normalization logic changes do not touch raw data
-
-**Temporal ordering is fundamental (DDIA Ch. 8)**
-Always record `occurred_at` from the source system. Ingestion time is an implementation detail and must never be used as a proxy for when something happened. Late-arriving events are inserted with their correct `occurred_at` — queries that use `ORDER BY occurred_at` will always produce correct timelines.
-
-**Transactions are not a substitute for Temporal (DDIA Ch. 7 vs. Temporal)**
-Temporal's durable execution model handles the reliability guarantees for ETL: each activity is a unit of retry; workflow state persists across failures. Do not wrap Temporal activities in DB transactions to compensate for partial failures — let Temporal retry the activity and rely on idempotent writes.
-
----
-
-*Last updated: 2026-11-13*
-*Status: v1.2*
+Run `test-unit`, `lint` and `build` before opening a PR. When you add a module, add it to
+`go.work`, `MODULE_PATHS`/`MODULE_DIRS` in the Makefile, and the lint args in
+`.github/workflows/ci.yml`.
+
+## Invariants (never break these)
+
+1. **Tenant isolation.** Every query on a multi-tenant table filters by `org_id` first. The org
+   comes only from the verified JWT (`organizationId` claim), never from request input.
+2. **Idempotent writes.** Every write is `INSERT ... ON CONFLICT` on a deterministic UUID v5 key
+   (`models/keys.go`). Every key includes `org_id`. Re-running any step must be safe.
+3. **Raw first.** Save each raw provider response to `source_records` (append-only) before
+   normalizing. Canonical rows keep `source_record_key`.
+4. **Cursor after success.** Advance `integrations.last_synced_at` only after the whole window
+   is saved.
+5. **Source time.** `occurred_at` is the provider's timestamp, never ingestion time.
+6. **Activities are the unit of retry.** No retry loops in application code. Long-term retry
+   for enrichment lives in `pull_request_enrichments` by design.
+7. **Workflows are deterministic.** Use `workflow.Now`, `workflow.Go`, `workflow.Sleep`; no I/O,
+   no raw goroutines, no `time.Now` in workflow code.
+8. **Don't wrap Temporal errors in workflows.** Return `Future.Get` errors and Temporal
+   constructors (`NewContinueAsNewError`, `NewNonRetryableApplicationError`) unchanged.
+   Activities return normal wrapped errors; `activities/error_classification.go` decides
+   retryability.
+9. **Never log secrets** (API keys, tokens, private keys) or full request/response bodies.
+   Emails only at DEBUG.
+
+## Code conventions
+
+- **Logging:** zerolog, structured JSON. No `fmt.Println`, `log.Printf` or `slog` in service code.
+  (The worker still uses `log`; don't add more, and migrating it is welcome.)
+- **Errors:** wrap at package boundaries: `fmt.Errorf("SaveChangelog: %w", err)`. Log once,
+  where the error is handled.
+- **SQL:** `pgxpool` only; never `SELECT *`; batch with `= ANY($1)`; `timestamptz` always;
+  enums as `text`. New schema changes go in a new numbered migration; never edit a merged one.
+- **HTTP:** never `http.DefaultClient` or `DefaultServeMux`; always set timeouts.
+- **Dependencies:** inject via constructors; no package-level mutable state or side-effecting `init()`.
+- **Interfaces:** define them in the consuming package; keep them small.
+- **Comments:** explain why, not what. Every exported symbol has a doc comment ending in a period.
+- **Metrics:** `datagill_{service}_{noun}_{unit}_{type}`; never use unbounded labels such as
+  `org_id` or `flag_key`.
+
+Details and rationale: [`docs/engineering-standards.md`](docs/engineering-standards.md).
+
+## Common tasks
+
+**Add a flag or code provider** (e.g. PostHog): `models/<provider>.go` (raw types),
+`activities/<provider>/` (client, extract, normalize), `workflows/<provider>/` (extract
+workflow), one `case` in `workflows/etl.go`, registration in `cmd/worker/main.go`, and the
+provider in `providersHandler`. No changes to existing providers. The `/add-provider` command
+walks through it.
+
+**Add an analytics metric:** one file in `services/search/analytics/` implementing `Plugin`,
+registered in `register.go`, plus its repository query (org-scoped) and tests. No handler or
+router changes.
+
+**Add a migration:** next number in `db/migrations/`, forward-only. See `/new-migration`.
+
+## Decisions and open questions
+
+- Don't make a decision that [`docs/product.md`](docs/product.md#open-questions) lists as open.
+  Ask, or propose it in the PR.
+- If a change alters the architecture, update [`docs/architecture.md`](docs/architecture.md)
+  in the same PR and add a line under "Decision history".
+- When docs and code disagree, the code wins. Fix the doc.
+
+## Git and docs
+
+- Never push to `main`. Branch as `<initials>/<short-description>` and open a PR; CI must pass.
+- Commit messages: `type(scope): summary`, e.g. `fix(github): retry 403 rate limits`.
+- File names: UPPERCASE only for standard root files (`README.md`, `LICENSE`,
+  `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`, `CLAUDE.md`); everything in `docs/` is
+  lowercase-kebab-case (`docs/architecture.md`).

@@ -5,9 +5,10 @@ to discuss anything bigger than a small fix before you start.
 
 ## Before you code
 
-Read [`AGENTS.md`](./AGENTS.md). It is the source of truth for architecture, the data model,
-and engineering standards (logging, errors, Temporal rules, SQL conventions). If your change
-contradicts it, update `AGENTS.md` in the same PR and explain why.
+Read [`AGENTS.md`](./AGENTS.md). It lists the rules every change must follow (tenant
+isolation, idempotent writes, Temporal, logging, SQL) and links to the longer docs in `docs/`.
+If your change alters the architecture, update [`docs/architecture.md`](./docs/architecture.md)
+in the same PR and explain why.
 
 ## Setup
 
