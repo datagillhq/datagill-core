@@ -196,7 +196,7 @@ repository/         Postgres access (pgx), encryption, upserts
 shared/             Cross-module error types
 db/migrations/      Forward-only SQL migrations
 infra/              Prometheus, Loki, Alloy, Grafana config
-docs/               Design notes and implementation plans (historical, see below)
+docs/               Architecture, product, engineering standards, API reference
 ```
 
 Each directory is its own Go module in a single `go.work` workspace.
@@ -207,9 +207,6 @@ Each directory is its own Go module in a single `go.work` workspace.
 - [`docs/product.md`](./docs/product.md): requirements, roadmap and open questions.
 - [`AGENTS.md`](./AGENTS.md): the rules for contributors and coding agents, with [`docs/engineering-standards.md`](./docs/engineering-standards.md) for the details.
 - [`LOCALSETUP.md`](./LOCALSETUP.md): full local setup, including GitHub App configuration.
-- [`docs/`](./docs), including [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md):
-  design and implementation plans written while building. These are kept for context, and the code wins
-  where they disagree.
 
 ## Contributing and security
 

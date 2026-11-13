@@ -42,7 +42,10 @@ func (a *app) router() http.Handler {
 	// CORS must run before JWT so preflight OPTIONS requests are never blocked.
 	r.Use(corsMiddleware(a.config.AllowedOrigin))
 
-	// Middleware order per IMPLEMENTATION_PLAN.md §1C.2.
+	// Order matters: the request ID comes first so every log line carries it, and the
+	// logger wraps Recoverer so panics are logged. chi's RealIP is deliberately absent:
+	// it trusts client-supplied X-Forwarded-For / X-Real-IP headers. If client IPs are
+	// ever needed behind a proxy, use middleware.ClientIPFromXFF with the proxy CIDRs.
 	r.Use(middleware.RequestID)
 	r.Use(requestLoggerMiddleware)
 	r.Use(middleware.Recoverer)
