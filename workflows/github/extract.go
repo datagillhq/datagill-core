@@ -28,9 +28,9 @@ const (
 	// so no single run builds an oversized workflow history.
 	maxSearchWindowPerRun = 24 * time.Hour
 	minSearchWindow       = 5 * time.Minute
-	searchPageSize      = 100
-	searchSplitLimit    = 900
-	detailConcurrency   = 10
+	searchPageSize        = 100
+	searchSplitLimit      = 900
+	detailConcurrency     = 10
 )
 
 // ExtractInput is the input for GitHubExtractWorkflow.

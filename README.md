@@ -9,93 +9,213 @@
     d a t a g i l l
 ```
 
-**Business intelligence for Saas companies.**
+**Measure engineering impact by what ships, not by PR counts.**
+
+> **Status:** early-stage side project. No production users yet. APIs, schema, and docs
+> may change without notice.
 
 ---
 
-DataGill connects to the tools your team uses to ship software and gives you a single place to answer the questions that matter most.
+## Why DataGill
 
-### The Problem
+Engineering is increasingly measured by what's easiest to count: pull requests, lines of
+code, AI tokens spent. None of these tell you whether anything got better for customers.
 
-When something breaks in production, you're jumping between tabs — your feature flag dashboard, your metrics tool, your deployment logs, your incident tracker. The answer to "what changed?" is spread across five different systems, none of which talk to each other.
+The real story of what a team shipped is there, but it's scattered. Code lives in GitHub,
+launches in a feature-flag platform, incidents in PagerDuty, tickets in Jira or Linear.
+Each tool sees one slice, and none of them can say what happened, why, and what it changed.
 
-When leadership asks "how fast are we actually shipping?", you're pulling CSVs and doing the math yourself.
+DataGill connects those tools into **one timeline of engineering events that explains
+itself and that you can query**:
 
-When it's time to clean up stale flags or deprecated experiments, nobody knows which ones are safe to remove.
+- **Every change, understood.** Each code change is classified (bug fix, feature,
+  improvement), summarized in plain language, and mapped to its project.
+- **Every event, connected.** A PR links to the flag that launched it, the incident it
+  caused or fixed, and the ticket that asked for it.
+- **Every question, answerable.** *"What was our biggest win last quarter, and which team
+  owned it?"* *"Which teams need more help shipping impactful work?"*
 
-### What DataGill Does
+We're starting with feature flags and code, because a flag going live in production is the
+clearest signal that work reached users.
 
-DataGill ingests data from the tools you already use, normalizes it into a unified timeline, and lets you query across all of it in one place.
+## What works today
 
+| Area | What it does |
+|------|--------------|
+| **LaunchDarkly** | Ingests the audit log and flag details every 30 minutes |
+| **GitHub** | Ingests merged PRs through a GitHub App |
+| **PR → flag links** | Scans each PR diff and records which flag keys it added or removed |
+| **Timeline** | Feed of flag changes (who, what, when, which environment), filterable by team and person. PRs are a separate feed for now. |
+| **Analytics** | Launched flags, top teams by activity, and time-to-rollout (org-wide only, rough) |
+| **Platform** | Multi-tenant (all data scoped per org). Retry-safe Temporal workflows that keep every raw API response. |
+
+## Architecture
+
+Two Go binaries share one Postgres database and one Temporal cluster:
+
+| Component | Path | Role |
+|-----------|------|------|
+| **Search service** | `services/search` | HTTP API (Chi) on `:8082`. Verifies JWTs, manages integrations, creates Temporal schedules, serves analytics. Holds no sync logic. |
+| **Worker** | `cmd/worker` | Runs every Temporal workflow and activity: extract, normalize, save, enrich. |
+| **App Postgres** | `db/migrations` | Raw `source_records` plus the canonical tables. |
+| **Temporal** | `docker-compose.yml` | Schedules, durable execution, retries. Has its own Postgres. |
+
+```mermaid
+flowchart LR
+    UI[datagill-ui<br/>separate repo] -->|JWT| API[Search service]
+    API -->|create schedules| T[(Temporal)]
+    API -->|org-scoped reads| PG[(Postgres)]
+    T --> W[Worker]
+    W -->|audit log, flags| LD[LaunchDarkly API]
+    W -->|merged PRs, diffs| GH[GitHub API]
+    W -->|upserts| PG
 ```
-Feature Flags  ──┐
-Business Metrics ─┤                    ┌─ Activity Feed
-Data Warehouse  ──┤──▶  DataGill  ──▶  ├─ Root Cause Analysis
-Source Control  ──┤                    ├─ Velocity Metrics
-    ...         ──┘                    └─ Company Progress
-```
 
-**MVP:** Feature flag providers (LaunchDarkly, PostHog, Statsig).
-**Roadmap:** Datadog, Snowflake, GitHub, and more.
+**How data flows: ingestion → enrichment → timeline**
 
-### The Questions We Answer
+1. **Schedule.** When an integration is connected, the search service creates a Temporal
+   schedule (`etl-<integration>`, every 30 min) that starts `FeatureFlagETLWorkflow`.
+   The workflow exits without doing anything if the integration is paused or deleted.
+   Otherwise it routes to the provider's extract workflow.
+2. **Ingest.** `LaunchDarklyExtractWorkflow` and `GitHubExtractWorkflow` page through the
+   provider API from `integrations.last_synced_at`. They save each raw response to the
+   append-only `source_records` table, then normalize and upsert into the canonical tables:
+   `feature_flags`, `feature_flag_changelog` and `pull_requests`. The cursor moves forward
+   only after the whole window is saved.
+3. **Enrich.** Saving a PR also queues a `pull_request_enrichments` row in the same
+   transaction. A per-org `GitHubEnrichmentWorkflow` claims pending rows, fetches each
+   diff, and records the flag keys the PR added or removed. Failures back off across runs,
+   from 30 minutes up to 24 hours.
+4. **Serve.** The UI calls `GET /v1/analytics?metric=...`. Each metric is a small plugin
+   that runs an org-scoped SQL query over the canonical tables.
 
-| Question | Today |
-|----------|-------|
-| What changed in production in the last 2 hours? | ✅ |
-| Was that change a human or an automated process? | ✅ |
-| How long does it take us to ship a feature flag to production? | ✅ |
-| Which flags are safe to clean up? | ✅ |
-| How many flags did we launch this month, and who drove them? | ✅ |
-| Did that flag change correlate with a metric anomaly? | Roadmap |
-| Which commit introduced this flag? Time from PR → prod? | Roadmap |
+More detail on design decisions and trade-offs is in [`AGENTS.md`](./AGENTS.md).
 
----
+## Roadmap
 
-### Local Dev Quick Start
+Not built yet:
 
-Backend:
+| Area | Plan |
+|------|------|
+| **Understand changes** | Use an LLM to classify each change (bug fix, feature, improvement), summarize it, and map it to a project |
+| **Unified timeline** | Merge flags, PRs and other sources into one stream; show the PRs behind each launch |
+| **Query in plain language** | Semantic search over the timeline (pgvector, embeddings behind an `EmbedProvider` interface) |
+| **More sources** | PostHog, Statsig, Unleash, Flagsmith, PagerDuty, Datadog, Jira, Linear |
+| **Flag insights** | Human vs. automated changes, rollbacks, stale flags, per-team velocity |
+| **Privacy** | See below |
+
+**Privacy model (planned).** Today the API shows who changed or launched a flag to every
+member of the org. The plan:
+
+- Leaders see team-level aggregates only, and only for teams above a minimum size.
+- Each person sees their own data.
+- Individual data is shared only by that person's choice, for example for a promotion
+  document.
+
+## Local development
+
+### Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Go | 1.26 (see `go.work`) |
+| Docker with Compose v2 | recent |
+| [golang-migrate](https://github.com/golang-migrate/migrate) | 4.x (`brew install golang-migrate`) |
+| [golangci-lint](https://golangci-lint.run/) | v1.64.8, only needed for `make lint` |
+
+The web UI lives in a **separate repository**, `datagill-ui`. The commands below assume it
+is checked out next to this one as `../datagill-ui`. The search service fetches signing keys
+(JWKS) from the UI's auth server on startup and **exits if it can't reach them**. Start
+`datagill-ui` first if you want the API to stay up. The worker, databases, and Temporal run
+without it.
+
+### Quick start
 
 ```bash
-cd datagill-core
 cp .env.example .env
-make docker-up
-docker compose up search --build
+# Set ENCRYPTION_KEY in .env (required):
+openssl rand -hex 32
+
+make docker-up                        # Postgres, Temporal, observability, search, worker
+set -a && source .env && set +a
+make migrate                          # apply db/migrations to app-postgres
+
+curl http://localhost:8082/healthz    # {"service":"search","status":"ok"} once datagill-ui is up
 ```
 
-Notes:
+| Service | URL |
+|---------|-----|
+| Search API | http://localhost:8082 |
+| Temporal UI | http://localhost:8080 |
+| Grafana | http://localhost:3000 (admin / admin) |
+| Prometheus | http://localhost:9090 |
+| DataGill UI (from `datagill-ui`) | http://localhost:3001 |
 
-- The search service runs on `http://localhost:8082`.
-- Grafana from `datagill-core` Docker Compose runs on `http://localhost:3000`.
-- The DataGill UI runs on `http://localhost:3001`; see `../datagill-ui/README.md` for frontend setup and product UI docs.
-- If you want to run the search service with `go run`, you still need `.env`
-  loaded because `APP_DATABASE_URL` is required.
+GitHub ingestion requires your own GitHub App. The `GITHUB_APP_*` variables are described
+in [`LOCALSETUP.md`](./LOCALSETUP.md), along with running the services with `go run` and
+troubleshooting.
+
+### Tests, lint, build
+
+```bash
+make test-unit   # unit tests, no external dependencies
+make test-int    # integration tests; needs Docker (testcontainers)
+make lint        # golangci-lint across all modules
+make build       # builds bin/worker and bin/search
+make vuln        # govulncheck, per module
+```
 
 ### Seeding demo data
 
-After signing up and creating an org, run the seed script to populate feature flags and changelog events so the dashboard has data to show:
+After you sign up in the UI and connect an integration, you can fill the dashboard with demo
+flags and changelog events:
 
 ```bash
+# Find your org and integration keys
+psql "$APP_DATABASE_URL" -c "SELECT key, external_org_id FROM organizations;"
+psql "$APP_DATABASE_URL" -c "SELECT key, org_id, source FROM integrations;"
+
 go run ./cmd/seed \
-  --db-url "postgres://datagill:secret@localhost:5432/datagill" \
-  --org-id  "<uuid from your org>" \
-  --integration-id "<uuid from your integration>"
+  --db-url "$APP_DATABASE_URL" \
+  --org-id "<organizations.key>" \
+  --integration-id "<integrations.key>"
 ```
 
-Find the UUIDs in the database:
+The seed script is idempotent, so it's safe to run more than once.
 
-```bash
-# org ID — use the org you created during onboarding
-psql postgres://datagill:secret@localhost:5432/datagill \
-  -c "SELECT id, name FROM organizations;"
+## Repository layout
 
-# integration ID — created when you connect LaunchDarkly
-psql postgres://datagill:secret@localhost:5432/datagill \
-  -c "SELECT key, source FROM feature_flag_integrations;"
+```
+cmd/worker/         Worker binary: registers workflows, activities, error interceptor
+cmd/seed/           Demo data seeder
+services/search/    HTTP API: auth, integrations, scheduler, analytics plugins
+workflows/          Temporal workflows (ETL router, launchdarkly/, github/)
+activities/         Temporal activities: provider clients, normalization, diff scanning
+models/             Canonical models and deterministic key functions
+repository/         Postgres access (pgx), encryption, upserts
+shared/             Cross-module error types
+db/migrations/      Forward-only SQL migrations
+infra/              Prometheus, Loki, Alloy, Grafana config
+docs/               Design notes and implementation plans (historical, see below)
 ```
 
-The script is idempotent — safe to run multiple times.
+Each directory is its own Go module in a single `go.work` workspace.
 
----
+## Documentation
 
-> See [`AGENTS.md`](./AGENTS.md) for the full architecture, product requirements, and open questions.
+- [`AGENTS.md`](./AGENTS.md): architecture decisions, data model, engineering standards.
+  This is the source of truth for contributors and coding agents.
+- [`LOCALSETUP.md`](./LOCALSETUP.md): full local setup, including GitHub App configuration.
+- [`docs/`](./docs), including [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md):
+  design and implementation plans written while building. These are kept for context, and the code wins
+  where they disagree.
+
+## Contributing and security
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). To report a vulnerability, see
+[`SECURITY.md`](./SECURITY.md). Please don't open a public issue.
+
+## License
+
+[Apache License 2.0](./LICENSE). We may move future versions to a different license as the
+project grows. Code already released under Apache-2.0 stays available under it.

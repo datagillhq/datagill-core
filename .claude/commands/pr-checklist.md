@@ -5,8 +5,8 @@ Run the pre-PR checklist for the current branch. Check every item below. Fix any
 ## 1. Automated checks (run these first)
 
 ```bash
-golangci-lint run ./...
-go test -short ./...
+make lint
+make test-unit
 go build ./...
 ```
 

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	scrollAuditLogsTimeout  = 10 * time.Minute
+	scrollAuditLogsTimeout   = 10 * time.Minute
 	flagDetailTimeout        = 30 * time.Second
 	transformActivityTimeout = 30 * time.Second
 	updateLastSyncedTimeout  = 10 * time.Second
