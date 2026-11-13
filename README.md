@@ -16,66 +16,38 @@
 
 ---
 
-## Why we built this
+## Why DataGill
 
-We are two engineers who got tired of seeing engineers measured by PR counts and token
-usage. Those numbers are easy to collect, and they tell you very little about whether
-anything got better for users.
+Engineering is increasingly measured by what's easiest to count: pull requests, lines of
+code, AI tokens spent. None of these tell you whether anything got better for customers.
 
-On payments teams we saw a much better signal: **feature-flag launches**. A flag going
-live in production is the moment work actually reaches customers. It's how teams ship
-risky changes safely, and it maps closely to real progress and impact.
+The real story of what a team shipped is there, but it's scattered. Code lives in GitHub,
+launches in a feature-flag platform, incidents in PagerDuty, tickets in Jira or Linear.
+Each tool sees one slice, and none of them can say what happened, why, and what it changed.
 
-DataGill is our attempt to make that signal measurable. It ingests flag changes from your
-flag provider and merged pull requests from GitHub, and connects them, so each launch can
-be traced back to the PRs behind it.
+DataGill connects those tools into **one timeline of engineering events that explains
+itself and that you can query**:
+
+- **Every change, understood.** Each code change is classified (bug fix, feature,
+  improvement), summarized in plain language, and mapped to its project.
+- **Every event, connected.** A PR links to the flag that launched it, the incident it
+  caused or fixed, and the ticket that asked for it.
+- **Every question, answerable.** *"What was our biggest win last quarter, and which team
+  owned it?"* *"Which teams need more help shipping impactful work?"*
+
+We're starting with feature flags and code, because a flag going live in production is the
+clearest signal that work reached users.
 
 ## What works today
 
-Everything listed here is in this repository and covered by tests.
-
-- **LaunchDarkly ingestion.** Polls the audit log and flag details, keeps every raw response,
-  and normalizes them into canonical `feature_flags` and `feature_flag_changelog` tables.
-- **GitHub PR ingestion and enrichment.** A GitHub App ingests merged pull requests. An
-  enrichment workflow then scans each PR's diff for known flag keys and records which flags
-  the PR **added** and which it **removed**.
-- **Activity timeline.** An org-wide, newest-first feed of flag changes (who changed which
-  flag, when, and in which environments), filterable by team and actor. There's a separate
-  feed of merged PRs showing each PR's flag references. The two are not yet merged into one
-  stream.
-- **Analytics** (served from `GET /v1/analytics?metric=...`):
-  - `launched_wins`: flags that went live in production in a date range, filterable by team
-    or actor.
-  - `top_teams`: teams ranked by flag change activity. Team comes from the flag's
-    maintainer team in LaunchDarkly.
-  - `velocity`: an org-wide average time-to-rollout for flags now at 100%. This is a rough
-    signal. It measures from when DataGill first stored the flag, not from when the flag was
-    created in LaunchDarkly, and it isn't broken down by team yet.
-  - `audit_log` and `pull_requests`: the feeds above.
-- **Multi-tenant, durable pipelines.**
-  - Every query and every deterministic key is scoped by `org_id`.
-  - Each integration gets its own Temporal schedule for ingestion, and each org gets one
-    schedule for PR enrichment.
-  - All writes are idempotent upserts, so any workflow or activity can be retried or
-    replayed safely.
-  - Sync cursors only advance after a successful run.
-
-### Questions it answers
-
-| Question | Status |
-|----------|--------|
-| What flags changed in the last N hours, by whom, and in which environments? | ✅ Today |
-| Which flags launched in production this month, and who launched them? | ✅ Today |
-| Which teams have the most flag activity? | ✅ Today |
-| Roughly how long does it take us to get a flag to full rollout? | ⚠️ Rough, org-wide only (see `velocity` above) |
-| Which flag keys did each merged PR add or remove? | ✅ Today |
-| Which PRs are behind this specific flag launch? | Roadmap. The data is linked, but there's no launch → PR view yet. |
-| Was a change made by a human or an automated token? | Roadmap |
-| Was this change a rollback? | Roadmap |
-| Which flags are stale and safe to clean up? | Roadmap |
-| What did each change do: bug fix, feature, or improvement? | Roadmap |
-| What was our biggest win last quarter, and which team owned it? | Roadmap |
-| Did that flag change correlate with a metric anomaly? | Roadmap |
+| Area | What it does |
+|------|--------------|
+| **LaunchDarkly** | Ingests the audit log and flag details every 30 minutes |
+| **GitHub** | Ingests merged PRs through a GitHub App |
+| **PR → flag links** | Scans each PR diff and records which flag keys it added or removed |
+| **Timeline** | Feed of flag changes (who, what, when, which environment), filterable by team and person. PRs are a separate feed for now. |
+| **Analytics** | Launched flags, top teams by activity, and time-to-rollout (org-wide only, rough) |
+| **Platform** | Multi-tenant (all data scoped per org). Retry-safe Temporal workflows that keep every raw API response. |
 
 ## Architecture
 
@@ -119,33 +91,26 @@ flowchart LR
 
 More detail on design decisions and trade-offs is in [`AGENTS.md`](./AGENTS.md).
 
-## Vision / Roadmap
+## Roadmap
 
-> **None of this is built yet.** This section describes where we want to take DataGill.
+Not built yet:
 
-- **Understand each change.**
-  - Use an LLM to classify every change as a bug fix, feature, or improvement.
-  - Write a short summary of what each change did.
-  - Map changes to the projects they belong to.
-- **Ask questions in plain language.**
-  - Semantic search over the timeline, using pgvector and embeddings behind a swappable
-    `EmbedProvider` interface.
-  - Example questions: *"What was our biggest win last quarter, and which team owned it?"*
-    and *"Which teams need more help shipping impactful work?"*
-- **Privacy by default.** Today the API returns actor-level data, such as who launched a
-  flag, to any member of the org. The planned model:
-  - Leaders see **team-level aggregates only**.
-  - Each person sees **their own** data.
-  - Individual data is shared only by that person's choice, for example when they're
-    building a promotion document.
-  - Aggregates are shown only for teams above a minimum size, so individuals can't be
-    singled out.
-- **More sources.**
-  - Flag providers: PostHog, Statsig, Unleash, Flagsmith.
-  - Incidents and metrics: PagerDuty, Datadog.
-  - Project trackers: Jira, Linear.
-- **Smarter flag analytics.** Detect human vs. automated changes and rollbacks, list stale
-  and dead flags, and compute per-team velocity.
+| Area | Plan |
+|------|------|
+| **Understand changes** | Use an LLM to classify each change (bug fix, feature, improvement), summarize it, and map it to a project |
+| **Unified timeline** | Merge flags, PRs and other sources into one stream; show the PRs behind each launch |
+| **Query in plain language** | Semantic search over the timeline (pgvector, embeddings behind an `EmbedProvider` interface) |
+| **More sources** | PostHog, Statsig, Unleash, Flagsmith, PagerDuty, Datadog, Jira, Linear |
+| **Flag insights** | Human vs. automated changes, rollbacks, stale flags, per-team velocity |
+| **Privacy** | See below |
+
+**Privacy model (planned).** Today the API shows who changed or launched a flag to every
+member of the org. The plan:
+
+- Leaders see team-level aggregates only, and only for teams above a minimum size.
+- Each person sees their own data.
+- Individual data is shared only by that person's choice, for example for a promotion
+  document.
 
 ## Local development
 
