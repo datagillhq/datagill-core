@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,17 @@ import (
 	"github.com/datagill/datagill-core/repository"
 	"github.com/datagill/datagill-core/services/search/analytics"
 )
+
+// decodeCode reads the error code from a {"code": ...} response body.
+func decodeCode(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	defer func() { _ = resp.Body.Close() }()
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	return body["code"]
+}
 
 // requestWithToken sends a method+body request with a JWT for testOrgID/testUserID.
 func requestWithToken(t *testing.T, method, url string, body any) *http.Response {
@@ -358,6 +370,36 @@ func TestUpdateIntegrationHandler(t *testing.T) {
 		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"state": "paused"})
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	for _, state := range []string{"deleted", "archived", ""} {
+		t.Run("rejects state "+strconv.Quote(state), func(t *testing.T) {
+			integrationsRepo := &stubIntegrationsRepo{}
+			srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+			defer srv.Close()
+
+			resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"state": state})
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", resp.StatusCode)
+			}
+			if code := decodeCode(t, resp); code != "INTEGRATION_INVALID_STATE" {
+				t.Errorf("expected INTEGRATION_INVALID_STATE, got %q", code)
+			}
+			if integrationsRepo.updateCalls != 0 {
+				t.Errorf("expected no update, got %d calls", integrationsRepo.updateCalls)
+			}
+		})
+	}
+
+	t.Run("accepts active", func(t *testing.T) {
+		integrationsRepo := &stubIntegrationsRepo{updateResult: models.Integration{Key: key, State: models.IntegrationStateActive}}
+		srv := newTestServerFull(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry())
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPut, srv.URL+"/v1/integrations/"+key.String(), map[string]any{"state": "active"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
 	})
 

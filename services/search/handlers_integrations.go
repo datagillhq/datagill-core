@@ -191,6 +191,12 @@ func (a *app) updateIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		writeCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY")
 		return
 	}
+	// Only pause and resume go through PUT. "deleted" has its own endpoint, and any other
+	// value would hide the integration from the list while leaving it otherwise live.
+	if req.State != nil && *req.State != models.IntegrationStateActive && *req.State != models.IntegrationStatePaused {
+		writeCode(w, http.StatusBadRequest, "INTEGRATION_INVALID_STATE")
+		return
+	}
 
 	if req.APIKey != nil {
 		existing, err := a.integrationsRepo.GetIntegration(r.Context(), orgID, key)

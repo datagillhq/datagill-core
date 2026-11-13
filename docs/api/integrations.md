@@ -50,7 +50,8 @@ Partial update. Send only what changes:
 `state` is `active` or `paused`. A new `api_key` is validated first; if it is omitted the stored
 key is kept with no provider call. `200` with the integration object. Errors: `400`
 `INVALID_INTEGRATION_KEY`, `INVALID_REQUEST_BODY`, `INTEGRATION_INVALID_API_KEY`,
-`INTEGRATION_PROVIDER_UNREACHABLE`; `404` `INTEGRATION_NOT_FOUND`.
+`INTEGRATION_PROVIDER_UNREACHABLE`, `INTEGRATION_INVALID_STATE` (any other `state`, including
+`deleted`: use `DELETE`); `404` `INTEGRATION_NOT_FOUND`.
 
 Pausing does not delete the Temporal schedule: each scheduled run checks the state and exits
 without calling the provider.
