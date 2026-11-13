@@ -21,8 +21,8 @@ and serves analytics. It contains no sync logic; that runs in the worker (`cmd/w
 | `GET` | `/v1/analytics?metric=...` | JWT | `launched_wins`, `top_teams`, `velocity`, `audit_log`, `pull_requests` |
 
 The org comes only from the verified JWT's `organizationId` claim (signing keys are fetched
-from `AUTH_URL/.well-known/jwks.json` at startup). See `docs/backend/analytics-api.md` and
-`docs/backend/integration-management-api.md` for request and response shapes.
+from `AUTH_URL/.well-known/jwks.json` at startup). See [`docs/api/analytics.md`](../../docs/api/analytics.md) and
+[`docs/api/integrations.md`](../../docs/api/integrations.md) for request and response shapes.
 
 ## Run locally
 
