@@ -1,5 +1,7 @@
 # GitHub E2E Handoff
 
+> **Historical working note** from a local end-to-end session in May 2026. The work it describes has since landed; kept only for context.
+
 Status: paused for usage limits on 2026-05-03.
 
 ## Done

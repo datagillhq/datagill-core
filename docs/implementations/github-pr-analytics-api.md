@@ -1,6 +1,6 @@
 # GitHub PR Analytics API Plan
 
-> Status: Planned.
+> Status: Implemented as `GET /v1/analytics?metric=pull_requests`.
 > Companion to [github-integration.md](./github-integration.md) and [github-pr-enrichment.md](./github-pr-enrichment.md).
 
 ## Summary

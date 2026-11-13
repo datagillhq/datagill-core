@@ -1,6 +1,7 @@
 # GitHub Integration Implementation Plan
 
-> Status: Ready for implementation planning.
+> Status: Implemented. Kept as the design record for the GitHub integration.
+> **Historical design doc.** Written while building; parts are out of date. The code and [`AGENTS.md`](../../AGENTS.md) are the source of truth where they disagree.
 > Companion to [github-integration.md](./github-integration.md).
 
 This document translates the approved GitHub integration design into concrete repo work. It is intentionally scoped to the current codebase, which already has LaunchDarkly ETL, integration management endpoints in the Search service, and Temporal schedule wiring.
@@ -67,7 +68,7 @@ The current repo is not GitHub-ready yet. These are the main constraints the imp
 - `models.IntegrationConfig` is LaunchDarkly-shaped (`environment_key`) and cannot yet represent GitHub App installation metadata cleanly.
 - Search integration creation assumes API-key validation before insert.
 - Temporal schedule management only supports create. This is acceptable for v1 as long as ETL exits immediately for non-active integrations.
-- ETL routing in [workflows/etl.go](/Users/kuyoungshin/Coding/datagill-core/workflows/etl.go:1) only dispatches LaunchDarkly.
+- ETL routing in [workflows/etl.go](../../workflows/etl.go) only dispatches LaunchDarkly.
 - Repository and canonical models have no `pull_requests` persistence surface yet.
 - Live code still has `integrations.last_synced_at`, which conflicts with the current architecture decision that sync cursor belongs in Temporal workflow state.
 
@@ -158,13 +159,13 @@ Goal: let Search create and manage a GitHub integration row without any ETL yet.
 
 Files likely touched:
 
-- [models/integration.go](/Users/kuyoungshin/Coding/datagill-core/models/integration.go:1)
-- [services/search/handlers_integrations.go](/Users/kuyoungshin/Coding/datagill-core/services/search/handlers_integrations.go:1)
-- [services/search/router.go](/Users/kuyoungshin/Coding/datagill-core/services/search/router.go:1)
-- [services/search/config.go](/Users/kuyoungshin/Coding/datagill-core/services/search/config.go:1)
-- [services/search/app.go](/Users/kuyoungshin/Coding/datagill-core/services/search/app.go:1)
-- [services/search/scheduler.go](/Users/kuyoungshin/Coding/datagill-core/services/search/scheduler.go:1)
-- [repository/postgres_integrations.go](/Users/kuyoungshin/Coding/datagill-core/repository/postgres_integrations.go:1)
+- [models/integration.go](../../models/integration.go)
+- [services/search/handlers_integrations.go](../../services/search/handlers_integrations.go)
+- [services/search/router.go](../../services/search/router.go)
+- [services/search/config.go](../../services/search/config.go)
+- [services/search/app.go](../../services/search/app.go)
+- [services/search/scheduler.go](../../services/search/scheduler.go)
+- [repository/postgres_integrations.go](../../repository/postgres_integrations.go)
 
 Tasks:
 
@@ -193,8 +194,8 @@ Goal: own the browser-based GitHub App install callback in the Search service.
 
 Files likely touched:
 
-- [services/search/router.go](/Users/kuyoungshin/Coding/datagill-core/services/search/router.go:1)
-- [services/search/handlers_integrations.go](/Users/kuyoungshin/Coding/datagill-core/services/search/handlers_integrations.go:1)
+- [services/search/router.go](../../services/search/router.go)
+- [services/search/handlers_integrations.go](../../services/search/handlers_integrations.go)
 - new `services/search/github_app.go`
 - new `services/search/github_app_test.go`
 
@@ -373,8 +374,8 @@ Goal: create the storage surface before implementing ETL.
 Files likely touched:
 
 - new migration for `pull_requests`
-- [models/canonical.go](/Users/kuyoungshin/Coding/datagill-core/models/canonical.go:1) or new `models/github.go`
-- [repository/repository.go](/Users/kuyoungshin/Coding/datagill-core/repository/repository.go:1)
+- [models/canonical.go](../../models/canonical.go) or new `models/github.go`
+- [repository/repository.go](../../repository/repository.go)
 - new `repository/postgres_pull_requests.go`
 - new `repository/postgres_pull_requests_test.go`
 
@@ -415,9 +416,9 @@ Files likely touched:
 - new `activities/github/get_pull_request_detail.go`
 - new `activities/github/normalize_pull_request.go`
 - new `workflows/github/extract.go`
-- [workflows/etl.go](/Users/kuyoungshin/Coding/datagill-core/workflows/etl.go:1)
-- [cmd/worker/main.go](/Users/kuyoungshin/Coding/datagill-core/cmd/worker/main.go:1)
-- [activities/shared.go](/Users/kuyoungshin/Coding/datagill-core/activities/shared.go:1)
+- [workflows/etl.go](../../workflows/etl.go)
+- [cmd/worker/main.go](../../cmd/worker/main.go)
+- [activities/shared.go](../../activities/shared.go)
 
 Tasks:
 

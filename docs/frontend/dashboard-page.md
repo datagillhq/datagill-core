@@ -133,7 +133,7 @@ Team names and actor emails for the filter dropdowns can be derived from the ana
 ## What the Frontend Repo Needs to Know About the Backend
 
 - All endpoints are versioned: `/v1/analytics?metric=...`
-- Auth: JWT as `Authorization: Bearer <token>`, API gateway injects `X-Org-Id`
+- Auth: JWT as `Authorization: Bearer <token>`; the search service reads the org from the token's `organizationId` claim
 - Backend returns error codes, not messages: `{ "code": "..." }` — frontend maps to display strings
 - `launched_wins` and `velocity` metrics require `rollout_percentage` data model change on backend — coordinate before building those components
 - `actor_name` must be populated before Launched Wins actor column is meaningful

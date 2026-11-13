@@ -1,5 +1,8 @@
 # Phase 2A: ETL Worker - Implementation Plan
 
+> **Historical design doc.** Written while building; parts are out of date. The code and [`AGENTS.md`](../AGENTS.md) are the source of truth where they disagree.
+> Since this plan, LaunchDarkly transforms run as activities inside `LaunchDarklyExtractWorkflow` (no child transform workflows), and the sync cursor lives in `integrations.last_synced_at`.
+
 ## Summary
 
 Build the Temporal-based ETL worker for LaunchDarkly feature flag ingestion. The worker extracts audit logs and flag details from LaunchDarkly, normalizes them to the canonical DataGill schema, and persists to PostgreSQL.

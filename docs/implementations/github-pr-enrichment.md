@@ -1,6 +1,6 @@
 # GitHub PR Enrichment Design
 
-> Status: In Design — flag-finding matching delimiters and re-enrichment strategy deferred to implementation.
+> Status: Implemented (`GitHubEnrichmentWorkflow`, `activities/github/scan_diff.go`). Re-enrichment of already-scanned PRs is not implemented.
 > Companion to [github-integration.md](./github-integration.md).
 
 ---

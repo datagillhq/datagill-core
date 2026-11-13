@@ -1,6 +1,7 @@
 # GitHub Integration Design
 
-> Status: In Design — not yet implemented.
+> Status: Implemented (GitHub App onboarding and merged-PR ingestion).
+> **Historical design doc.** Written while building; parts are out of date. The code and [`AGENTS.md`](../../AGENTS.md) are the source of truth where they disagree.
 > Follows the same architecture patterns as the LaunchDarkly integration.
 > Implementation sequencing lives in [github-integration-implementation-plan.md](./github-integration-implementation-plan.md).
 > The first front-facing API for ingested PR data is planned in [github-pr-analytics-api.md](./github-pr-analytics-api.md).
