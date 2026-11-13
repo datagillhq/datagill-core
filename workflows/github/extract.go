@@ -173,7 +173,14 @@ func processPullRequests(ctx workflow.Context, integration models.Integration, r
 					OrgID:          integration.OrgID,
 					Ref:            ref,
 				}).Get(gCtx, &detail); err != nil {
-					logger.Warn("skipping pull request: detail fetch failed", "owner", ref.Owner, "repo", ref.Repo, "number", ref.Number, "error", err)
+					// A PR or repo deleted (or hidden from the app) since the search is skipped,
+					// so one missing PR does not fail every run. Anything else, such as bad
+					// credentials, affects every PR and fails the run.
+					if ghactivities.IsNotFound(err) {
+						logger.Warn("skipping pull request: not found", "owner", ref.Owner, "repo", ref.Repo, "number", ref.Number, "error", err)
+						return
+					}
+					logger.Warn("pull request detail fetch failed", "owner", ref.Owner, "repo", ref.Repo, "number", ref.Number, "error", err)
 					errs[i] = err
 					return
 				}

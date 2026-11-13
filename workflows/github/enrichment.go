@@ -29,6 +29,11 @@ const (
 	// and block the batch. Once retries are exhausted the PR is marked failed and the
 	// attempts cap in pull_request_enrichments decides whether a later run tries again.
 	enrichmentMaxActivityAttempts = 3
+
+	// enrichmentRetryWaitBudget is the time allowed for waits between an activity's
+	// attempts, such as a GitHub rate limit's Retry-After. A longer wait ends the activity
+	// and the PR falls back to the cross-run backoff instead of holding the batch.
+	enrichmentRetryWaitBudget = 5 * time.Minute
 )
 
 // EnrichmentInput is the input for GitHubEnrichmentWorkflow.
@@ -69,10 +74,16 @@ func GitHubEnrichmentWorkflow(ctx workflow.Context, input EnrichmentInput) error
 
 // withEnrichmentActivityOptions applies the timeout and bounded retry policy shared by
 // every activity in GitHubEnrichmentWorkflow.
+//
+// ScheduleToCloseTimeout caps the total time across attempts, including retry waits.
+// Without it a long Retry-After keeps a PR in_progress past the repository's 1-hour stale
+// window, so another run could reclaim it while this one is still working. Worst case per
+// PR (claim + enrich + save + mark failed) is under 40 minutes.
 func withEnrichmentActivityOptions(ctx workflow.Context, timeout time.Duration) workflow.Context {
 	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: timeout,
-		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: enrichmentMaxActivityAttempts},
+		StartToCloseTimeout:    timeout,
+		ScheduleToCloseTimeout: enrichmentMaxActivityAttempts*timeout + enrichmentRetryWaitBudget,
+		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: enrichmentMaxActivityAttempts},
 	})
 }
 

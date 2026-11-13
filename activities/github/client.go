@@ -257,6 +257,10 @@ func (c *Client) FetchRawDiff(ctx context.Context, installationToken, owner, rep
 		return c.fetchDiffFromCompare(ctx, installationToken, owner, repo, baseRef, headSHA)
 	}
 
+	if rateLimited := c.rateLimitFromResponse(resp); rateLimited != nil {
+		return "", rateLimited
+	}
+
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
 		return "", &UnauthorizedError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
@@ -333,12 +337,8 @@ func (c *Client) doRawJSON(req *http.Request, out any) (json.RawMessage, error) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		waitSeconds := defaultRetryWait
-		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
-			waitSeconds = s
-		}
-		return nil, &TooManyRequestsError{RetryAfter: waitSeconds}
+	if rateLimited := c.rateLimitFromResponse(resp); rateLimited != nil {
+		return nil, rateLimited
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -386,4 +386,30 @@ func parseGitHubPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 		return nil, fmt.Errorf("private key is not RSA")
 	}
 	return key, nil
+}
+
+// rateLimitFromResponse returns a TooManyRequestsError when the response is a rate limit,
+// or nil. GitHub sends 429, and also 403 for both kinds of limit: the hourly quota
+// (x-ratelimit-remaining: 0) and secondary limits (Retry-After). A 403 without those
+// headers is a permissions error and is left to the caller.
+//
+// The wait is Retry-After when present, else the time until x-ratelimit-reset, else
+// defaultRetryWait.
+func (c *Client) rateLimitFromResponse(resp *http.Response) *TooManyRequestsError {
+	retryAfter := resp.Header.Get("Retry-After")
+	limited := resp.StatusCode == http.StatusTooManyRequests ||
+		(resp.StatusCode == http.StatusForbidden && (retryAfter != "" || resp.Header.Get("X-Ratelimit-Remaining") == "0"))
+	if !limited {
+		return nil
+	}
+
+	wait := defaultRetryWait
+	if seconds, err := strconv.Atoi(retryAfter); err == nil {
+		wait = seconds
+	} else if reset, err := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Reset"), 10, 64); err == nil {
+		if untilReset := reset - c.now().Unix(); untilReset > 0 {
+			wait = int(untilReset)
+		}
+	}
+	return &TooManyRequestsError{RetryAfter: wait}
 }

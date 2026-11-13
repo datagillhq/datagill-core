@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -339,6 +340,85 @@ func TestMarkEnrichmentFailed_BelowCap(t *testing.T) {
 	}
 }
 
+// Each failure pushes the next attempt further out: 30m, doubling, capped at 24h.
+func TestMarkEnrichmentFailed_BacksOff(t *testing.T) {
+	ctx := context.Background()
+	repo, pool := newTestRepo(t, ctx)
+	orgKey := setupTestOrg(ctx, t, pool)
+
+	tests := []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{1, 30 * time.Minute},
+		{2, time.Hour},
+		{3, 2 * time.Hour},
+		{4, 4 * time.Hour},
+		{5, 8 * time.Hour},
+		{6, 16 * time.Hour},
+		{7, 24 * time.Hour},
+		{9, 24 * time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("after %d attempts", tt.attempts), func(t *testing.T) {
+			pr := insertTestPR(ctx, t, repo, pool, orgKey, fmt.Sprintf("enrich-backoff-%d", tt.attempts))
+			if _, err := pool.Exec(ctx,
+				`UPDATE pull_request_enrichments SET status = 'in_progress', attempts = $2 WHERE pull_request_key = $1`,
+				pr.Key, tt.attempts,
+			); err != nil {
+				t.Fatalf("set attempts: %v", err)
+			}
+
+			if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+				t.Fatalf("MarkEnrichmentFailed: %v", err)
+			}
+
+			if status := enrichmentStatus(ctx, t, pool, pr.Key); status != "pending" {
+				t.Fatalf("expected pending below the cap, got %q", status)
+			}
+			if got := nextAttemptIn(ctx, t, pool, pr.Key); got < tt.want-time.Minute || got > tt.want {
+				t.Errorf("next attempt in %v, want about %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A PR waiting out its backoff is neither listed nor claimable; once the wait has passed
+// it is both.
+func TestEnrichmentBackoff_HidesRowUntilNextAttempt(t *testing.T) {
+	ctx := context.Background()
+	repo, pool := newTestRepo(t, ctx)
+
+	orgKey := setupTestOrg(ctx, t, pool)
+	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-backoff-hidden")
+	mustClaim(ctx, t, repo, pr.Key)
+	if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+		t.Fatalf("MarkEnrichmentFailed: %v", err)
+	}
+
+	if listedPRKeys(ctx, t, repo, orgKey)[pr.Key] {
+		t.Error("row in backoff should not be listed")
+	}
+	claimed, err := repo.ClaimEnrichment(ctx, pr.Key)
+	if err != nil {
+		t.Fatalf("ClaimEnrichment: %v", err)
+	}
+	if claimed {
+		t.Fatal("row in backoff should not be claimable")
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE pull_request_enrichments SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE pull_request_key = $1`,
+		pr.Key,
+	); err != nil {
+		t.Fatalf("expire backoff: %v", err)
+	}
+	if !listedPRKeys(ctx, t, repo, orgKey)[pr.Key] {
+		t.Error("row should be listed once its backoff has passed")
+	}
+	mustClaim(ctx, t, repo, pr.Key)
+}
+
 func TestMarkEnrichmentFailed_CapReached(t *testing.T) {
 	ctx := context.Background()
 	repo, pool := newTestRepo(t, ctx)
@@ -497,4 +577,17 @@ func listedPRKeys(ctx context.Context, t *testing.T, repo *PostgresRepository, o
 		keys[e.PullRequestKey] = true
 	}
 	return keys
+}
+
+// nextAttemptIn returns how far in the future the row's next attempt is, per the DB clock.
+func nextAttemptIn(ctx context.Context, t *testing.T, pool *pgxpool.Pool, pullRequestKey uuid.UUID) time.Duration {
+	t.Helper()
+	var seconds float64
+	if err := pool.QueryRow(ctx,
+		`SELECT EXTRACT(EPOCH FROM next_attempt_at - NOW()) FROM pull_request_enrichments WHERE pull_request_key = $1`,
+		pullRequestKey,
+	).Scan(&seconds); err != nil {
+		t.Fatalf("read next_attempt_at: %v", err)
+	}
+	return time.Duration(seconds * float64(time.Second))
 }

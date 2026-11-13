@@ -11,16 +11,34 @@ import (
 	"github.com/datagill/datagill-core/models"
 )
 
-const enrichmentMaxAttempts = 5
+// enrichmentMaxAttempts is how many failed attempts a PR gets before it is marked failed.
+// With the backoff below, the 10th failure lands about 4.3 days after the first, so a
+// multi-day GitHub outage does not permanently fail PRs.
+const enrichmentMaxAttempts = 10
+
+// After each failure the next attempt waits enrichmentBackoffBase, doubling per failure,
+// capped at enrichmentBackoffMax: 30m, 1h, 2h, 4h, 8h, 16h, then 24h. These are minimum
+// waits; the retry happens on the first scheduled run after the wait.
+const (
+	enrichmentBackoffBase = 30 * time.Minute
+	enrichmentBackoffMax  = 24 * time.Hour
+)
+
+// enrichmentBackoff is the SQL for next_attempt_at after a failure. $3 is
+// enrichmentBackoffBase and $4 is enrichmentBackoffMax, both in seconds. attempts is at
+// least 1 here, since the row was claimed before it failed.
+const enrichmentBackoff = `NOW() + LEAST(
+		make_interval(secs => $3 * POWER(2, GREATEST(attempts, 1) - 1)),
+		make_interval(secs => $4))`
 
 // enrichmentStaleAfterSeconds is how long a row may sit in 'in_progress' before it is
 // treated as abandoned (e.g. the worker died mid-run) and becomes claimable again.
 // It must comfortably exceed the worst-case time to enrich one PR, including retries.
 const enrichmentStaleAfterSeconds = 60 * 60
 
-// claimableEnrichment matches rows a worker may claim: pending rows, plus in_progress
-// rows whose claim has gone stale. $2 is enrichmentStaleAfterSeconds.
-const claimableEnrichment = `(status = 'pending' OR (status = 'in_progress' AND updated_at < NOW() - make_interval(secs => $2)))`
+// claimableEnrichment matches rows a worker may claim: pending rows whose retry backoff has
+// passed, plus in_progress rows whose claim has gone stale. $2 is enrichmentStaleAfterSeconds.
+const claimableEnrichment = `((status = 'pending' AND next_attempt_at <= NOW()) OR (status = 'in_progress' AND updated_at < NOW() - make_interval(secs => $2)))`
 
 // ListPendingEnrichments returns up to limit claimable enrichment rows for an org,
 // ordered oldest first. Rows whose PR belongs to a paused or deleted integration are
@@ -102,16 +120,18 @@ func (r *PostgresRepository) SaveEnrichmentResult(ctx context.Context, pullReque
 	return nil
 }
 
-// MarkEnrichmentFailed resets the row to 'pending' for retry, or sets 'failed' if
-// the attempt cap has been reached. Only an in_progress row is updated.
+// MarkEnrichmentFailed resets the row to 'pending' and schedules the next attempt with
+// backoff, or sets 'failed' if the attempt cap has been reached. Only an in_progress row
+// is updated.
 func (r *PostgresRepository) MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE pull_request_enrichments
-		SET status     = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'pending' END,
-		    updated_at = NOW()
+		SET status          = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'pending' END,
+		    next_attempt_at = `+enrichmentBackoff+`,
+		    updated_at      = NOW()
 		WHERE pull_request_key = $1
 		  AND status = 'in_progress'
-	`, pullRequestKey, enrichmentMaxAttempts)
+	`, pullRequestKey, enrichmentMaxAttempts, enrichmentBackoffBase.Seconds(), enrichmentBackoffMax.Seconds())
 	if err != nil {
 		return fmt.Errorf("MarkEnrichmentFailed: %w", err)
 	}
