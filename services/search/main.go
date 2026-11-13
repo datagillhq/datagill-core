@@ -65,11 +65,7 @@ func main() {
 	}
 	defer tc.Close()
 
-	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           newApp(cfg, logger, integrationsRepo, integrationsRepo, newValidatorRegistry(), newTemporalScheduler(tc), jwtKeyfunc, analyticsRegistry).router(),
-		ReadHeaderTimeout: 10 * time.Second, // TODO: tune timeout values based on observed p99 latency
-	}
+	srv := newHTTPServer(":"+cfg.Port, newApp(cfg, logger, integrationsRepo, integrationsRepo, newValidatorRegistry(), newTemporalScheduler(tc), jwtKeyfunc, analyticsRegistry).router())
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -89,5 +85,28 @@ func main() {
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error().Err(err).Msg("shutdown error")
+	}
+}
+
+// Server timeouts, per docs/engineering-standards.md. Without ReadTimeout and IdleTimeout a
+// client can hold a connection open indefinitely by sending a body slowly or by idling.
+const (
+	serverReadHeaderTimeout = 5 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	// serverWriteTimeout is a little longer than the router's 30s middleware.Timeout, so a
+	// handler that runs out of time can still write its 504 before the connection closes.
+	serverWriteTimeout = 35 * time.Second
+	serverIdleTimeout  = 120 * time.Second
+)
+
+// newHTTPServer returns the search service's HTTP server with every timeout set.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
 	}
 }
