@@ -182,7 +182,7 @@ func TestClaimEnrichment(t *testing.T) {
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-claim")
 
-	claimed, err := repo.ClaimEnrichment(ctx, pr.Key)
+	claimed, err := repo.ClaimEnrichment(ctx, pr.OrgID, pr.Key)
 	if err != nil {
 		t.Fatalf("ClaimEnrichment: %v", err)
 	}
@@ -204,9 +204,9 @@ func TestClaimEnrichment_ReportsNotClaimedWhenAlreadyHeld(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-claim-twice")
-	mustClaim(ctx, t, repo, pr.Key)
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key)
 
-	claimed, err := repo.ClaimEnrichment(ctx, pr.Key)
+	claimed, err := repo.ClaimEnrichment(ctx, pr.OrgID, pr.Key)
 	if err != nil {
 		t.Fatalf("second ClaimEnrichment: %v", err)
 	}
@@ -224,12 +224,12 @@ func TestClaimEnrichment_ReportsNotClaimedWhenCompleted(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-claim-completed")
-	mustClaim(ctx, t, repo, pr.Key)
-	if err := repo.SaveEnrichmentResult(ctx, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key)
+	if err := repo.SaveEnrichmentResult(ctx, pr.OrgID, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
 		t.Fatalf("SaveEnrichmentResult: %v", err)
 	}
 
-	claimed, err := repo.ClaimEnrichment(ctx, pr.Key)
+	claimed, err := repo.ClaimEnrichment(ctx, pr.OrgID, pr.Key)
 	if err != nil {
 		t.Fatalf("ClaimEnrichment: %v", err)
 	}
@@ -244,10 +244,10 @@ func TestClaimEnrichment_ReclaimsStaleInProgress(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-claim-stale")
-	mustClaim(ctx, t, repo, pr.Key) // attempts = 1, then the worker "dies"
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key) // attempts = 1, then the worker "dies"
 	markInProgress(ctx, t, pool, pr.Key, staleUpdatedAt())
 
-	claimed, err := repo.ClaimEnrichment(ctx, pr.Key)
+	claimed, err := repo.ClaimEnrichment(ctx, pr.OrgID, pr.Key)
 	if err != nil {
 		t.Fatalf("ClaimEnrichment: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestSaveEnrichmentResult(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-save-result")
-	mustClaim(ctx, t, repo, pr.Key)
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key)
 
 	data := models.PullRequestEnrichmentData{
 		FeatureFlags: models.PullRequestFeatureFlagRefs{
@@ -273,7 +273,7 @@ func TestSaveEnrichmentResult(t *testing.T) {
 			Removed: []string{"flag-uuid-2"},
 		},
 	}
-	if err := repo.SaveEnrichmentResult(ctx, pr.Key, data); err != nil {
+	if err := repo.SaveEnrichmentResult(ctx, pr.OrgID, pr.Key, data); err != nil {
 		t.Fatalf("SaveEnrichmentResult: %v", err)
 	}
 
@@ -315,7 +315,7 @@ func TestSaveEnrichmentResult_DoesNotOverwriteUnclaimedRow(t *testing.T) {
 		t.Fatalf("set failed: %v", err)
 	}
 
-	if err := repo.SaveEnrichmentResult(ctx, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
+	if err := repo.SaveEnrichmentResult(ctx, pr.OrgID, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
 		t.Fatalf("SaveEnrichmentResult: %v", err)
 	}
 	if got := enrichmentStatus(ctx, t, pool, pr.Key); got != "failed" {
@@ -329,9 +329,9 @@ func TestMarkEnrichmentFailed_BelowCap(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-fail-below-cap")
-	mustClaim(ctx, t, repo, pr.Key) // attempts = 1
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key) // attempts = 1
 
-	if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+	if err := repo.MarkEnrichmentFailed(ctx, pr.OrgID, pr.Key); err != nil {
 		t.Fatalf("MarkEnrichmentFailed: %v", err)
 	}
 
@@ -369,7 +369,7 @@ func TestMarkEnrichmentFailed_BacksOff(t *testing.T) {
 				t.Fatalf("set attempts: %v", err)
 			}
 
-			if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+			if err := repo.MarkEnrichmentFailed(ctx, pr.OrgID, pr.Key); err != nil {
 				t.Fatalf("MarkEnrichmentFailed: %v", err)
 			}
 
@@ -391,15 +391,15 @@ func TestEnrichmentBackoff_HidesRowUntilNextAttempt(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-backoff-hidden")
-	mustClaim(ctx, t, repo, pr.Key)
-	if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key)
+	if err := repo.MarkEnrichmentFailed(ctx, pr.OrgID, pr.Key); err != nil {
 		t.Fatalf("MarkEnrichmentFailed: %v", err)
 	}
 
 	if listedPRKeys(ctx, t, repo, orgKey)[pr.Key] {
 		t.Error("row in backoff should not be listed")
 	}
-	claimed, err := repo.ClaimEnrichment(ctx, pr.Key)
+	claimed, err := repo.ClaimEnrichment(ctx, pr.OrgID, pr.Key)
 	if err != nil {
 		t.Fatalf("ClaimEnrichment: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestEnrichmentBackoff_HidesRowUntilNextAttempt(t *testing.T) {
 	if !listedPRKeys(ctx, t, repo, orgKey)[pr.Key] {
 		t.Error("row should be listed once its backoff has passed")
 	}
-	mustClaim(ctx, t, repo, pr.Key)
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key)
 }
 
 func TestMarkEnrichmentFailed_CapReached(t *testing.T) {
@@ -434,7 +434,7 @@ func TestMarkEnrichmentFailed_CapReached(t *testing.T) {
 		t.Fatalf("set attempts: %v", err)
 	}
 
-	if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+	if err := repo.MarkEnrichmentFailed(ctx, pr.OrgID, pr.Key); err != nil {
 		t.Fatalf("MarkEnrichmentFailed at cap: %v", err)
 	}
 
@@ -449,12 +449,12 @@ func TestMarkEnrichmentFailed_DoesNotResetCompletedRow(t *testing.T) {
 
 	orgKey := setupTestOrg(ctx, t, pool)
 	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-fail-completed")
-	mustClaim(ctx, t, repo, pr.Key)
-	if err := repo.SaveEnrichmentResult(ctx, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
+	mustClaim(ctx, t, repo, pr.OrgID, pr.Key)
+	if err := repo.SaveEnrichmentResult(ctx, pr.OrgID, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
 		t.Fatalf("SaveEnrichmentResult: %v", err)
 	}
 
-	if err := repo.MarkEnrichmentFailed(ctx, pr.Key); err != nil {
+	if err := repo.MarkEnrichmentFailed(ctx, pr.OrgID, pr.Key); err != nil {
 		t.Fatalf("MarkEnrichmentFailed: %v", err)
 	}
 	if got := enrichmentStatus(ctx, t, pool, pr.Key); got != "completed" {
@@ -463,9 +463,9 @@ func TestMarkEnrichmentFailed_DoesNotResetCompletedRow(t *testing.T) {
 }
 
 // mustClaim claims a row and fails the test if it was not claimable.
-func mustClaim(ctx context.Context, t *testing.T, repo *PostgresRepository, pullRequestKey uuid.UUID) {
+func mustClaim(ctx context.Context, t *testing.T, repo *PostgresRepository, orgID, pullRequestKey uuid.UUID) {
 	t.Helper()
-	claimed, err := repo.ClaimEnrichment(ctx, pullRequestKey)
+	claimed, err := repo.ClaimEnrichment(ctx, orgID, pullRequestKey)
 	if err != nil {
 		t.Fatalf("ClaimEnrichment: %v", err)
 	}
@@ -590,4 +590,44 @@ func nextAttemptIn(ctx context.Context, t *testing.T, pool *pgxpool.Pool, pullRe
 		t.Fatalf("read next_attempt_at: %v", err)
 	}
 	return time.Duration(seconds * float64(time.Second))
+}
+
+// Invariant 1: a key alone must never reach another tenant's row. Every enrichment write
+// and the PR lookup are scoped by org_id, so the wrong org changes and reads nothing.
+func TestEnrichmentQueries_AreOrgScoped(t *testing.T) {
+	ctx := context.Background()
+	repo, pool := newTestRepo(t, ctx)
+
+	orgKey := setupTestOrg(ctx, t, pool)
+	otherOrg := setupTestOrg(ctx, t, pool)
+	pr := insertTestPR(ctx, t, repo, pool, orgKey, "enrich-org-scope")
+
+	claimed, err := repo.ClaimEnrichment(ctx, otherOrg, pr.Key)
+	if err != nil {
+		t.Fatalf("ClaimEnrichment: %v", err)
+	}
+	if claimed {
+		t.Fatal("another org claimed this org's enrichment row")
+	}
+	if got := enrichmentAttempts(ctx, t, pool, pr.Key); got != 0 {
+		t.Errorf("attempts = %d after a foreign claim, want 0", got)
+	}
+
+	if _, err := repo.GetPullRequestByKey(ctx, otherOrg, pr.Key); err == nil {
+		t.Error("GetPullRequestByKey returned another org's pull request")
+	}
+	if got, err := repo.GetPullRequestByKey(ctx, orgKey, pr.Key); err != nil || got.Key != pr.Key {
+		t.Errorf("GetPullRequestByKey for the owning org: key=%s err=%v", got.Key, err)
+	}
+
+	mustClaim(ctx, t, repo, orgKey, pr.Key)
+	if err := repo.SaveEnrichmentResult(ctx, otherOrg, pr.Key, models.PullRequestEnrichmentData{}); err != nil {
+		t.Fatalf("SaveEnrichmentResult: %v", err)
+	}
+	if err := repo.MarkEnrichmentFailed(ctx, otherOrg, pr.Key); err != nil {
+		t.Fatalf("MarkEnrichmentFailed: %v", err)
+	}
+	if got := enrichmentStatus(ctx, t, pool, pr.Key); got != "in_progress" {
+		t.Errorf("status = %q after foreign save and mark-failed, want in_progress", got)
+	}
 }

@@ -155,7 +155,7 @@ func (r *stubRepository) SavePullRequest(_ context.Context, pr models.PullReques
 	return nil
 }
 
-func (r *stubRepository) GetPullRequestByKey(_ context.Context, _ uuid.UUID) (models.PullRequest, error) {
+func (r *stubRepository) GetPullRequestByKey(_ context.Context, _, _ uuid.UUID) (models.PullRequest, error) {
 	return models.PullRequest{}, nil
 }
 
@@ -171,15 +171,15 @@ func (r *stubRepository) ListPendingEnrichments(_ context.Context, _ uuid.UUID, 
 	return nil, nil
 }
 
-func (r *stubRepository) ClaimEnrichment(_ context.Context, _ uuid.UUID) (bool, error) {
+func (r *stubRepository) ClaimEnrichment(_ context.Context, _, _ uuid.UUID) (bool, error) {
 	return true, nil
 }
 
-func (r *stubRepository) SaveEnrichmentResult(_ context.Context, _ uuid.UUID, _ models.PullRequestEnrichmentData) error {
+func (r *stubRepository) SaveEnrichmentResult(_ context.Context, _, _ uuid.UUID, _ models.PullRequestEnrichmentData) error {
 	return nil
 }
 
-func (r *stubRepository) MarkEnrichmentFailed(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *stubRepository) MarkEnrichmentFailed(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 func TestSearchPullRequests(t *testing.T) {
 	orgID := uuid.New()

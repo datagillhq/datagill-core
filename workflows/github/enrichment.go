@@ -122,9 +122,10 @@ func enrichOne(
 ) {
 	prKey := row.PullRequestKey
 	orgID := row.OrgID
+	rowInput := ghactivities.EnrichmentRowInput{OrgID: orgID, PullRequestKey: prKey}
 
 	var claimed bool
-	if err := workflow.ExecuteActivity(claimCtx, (*ghactivities.Activities).ClaimEnrichment, prKey).Get(ctx, &claimed); err != nil {
+	if err := workflow.ExecuteActivity(claimCtx, (*ghactivities.Activities).ClaimEnrichment, rowInput).Get(ctx, &claimed); err != nil {
 		logger.Error("skipping enrichment: claim failed", "pr_key", prKey, "error", err)
 		return
 	}
@@ -140,21 +141,22 @@ func enrichOne(
 		FlagKeys:       flagKeys,
 	}).Get(ctx, &enrichData); err != nil {
 		logger.Error("enrichment failed after retries", "pr_key", prKey, "error", err)
-		markEnrichmentFailed(ctx, markCtx, logger, prKey)
+		markEnrichmentFailed(ctx, markCtx, logger, rowInput)
 		return
 	}
 
 	if err := workflow.ExecuteActivity(saveCtx, (*ghactivities.Activities).SaveEnrichmentResult, ghactivities.SaveEnrichmentResultInput{
+		OrgID:          orgID,
 		PullRequestKey: prKey,
 		Data:           enrichData,
 	}).Get(ctx, nil); err != nil {
 		logger.Error("save enrichment result failed after retries", "pr_key", prKey, "error", err)
-		markEnrichmentFailed(ctx, markCtx, logger, prKey)
+		markEnrichmentFailed(ctx, markCtx, logger, rowInput)
 	}
 }
 
-func markEnrichmentFailed(ctx, markCtx workflow.Context, logger log.Logger, prKey uuid.UUID) {
-	if err := workflow.ExecuteActivity(markCtx, (*ghactivities.Activities).MarkEnrichmentFailed, prKey).Get(ctx, nil); err != nil {
-		logger.Error("mark enrichment failed error", "pr_key", prKey, "error", err)
+func markEnrichmentFailed(ctx, markCtx workflow.Context, logger log.Logger, row ghactivities.EnrichmentRowInput) {
+	if err := workflow.ExecuteActivity(markCtx, (*ghactivities.Activities).MarkEnrichmentFailed, row).Get(ctx, nil); err != nil {
+		logger.Error("mark enrichment failed error", "pr_key", row.PullRequestKey, "error", err)
 	}
 }

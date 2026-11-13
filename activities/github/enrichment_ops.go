@@ -24,10 +24,17 @@ func (a *Activities) ListPendingEnrichments(ctx context.Context, input ListPendi
 	return rows, nil
 }
 
+// EnrichmentRowInput identifies one pull_request_enrichments row. OrgID scopes every query
+// to the tenant that owns the row.
+type EnrichmentRowInput struct {
+	OrgID          uuid.UUID
+	PullRequestKey uuid.UUID
+}
+
 // ClaimEnrichment transitions a claimable enrichment to in_progress.
 // It returns false when another run already holds or finished the row.
-func (a *Activities) ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error) {
-	claimed, err := a.repo.ClaimEnrichment(ctx, pullRequestKey)
+func (a *Activities) ClaimEnrichment(ctx context.Context, input EnrichmentRowInput) (bool, error) {
+	claimed, err := a.repo.ClaimEnrichment(ctx, input.OrgID, input.PullRequestKey)
 	if err != nil {
 		return false, fmt.Errorf("ClaimEnrichment: %w", err)
 	}
@@ -36,21 +43,22 @@ func (a *Activities) ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UU
 
 // SaveEnrichmentResultInput is the input for SaveEnrichmentResult.
 type SaveEnrichmentResultInput struct {
+	OrgID          uuid.UUID
 	PullRequestKey uuid.UUID
 	Data           models.PullRequestEnrichmentData
 }
 
 // SaveEnrichmentResult writes enrichment output and marks the row completed.
 func (a *Activities) SaveEnrichmentResult(ctx context.Context, input SaveEnrichmentResultInput) error {
-	if err := a.repo.SaveEnrichmentResult(ctx, input.PullRequestKey, input.Data); err != nil {
+	if err := a.repo.SaveEnrichmentResult(ctx, input.OrgID, input.PullRequestKey, input.Data); err != nil {
 		return fmt.Errorf("SaveEnrichmentResult: %w", err)
 	}
 	return nil
 }
 
 // MarkEnrichmentFailed resets to pending for retry or marks failed when the attempt cap is reached.
-func (a *Activities) MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error {
-	if err := a.repo.MarkEnrichmentFailed(ctx, pullRequestKey); err != nil {
+func (a *Activities) MarkEnrichmentFailed(ctx context.Context, input EnrichmentRowInput) error {
+	if err := a.repo.MarkEnrichmentFailed(ctx, input.OrgID, input.PullRequestKey); err != nil {
 		return fmt.Errorf("MarkEnrichmentFailed: %w", err)
 	}
 	return nil
