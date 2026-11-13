@@ -82,7 +82,7 @@ func (r *mockRepository) QueryAuditLog(_ context.Context, _ uuid.UUID, _, _ time
 	return repository.AuditLogResult{}, nil
 }
 
-func (r *mockRepository) UpdateIntegrationLastSyncedAt(_ context.Context, _ uuid.UUID, _ time.Time) error {
+func (r *mockRepository) UpdateIntegrationLastSyncedAt(_ context.Context, _, _ uuid.UUID, _ time.Time) error {
 	return nil
 }
 

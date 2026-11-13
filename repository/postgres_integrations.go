@@ -36,14 +36,14 @@ func (r *PostgresRepository) rowToIntegration(row pgx.Row) (models.Integration, 
 	return i, nil
 }
 
-// UpdateIntegrationLastSyncedAt records the high-water mark after a successful sync.
-// Temporary LaunchDarkly compatibility only; new providers must keep cursor state in Temporal.
-func (r *PostgresRepository) UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error {
+// UpdateIntegrationLastSyncedAt records the high-water mark after a successful sync,
+// scoped to the org.
+func (r *PostgresRepository) UpdateIntegrationLastSyncedAt(ctx context.Context, orgID, key uuid.UUID, syncedAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE integrations
-		SET last_synced_at = $2, updated_at = NOW()
-		WHERE key = $1 AND state != 'deleted'
-	`, key, syncedAt)
+		SET last_synced_at = $3, updated_at = NOW()
+		WHERE org_id = $1 AND key = $2 AND state != 'deleted'
+	`, orgID, key, syncedAt)
 	if err != nil {
 		return fmt.Errorf("UpdateIntegrationLastSyncedAt: %w", err)
 	}
