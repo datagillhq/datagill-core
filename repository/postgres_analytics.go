@@ -218,9 +218,27 @@ func (r *PostgresRepository) QueryVelocity(ctx context.Context, orgID uuid.UUID,
 	return res, nil
 }
 
+// auditLogFilter is the WHERE clause shared by the QueryAuditLog count and page queries.
+const auditLogFilter = `
+		FROM feature_flag_changelog ffc
+		JOIN feature_flags ff ON ff.key = ffc.feature_flag_key
+		WHERE ffc.org_id = $1
+		  AND ffc.state  = 'active'
+		  AND ffc.occurred_at >= $2 AND ffc.occurred_at <= $3
+		  AND ($4 = '' OR ff.data->'maintainer'->'team'->>'name' = $4)
+		  AND ($5 = '' OR ffc.data->'actor'->>'email' = $5)`
+
 // QueryAuditLog returns a paginated changelog for an org within [from, to].
 // Optional team and actor filters AND together when both are non-empty.
+//
+// Total is counted separately, like QueryPullRequests: a window count (COUNT(*) OVER())
+// is only read from returned rows, so a page past the end reported a total of 0.
 func (r *PostgresRepository) QueryAuditLog(ctx context.Context, orgID uuid.UUID, from, to time.Time, team, actor string, page, limit int) (AuditLogResult, error) {
+	var result AuditLogResult
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int`+auditLogFilter, orgID, from, to, team, actor).Scan(&result.Total); err != nil {
+		return AuditLogResult{}, fmt.Errorf("QueryAuditLog count: %w", err)
+	}
+
 	const q = `
 		SELECT
 			ffc.occurred_at,
@@ -229,16 +247,8 @@ func (r *PostgresRepository) QueryAuditLog(ctx context.Context, orgID uuid.UUID,
 			COALESCE(ffc.data->'actor'->>'email', ''),
 			COALESCE(ffc.data->'actor'->>'name',  ''),
 			ffc.event_type,
-			ffc.data->'environments',
-			COUNT(*) OVER() AS total
-		FROM feature_flag_changelog ffc
-		JOIN feature_flags ff ON ff.key = ffc.feature_flag_key
-		WHERE ffc.org_id = $1
-		  AND ffc.state  = 'active'
-		  AND ffc.occurred_at >= $2 AND ffc.occurred_at <= $3
-		  AND ($4 = '' OR ff.data->'maintainer'->'team'->>'name' = $4)
-		  AND ($5 = '' OR ffc.data->'actor'->>'email' = $5)
-		ORDER BY ffc.occurred_at DESC
+			ffc.data->'environments'` + auditLogFilter + `
+		ORDER BY ffc.occurred_at DESC, ffc.key DESC
 		LIMIT $6 OFFSET $7`
 
 	offset := (page - 1) * limit
@@ -248,14 +258,13 @@ func (r *PostgresRepository) QueryAuditLog(ctx context.Context, orgID uuid.UUID,
 	}
 	defer rows.Close()
 
-	var result AuditLogResult
 	for rows.Next() {
 		var e AuditEntry
 		var envsJSON []byte
 		if err := rows.Scan(
 			&e.OccurredAt, &e.FlagName, &e.FlagKey,
 			&e.ActorEmail, &e.ActorName, &e.EventType,
-			&envsJSON, &result.Total,
+			&envsJSON,
 		); err != nil {
 			return AuditLogResult{}, fmt.Errorf("QueryAuditLog scan: %w", err)
 		}

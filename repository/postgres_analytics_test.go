@@ -269,6 +269,12 @@ func TestQueryAuditLog(t *testing.T) {
 	if err != nil || res.Total != 2 || len(res.Entries) != 1 {
 		t.Errorf("pagination: err=%v total=%d entries=%d", err, res.Total, len(res.Entries))
 	}
+
+	// Page past the end: no entries, but the total is still the real count.
+	res, err = repo.QueryAuditLog(ctx, orgID, window[0], window[1], "", "", 5, 1)
+	if err != nil || res.Total != 2 || len(res.Entries) != 0 {
+		t.Errorf("page past the end: err=%v total=%d entries=%d, want total=2 entries=0", err, res.Total, len(res.Entries))
+	}
 }
 
 func ptr(f float64) *float64 { return &f }
