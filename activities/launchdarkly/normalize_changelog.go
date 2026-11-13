@@ -120,4 +120,3 @@ func mapActionToEventType(action string) models.EventType {
 		return models.EventTypeUpdated
 	}
 }
-

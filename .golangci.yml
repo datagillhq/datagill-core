@@ -20,6 +20,15 @@ linters-settings:
       - errors.New(
       - errors.Unwrap(
       - errors.Join(
+      # Temporal reads retry, cancellation and continue-as-new intent from the error's
+      # concrete type. Workflows return these errors unchanged on purpose (see
+      # activities/error_classification.go for why wrapping can drop that intent).
+      - temporal.NewNonRetryableApplicationError(
+      - workflow.NewContinueAsNewError(
+      - workflow.Sleep(
+      # Future.Get returns the activity or child workflow error, which carries
+      # Temporal failure details; workflows pass it through as-is.
+      - (go.temporal.io/sdk/internal.Future).Get(
     # Errors returned directly from our own modules do not need re-wrapping.
     ignorePackageGlobs:
       - github.com/datagill/datagill-core/*

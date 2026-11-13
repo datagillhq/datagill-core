@@ -9,28 +9,28 @@ import (
 
 func TestToServiceError(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       error
+		name         string
+		input        error
 		nonRetryable bool
 	}{
 		{
-			name:        "TooManyRequestsError is retryable",
-			input:       &TooManyRequestsError{RetryAfter: 30},
+			name:         "TooManyRequestsError is retryable",
+			input:        &TooManyRequestsError{RetryAfter: 30},
 			nonRetryable: false,
 		},
 		{
-			name:        "UnexpectedStatusError is retryable",
-			input:       &UnexpectedStatusError{StatusCode: 500, Message: "internal error"},
+			name:         "UnexpectedStatusError is retryable",
+			input:        &UnexpectedStatusError{StatusCode: 500, Message: "internal error"},
 			nonRetryable: false,
 		},
 		{
-			name:        "UnauthorizedError is non-retryable",
-			input:       &UnauthorizedError{StatusCode: 401, Message: "bad key"},
+			name:         "UnauthorizedError is non-retryable",
+			input:        &UnauthorizedError{StatusCode: 401, Message: "bad key"},
 			nonRetryable: true,
 		},
 		{
-			name:        "NotFoundError is non-retryable",
-			input:       &NotFoundError{URL: "https://example.com"},
+			name:         "NotFoundError is non-retryable",
+			input:        &NotFoundError{URL: "https://example.com"},
 			nonRetryable: true,
 		},
 	}

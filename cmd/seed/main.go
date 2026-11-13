@@ -18,9 +18,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/datagill/datagill-core/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/datagill/datagill-core/models"
 )
 
 // ptr returns a pointer to v, useful for optional fields.
@@ -76,11 +77,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "enable-checkout-v2", name: "Enable Checkout v2",
 		description: "New checkout flow for premium users",
-		team: "Platform Eng", maintainer: ariel,
+		team:        "Platform Eng", maintainer: ariel,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(100.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOn, daysOld: 60,
+		state:       models.FlagStateOn, daysOld: 60,
 		events: []seedEvent{
 			{59, models.EventTypeCreated, "flag_created", "Created feature flag", ariel, []string{"production", "staging", "development"}},
 			{44, models.EventTypeUpdated, "flag_updated", "Updated targeting rules in staging", ariel, []string{"staging"}},
@@ -94,11 +95,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "apple-pay-integration", name: "Apple Pay Integration",
 		description: "Apple Pay as a payment method at checkout",
-		team: "Revenue Systems", maintainer: marcus,
+		team:        "Revenue Systems", maintainer: marcus,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(100.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: false},
-		state: models.FlagStateOn, daysOld: 45,
+		state:       models.FlagStateOn, daysOld: 45,
 		events: []seedEvent{
 			{44, models.EventTypeCreated, "flag_created", "Created Apple Pay integration flag", marcus, []string{"production", "staging", "development"}},
 			{35, models.EventTypeUpdated, "flag_updated", "Updated payment provider config in staging", marcus, []string{"staging"}},
@@ -111,11 +112,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "sso-integration", name: "SSO Integration",
 		description: "SAML-based single sign-on for enterprise customers",
-		team: "Platform Eng", maintainer: ariel,
+		team:        "Platform Eng", maintainer: ariel,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(100.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOn, daysOld: 35,
+		state:       models.FlagStateOn, daysOld: 35,
 		events: []seedEvent{
 			{34, models.EventTypeCreated, "flag_created", "Created SSO integration flag", ariel, []string{"production", "staging", "development"}},
 			{28, models.EventTypeUpdated, "flag_updated", "Configured SAML provider in staging", ariel, []string{"staging"}},
@@ -128,11 +129,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "feature-flag-audit-ui", name: "Feature Flag Audit UI",
 		description: "Enhanced audit trail view in the management console",
-		team: "Platform Eng", maintainer: sarah,
+		team:        "Platform Eng", maintainer: sarah,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(100.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOn, daysOld: 55,
+		state:       models.FlagStateOn, daysOld: 55,
 		events: []seedEvent{
 			{54, models.EventTypeCreated, "flag_created", "Created audit UI flag", sarah, []string{"production", "staging", "development"}},
 			{40, models.EventTypeUpdated, "flag_updated", "Updated table layout in staging", sarah, []string{"staging"}},
@@ -146,11 +147,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "localization-v2", name: "Localization v2",
 		description: "Redesigned i18n system with dynamic locale loading",
-		team: "Mobile", maintainer: james,
+		team:        "Mobile", maintainer: james,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(100.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOn, daysOld: 40,
+		state:       models.FlagStateOn, daysOld: 40,
 		events: []seedEvent{
 			{39, models.EventTypeCreated, "flag_created", "Created localization v2 flag", james, []string{"production", "staging", "development"}},
 			{28, models.EventTypeUpdated, "flag_updated", "Added Spanish and French locales", james, []string{"staging"}},
@@ -164,11 +165,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "new-onboarding-flow", name: "New Onboarding Flow",
 		description: "Redesigned user onboarding with inline guidance and progress tracking",
-		team: "Mobile", maintainer: james,
+		team:        "Mobile", maintainer: james,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(50.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStatePartial, daysOld: 20,
+		state:       models.FlagStatePartial, daysOld: 20,
 		events: []seedEvent{
 			{19, models.EventTypeCreated, "flag_created", "Created onboarding flow flag", james, []string{"production", "staging", "development"}},
 			{14, models.EventTypeUpdated, "flag_updated", "Updated step 2 UI copy and layout", james, []string{"staging", "development"}},
@@ -180,11 +181,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "mobile-push-notifications", name: "Mobile Push Notifications",
 		description: "Rich push notifications with deep-links for mobile app users",
-		team: "Mobile", maintainer: james,
+		team:        "Mobile", maintainer: james,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(75.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: false},
-		state: models.FlagStatePartial, daysOld: 18,
+		state:       models.FlagStatePartial, daysOld: 18,
 		events: []seedEvent{
 			{17, models.EventTypeCreated, "flag_created", "Created push notifications flag", james, []string{"production", "staging"}},
 			{12, models.EventTypeUpdated, "flag_updated", "Configured notification templates and TTL", james, []string{"staging"}},
@@ -196,11 +197,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "beta-dashboard", name: "Beta Dashboard",
 		description: "New analytics dashboard with real-time metrics and custom date ranges",
-		team: "Platform Eng", maintainer: sarah,
+		team:        "Platform Eng", maintainer: sarah,
 		production:  models.FlagEnvironment{Enabled: true, RolloutPercentage: ptr(25.0)},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStatePartial, daysOld: 14,
+		state:       models.FlagStatePartial, daysOld: 14,
 		events: []seedEvent{
 			{13, models.EventTypeCreated, "flag_created", "Created beta dashboard flag", sarah, []string{"production", "staging", "development"}},
 			{10, models.EventTypeUpdated, "flag_updated", "Updated chart layout and color scheme", sarah, []string{"staging"}},
@@ -212,11 +213,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "dark-mode", name: "Dark Mode",
 		description: "System-wide dark mode theme toggle",
-		team: "Platform Eng", maintainer: sarah,
+		team:        "Platform Eng", maintainer: sarah,
 		production:  models.FlagEnvironment{Enabled: false},
 		staging:     models.FlagEnvironment{Enabled: false},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOff, daysOld: 85,
+		state:       models.FlagStateOff, daysOld: 85,
 		events: []seedEvent{
 			{84, models.EventTypeCreated, "flag_created", "Created dark mode flag", sarah, []string{"development"}},
 			{60, models.EventTypeUpdated, "flag_updated", "Prototype ready for staging review", sarah, []string{"staging"}},
@@ -227,11 +228,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "ai-recommendations", name: "AI Recommendations",
 		description: "ML-powered product recommendations at checkout and homepage",
-		team: "Revenue Systems", maintainer: priya,
+		team:        "Revenue Systems", maintainer: priya,
 		production:  models.FlagEnvironment{Enabled: false},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOff, daysOld: 30,
+		state:       models.FlagStateOff, daysOld: 30,
 		events: []seedEvent{
 			{29, models.EventTypeCreated, "flag_created", "Created AI recommendations flag", priya, []string{"staging", "development"}},
 			{20, models.EventTypeUpdated, "flag_updated", "Updated model inference configuration", priya, []string{"staging"}},
@@ -242,11 +243,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "payment-gateway-v3", name: "Payment Gateway v3",
 		description: "Next-gen payment processing with improved fraud detection",
-		team: "Revenue Systems", maintainer: marcus,
+		team:        "Revenue Systems", maintainer: marcus,
 		production:  models.FlagEnvironment{Enabled: false},
 		staging:     models.FlagEnvironment{Enabled: true},
 		development: models.FlagEnvironment{Enabled: true},
-		state: models.FlagStateOff, daysOld: 25,
+		state:       models.FlagStateOff, daysOld: 25,
 		events: []seedEvent{
 			{24, models.EventTypeCreated, "flag_created", "Created payment gateway v3 flag", marcus, []string{"staging", "development"}},
 			{16, models.EventTypeUpdated, "flag_updated", "Updated Stripe SDK and fraud scoring config", marcus, []string{"staging", "development"}},
@@ -257,11 +258,11 @@ var flags = []seedFlag{
 	{
 		sourceKey: "data-export-api", name: "Data Export API",
 		description: "Self-service CSV and Parquet data export for enterprise analytics",
-		team: "Revenue Systems", maintainer: priya,
+		team:        "Revenue Systems", maintainer: priya,
 		production:  models.FlagEnvironment{Enabled: false},
 		staging:     models.FlagEnvironment{Enabled: false},
 		development: models.FlagEnvironment{Enabled: false},
-		state: models.FlagStateOff, daysOld: 50,
+		state:       models.FlagStateOff, daysOld: 50,
 		events: []seedEvent{
 			{49, models.EventTypeCreated, "flag_created", "Created data export API flag", priya, []string{"development"}},
 			{40, models.EventTypeUpdated, "flag_updated", "Schema design complete, enabled in staging", priya, []string{"staging"}},
