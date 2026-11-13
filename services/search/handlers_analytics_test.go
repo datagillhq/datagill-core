@@ -115,6 +115,32 @@ func TestAnalyticsHandler(t *testing.T) {
 		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_INVALID_DATE_FORMAT")
 	})
 
+	t.Run("from after to returns 400", func(t *testing.T) {
+		srv := newTestServer(t)
+		defer srv.Close()
+
+		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=launched_wins&from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z", testOrgID, testUserID)
+		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_INVALID_DATE_RANGE")
+	})
+
+	t.Run("from equal to to is allowed", func(t *testing.T) {
+		srv := newAnalyticsTestServer(t, &stubPlugin{metric: "velocity", result: analytics.VelocityResponse{}})
+		defer srv.Close()
+
+		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=velocity&from=2026-11-01T00:00:00Z&to=2026-11-01T00:00:00Z", testOrgID, testUserID)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("page that overflows the offset returns 400", func(t *testing.T) {
+		srv := newTestServer(t)
+		defer srv.Close()
+
+		resp := getWithToken(t, srv.URL+"/v1/analytics?metric=audit_log&page=9223372036854775807&limit=100&"+validDateRange, testOrgID, testUserID)
+		assertCode(t, resp, http.StatusBadRequest, "ANALYTICS_INVALID_PAGE")
+	})
+
 	t.Run("unknown metric returns 400", func(t *testing.T) {
 		srv := newTestServer(t)
 		defer srv.Close()
