@@ -263,7 +263,7 @@ activity error:
 | Error | Behaviour |
 |-------|-----------|
 | 401 bad credentials, missing installation | Non-retryable: fail fast, don't hammer the API |
-| 403/429 rate limit | Retryable, next attempt waits for GitHub's `Retry-After` |
+| 403/429 rate limit | Retryable, next attempt waits for the provider's `Retry-After` (GitHub and LaunchDarkly) |
 | 404 on a single PR (deleted repo or PR) | Skipped; the rest of the run continues |
 | Anything else | Retryable with the default policy |
 
@@ -328,7 +328,7 @@ repository layer are shared. The top-level workflow routes on `integration.sourc
 |--------------|--------|
 | Worker crashes mid-sync | Temporal resumes the workflow on another worker from its last completed step. |
 | Sync fails halfway | Cursor not advanced; the next run repeats the window. Upserts absorb duplicates. |
-| GitHub rate limit | Activity waits for `Retry-After`. Enrichment gives up after a 5-minute budget and backs off across runs. |
+| GitHub or LaunchDarkly rate limit | Activity waits for `Retry-After`. Enrichment gives up after a 5-minute budget and backs off across runs. |
 | Credentials revoked | Non-retryable error; the run fails immediately instead of retrying forever. |
 | PR or repo deleted after search | That PR is skipped; the rest of the run continues. |
 | Integration paused or deleted | Next scheduled run exits without calling the provider. |
