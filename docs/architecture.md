@@ -144,11 +144,46 @@ merged PRs:
 5. **Catch up with Continue-As-New:** if the window ended before "now", the next 24-hour chunk
    starts in a fresh run with a clean history.
 
+#### GitHub App and onboarding
+
+DataGill uses one GitHub App. A customer connects GitHub by installing it on an organization
+or personal account; each installation is one `github` integration row. The app is read-only:
+repository `Metadata: read` and `Pull requests: read`.
+
+- **Why a GitHub App, not an OAuth app:** fine-grained, installation-scoped permissions and
+  short-lived installation tokens, with no long-lived user tokens to store.
+- **Why the callback URL, not the setup URL:** GitHub warns that the `installation_id` sent to
+  a setup URL can be spoofed. Instead, `POST /v1/auth/github` returns an install URL with a
+  signed, short-lived `state` and `request_oauth_on_install=true`. The callback
+  (`GET /v1/auth/github`) verifies the `state`, exchanges the one-time `code` for a user token,
+  checks that this user can actually see the installation, then discards the user token and
+  creates the integration and its schedules.
+- **Secrets stay out of the database.** The app ID, private key and client secret come from env
+  vars. `integrations.config` stores only installation metadata (`installation_id`,
+  `account_login`, `account_type`, `repository_selection`). Installation tokens are minted inside
+  activities, so they never land in Postgres or in Temporal workflow history.
+- **Discovery uses the Search API.** GitHub has no endpoint that lists PRs across every repo in
+  an installation, and enumerating repos first costs one call per repo. `GET /search/issues`
+  finds merged PRs owner-wide, then each PR's detail is fetched (10 at a time). Search caps
+  results at 1,000 per query, which is why windows split (see above).
+
 ### PR enrichment
 
 Each saved PR also gets an enrichment row. `GitHubEnrichmentWorkflow` runs on a per-org
 schedule and scans each PR's diff for known flag keys, recording which flags it **added** and
 which it **removed**. This is how DataGill links "flag created" to "code shipped".
+
+The scan follows the approach of LaunchDarkly's
+[`find-code-references-in-pull-request`](https://github.com/launchdarkly/find-code-references-in-pull-request)
+action (`activities/github/scan_diff.go`):
+
+- **Flag keys** are the org's current keys from `feature_flags` (`data.source.key`), loaded
+  when the PR is enriched.
+- **Diff fetch:** the PR's unified diff. If GitHub answers 406 (diff too large), the worker
+  rebuilds it from the compare API, since it has no local git checkout.
+- **Files skipped:** dotfiles, and files whose path changed (renames).
+- **Matching:** plain substring match of each flag key on `+` and `-` lines. A key on any `+`
+  line counts as **added**; a key only on `-` lines counts as **removed**.
 
 ```mermaid
 stateDiagram-v2
@@ -357,6 +392,10 @@ make test-int    # needs Docker
   `source_records`, so it can be replayed, but nothing replays it automatically yet.
 - **One Postgres for writes and analytics.** That's fine at this scale. Heavy analytics would
   move to a read replica or a column store.
+- **No retroactive flag links.** Keys are matched against the flags known when the PR is
+  enriched. A flag created later is not linked to older PRs; re-enriching means resetting
+  rows to `pending` by hand (there is also no API to retry a `failed` row).
+- **Renamed files are not scanned,** including renames that also change content.
 - **Diff scanning is plain text matching.** A flag key that appears in a comment or string
   counts as a reference. This is the same approach LaunchDarkly's own code-references action
   uses.
