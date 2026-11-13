@@ -89,7 +89,7 @@ flowchart LR
 4. **Serve.** The UI calls `GET /v1/analytics?metric=...`. Each metric is a small plugin
    that runs an org-scoped SQL query over the canonical tables.
 
-More detail on design decisions and trade-offs is in [`AGENTS.md`](./AGENTS.md).
+More detail on design decisions and trade-offs is in [`docs/architecture.md`](./docs/architecture.md).
 
 ## Roadmap
 
@@ -203,8 +203,9 @@ Each directory is its own Go module in a single `go.work` workspace.
 
 ## Documentation
 
-- [`AGENTS.md`](./AGENTS.md): architecture decisions, data model, engineering standards.
-  This is the source of truth for contributors and coding agents.
+- [`docs/architecture.md`](./docs/architecture.md): how the system works and why, the data model, and decision history.
+- [`docs/product.md`](./docs/product.md): requirements, roadmap and open questions.
+- [`AGENTS.md`](./AGENTS.md): the rules for contributors and coding agents, with [`docs/engineering-standards.md`](./docs/engineering-standards.md) for the details.
 - [`LOCALSETUP.md`](./LOCALSETUP.md): full local setup, including GitHub App configuration.
 - [`docs/`](./docs), including [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md):
   design and implementation plans written while building. These are kept for context, and the code wins

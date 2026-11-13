@@ -1,6 +1,6 @@
 Create a new database migration. The migration purpose is: $ARGUMENTS
 
-Read AGENTS.md Section 6 (Database Schema) before writing anything. Every migration decision must be consistent with it.
+Read the Data model section of docs/architecture.md and the existing files in db/migrations/ before writing anything. Every migration decision must be consistent with them.
 
 ---
 
@@ -44,7 +44,7 @@ The `down` section must exactly reverse the `up` section. If a `down` is genuine
 - Never `DROP COLUMN` or `DROP TABLE` without confirming the column/table is unused across all services and all deployed versions
 - Never rename a column directly — add the new column, migrate data, remove the old one in separate migrations
 
-**Type choices (from AGENTS.md §11.2)**
+**Type choices (from docs/engineering-standards.md, PostgreSQL)**
 - Timestamps: always `timestamptz` — never `timestamp`
 - Enums: always `text` with a `CHECK` constraint — never Postgres `ENUM` type
 - UUIDs: always `uuid` type with `DEFAULT uuid_generate_v4()` (or deterministic from application)
@@ -91,7 +91,7 @@ The `down` section must exactly reverse the `up` section. If a `down` is genuine
    ```
    Both must succeed without errors.
 
-5. **Verify the schema matches AGENTS.md** — read Section 6 and confirm that the post-migration schema matches what is documented. If the migration changes something not yet reflected in AGENTS.md, update AGENTS.md in the same PR.
+5. **Verify the docs still hold** — confirm the post-migration schema is consistent with the Data model section of docs/architecture.md. If the migration adds a table or changes a convention, update that section in the same PR.
 
 6. **Run integration tests**
    ```bash
@@ -157,5 +157,5 @@ DROP INDEX CONCURRENTLY IF EXISTS idx_feature_flags_data_environments;
 - [ ] `make migrate` succeeds
 - [ ] Rolling back and re-applying succeeds
 - [ ] Integration tests pass: `go test -run Integration ./repository/...`
-- [ ] AGENTS.md Section 6 updated if schema changes are not already documented
+- [ ] docs/architecture.md Data model updated if a table or convention changed
 - [ ] Large-table indexes use `CONCURRENTLY` and `-- migrate:no-transaction`

@@ -1,6 +1,6 @@
 Implement a new feature flag provider for DataGill. The provider name is: $ARGUMENTS
 
-Read AGENTS.md in full before writing a single line of code. All decisions must trace back to it.
+Read AGENTS.md and docs/architecture.md before writing a single line of code. All decisions must trace back to them.
 
 ---
 
@@ -184,5 +184,5 @@ File: `activities/{provider}_integration_test.go` (build tag: `//go:build integr
 - [ ] All workflows have testsuite unit tests
 - [ ] Integration test exists and is tagged `//go:build integration`
 - [ ] `models.Source{Provider}` added to the Source enum in `models/integration.go`
-- [ ] Provider added to AGENTS.md Section 9 (Repo Structure) under "Adding a new provider"
+- [ ] AGENTS.md "Common tasks" still describes the steps correctly
 - [ ] No changes outside the files listed in this guide

@@ -82,9 +82,9 @@ For every workflow or activity added or modified:
 
 ## 8. AGENTS.md compliance
 
-- [ ] **No contradiction with AGENTS.md.** If this PR changes behavior that conflicts with AGENTS.md, update AGENTS.md first (in the same PR or a prior one) and document the decision in the changelog.
-- [ ] **Open questions not resolved.** If the PR depends on a TBD decision in AGENTS.md Section 7, resolve the question in AGENTS.md before merging.
-- [ ] **New provider or schema change documented.** If this PR adds a provider or changes the schema, AGENTS.md Sections 6 and 9 are updated.
+- [ ] **No contradiction with AGENTS.md.** If this PR changes behavior that conflicts with AGENTS.md or docs/architecture.md, update them in the same PR and add a line under "Decision history" in docs/architecture.md.
+- [ ] **Open questions not resolved.** If the PR depends on an open question in docs/product.md, resolve it there before merging.
+- [ ] **New provider or schema change documented.** If this PR adds a provider or changes data-model conventions, docs/architecture.md (Data model) and the AGENTS.md repo map / common tasks are updated.
 
 ---
 
