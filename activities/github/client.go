@@ -233,8 +233,9 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 
 // FetchRawDiff fetches the raw unified diff for a pull request.
 // On HTTP 406 (diff too large) it falls back to the compare API and reconstructs
-// a unified diff from per-file patches.
-func (c *Client) FetchRawDiff(ctx context.Context, installationToken, owner, repo string, number int64, baseRef, headSHA string) (string, error) {
+// a unified diff from per-file patches. compareBase and compareHead are the commits to
+// compare in that case (see CompareRange).
+func (c *Client) FetchRawDiff(ctx context.Context, installationToken, owner, repo string, number int64, compareBase, compareHead string) (string, error) {
 	if installationToken == "" {
 		return "", fmt.Errorf("installation token is required")
 	}
@@ -254,7 +255,10 @@ func (c *Client) FetchRawDiff(ctx context.Context, installationToken, owner, rep
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotAcceptable { // 406: diff too large
-		return c.fetchDiffFromCompare(ctx, installationToken, owner, repo, baseRef, headSHA)
+		if compareBase == "" || compareHead == "" {
+			return "", fmt.Errorf("diff too large and no commits to compare")
+		}
+		return c.fetchDiffFromCompare(ctx, installationToken, owner, repo, compareBase, compareHead)
 	}
 
 	if rateLimited := c.rateLimitFromResponse(resp); rateLimited != nil {
