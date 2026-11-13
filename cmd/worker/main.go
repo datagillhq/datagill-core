@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 
@@ -23,6 +24,15 @@ import (
 const taskQueue = "etl"
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("worker error: %v", err)
+	}
+}
+
+// run starts the worker and blocks until SIGINT or SIGTERM. Its deferred calls close the
+// Temporal client and then the Postgres pool, after the worker has drained in-flight
+// activities; log.Fatalf in main would skip them, so errors are returned instead.
+func run() error {
 	dbURL := mustEnv("APP_DATABASE_URL")
 	temporalAddr := mustEnv("TEMPORAL_ADDRESS")
 	encKeyHex := mustEnv("ENCRYPTION_KEY")
@@ -36,6 +46,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect to postgres: %v", err)
 	}
+	defer repo.Close()
 
 	tc, err := client.Dial(client.Options{HostPort: temporalAddr})
 	if err != nil {
@@ -65,8 +76,9 @@ func main() {
 
 	log.Printf("worker starting on task queue %q → temporal %s", taskQueue, temporalAddr)
 	if err := w.Run(worker.InterruptCh()); err != nil {
-		log.Fatalf("worker error: %v", err)
+		return fmt.Errorf("run worker: %w", err)
 	}
+	return nil
 }
 
 func mustEnv(key string) string {
