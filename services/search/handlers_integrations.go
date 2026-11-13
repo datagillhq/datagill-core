@@ -152,6 +152,7 @@ func (a *app) startGitHubAuthHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.githubAuth.Start(r.Context(), orgID, userIDFromCtx(r), req.ReturnTo)
 	if err != nil {
+		zerolog.Ctx(r.Context()).Error().Err(err).Msg("start github auth failed")
 		writeCode(w, http.StatusInternalServerError, "INTERNAL_ERROR")
 		return
 	}
@@ -161,8 +162,14 @@ func (a *app) startGitHubAuthHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) githubAuthCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	redirectURL, err := a.githubAuth.Complete(r.Context(), r.URL.Query())
-	if err != nil && redirectURL == "" {
-		redirectURL = buildGitHubErrorRedirect(a.config.FrontendURL, "/settings/integrations", "integration_create_failed")
+	if err != nil {
+		// The browser only sees an error code in the redirect, so this log line is the
+		// only record of why a connect failed. Warn, not Error: an expired or forged
+		// state is client-side and expected.
+		zerolog.Ctx(r.Context()).Warn().Err(err).Msg("github auth callback failed")
+		if redirectURL == "" {
+			redirectURL = buildGitHubErrorRedirect(a.config.FrontendURL, "/settings/integrations", "integration_create_failed")
+		}
 	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
