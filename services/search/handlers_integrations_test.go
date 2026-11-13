@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -68,6 +69,24 @@ func TestCreateIntegrationHandler(t *testing.T) {
 		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", body)
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("expected 201, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("schedule failure rolls back the integration", func(t *testing.T) {
+		integrationsRepo := &stubIntegrationsRepo{}
+		scheduler := &stubScheduler{createErr: errors.New("temporal unavailable")}
+		srv := newTestServerWithGitHubAuthAndScheduler(t, integrationsRepo, &stubOrgRepo{}, &stubValidator{}, analytics.NewRegistry(), scheduler, nil)
+		defer srv.Close()
+
+		resp := requestWithToken(t, http.MethodPost, srv.URL+"/v1/integrations", body)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", resp.StatusCode)
+		}
+		if scheduler.createCall == nil {
+			t.Fatal("expected a schedule create attempt")
+		}
+		if len(integrationsRepo.deletedKeys) != 1 || integrationsRepo.deletedKeys[0] != scheduler.createCall.Key {
+			t.Errorf("expected the new integration %s to be soft-deleted, got %v", scheduler.createCall.Key, integrationsRepo.deletedKeys)
 		}
 	})
 

@@ -23,6 +23,8 @@ Providers that can be connected: `{"providers": ["launchdarkly", "github"]}`.
 Connect an API-key provider (LaunchDarkly). The key is validated against the provider before
 saving, encrypted with AES-256-GCM, and never returned. On success the org row is created if
 needed, and the Temporal schedules are created, with a first sync triggered immediately.
+If the schedules cannot be created, the new integration is soft-deleted and the call returns
+`500`, so the client can simply retry.
 
 ```json
 { "source": "launchdarkly", "api_key": "api-xxxxxxxx" }
