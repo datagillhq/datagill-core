@@ -48,8 +48,9 @@ Everything listed here is in this repository and covered by tests.
     or actor.
   - `top_teams`: teams ranked by flag change activity. Team comes from the flag's
     maintainer team in LaunchDarkly.
-  - `velocity`: org-wide average time from flag creation to full rollout. It is not yet
-    broken down by team.
+  - `velocity`: an org-wide average time-to-rollout for flags now at 100%. This is a rough
+    signal. It measures from when DataGill first stored the flag, not from when the flag was
+    created in LaunchDarkly, and it isn't broken down by team yet.
   - `audit_log` and `pull_requests`: the feeds above.
 - **Multi-tenant, durable pipelines.**
   - Every query and every deterministic key is scoped by `org_id`.
@@ -66,7 +67,7 @@ Everything listed here is in this repository and covered by tests.
 | What flags changed in the last N hours, by whom, and in which environments? | ✅ Today |
 | Which flags launched in production this month, and who launched them? | ✅ Today |
 | Which teams have the most flag activity? | ✅ Today |
-| Roughly how long does it take us to get a flag to full rollout? | ✅ Today (org-wide) |
+| Roughly how long does it take us to get a flag to full rollout? | ⚠️ Rough, org-wide only (see `velocity` above) |
 | Which flag keys did each merged PR add or remove? | ✅ Today |
 | Which PRs are behind this specific flag launch? | Roadmap. The data is linked, but there's no launch → PR view yet. |
 | Was a change made by a human or an automated token? | Roadmap |
