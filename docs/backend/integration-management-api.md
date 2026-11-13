@@ -78,7 +78,7 @@ Example error codes:
 
 ## Endpoints
 
-All endpoints require `X-Org-Id` header (set by API gateway after JWT validation). All use JSON.
+All endpoints require `Authorization: Bearer <JWT>`; the org comes from the token's `organizationId` claim. All use JSON.
 
 ---
 

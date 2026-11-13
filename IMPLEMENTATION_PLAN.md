@@ -1,5 +1,8 @@
 # Implementation Plan
 
+> **Historical design doc.** Written while building; parts are out of date. The code and [`AGENTS.md`](./AGENTS.md) are the source of truth where they disagree.
+> Notably: auth is JWT validation against BetterAuth's JWKS (no `X-Org-Id` gateway header), the API is `/v1/integrations` + `/v1/analytics` (no `/search`, `/flags` or `/timeline`), and logs ship through Grafana Alloy (not Promtail).
+
 This document is the execution guide for building DataGill. Architecture and product decisions
 live in `AGENTS.md` — read that first. This document tells you *how* to build it, *in what order*,
 and *who can work on what simultaneously*.

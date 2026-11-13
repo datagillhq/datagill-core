@@ -21,6 +21,8 @@ DataGill is a **business intelligence platform for engineering teams**. It conne
 
 **MVP = feature flag providers only.** Architecture must accommodate future data source categories without rearchitecting the pipeline.
 
+**Implemented today:** LaunchDarkly (flags) and GitHub (merged PRs, with diffs scanned for flag keys). Unleash and Flagsmith are declared as `models.Source` values but have no extract workflow. The tables in §1 are the product target, not a statement of what is built — `README.md` lists what works today.
+
 ---
 
 ## 1. Product Requirements
@@ -113,7 +115,7 @@ Two runtime components: a **Worker** (Temporal, handles all ETL) and a **Search 
 
 | Step | Component |
 |------|-----------|
-| 1. Poll source APIs | LaunchDarkly / Unleash / Flagsmith |
+| 1. Poll source APIs | LaunchDarkly / GitHub (Unleash / Flagsmith not implemented) |
 | 2. Orchestrate workflows | Temporal (self-hosted) — Worker binary |
 | 3. Store and query data | PostgreSQL app DB |
 | 4. Serve queries | Search Service :8082 |
@@ -121,41 +123,40 @@ Two runtime components: a **Worker** (Temporal, handles all ETL) and a **Search 
 
 ### Temporal Workflow Hierarchy
 
-Extract and transform workflows are provider-specific. Shared code lives in save activities, canonical models, and the repository layer. Adding a new provider means writing new extract/transform workflows and activities — zero changes to existing provider code.
+Extract and transform logic is provider-specific. Shared code lives in save activities, canonical models, and the repository layer. Adding a new provider means writing a new extract workflow and activities — zero changes to existing provider code.
 
-- **FeatureFlagETLWorkflow** — one per integration, runs on schedule. Routes to provider-specific extract workflow by `integration.source`.
-  - **LaunchDarklyExtractWorkflow** — provider-specific orchestrator
-    - `ListAuditLogs` — sequential pagination through all audit log pages
-    - `GetFlagDetail` — parallel GET per unique flag key (workflow.Go goroutines)
-    - `SaveSourceRecord` — saves raw API responses to `source_records` table
-    - For each audit event → fire-and-forget `LaunchDarklyChangelogTransformWorkflow` (ack start only)
-  - **LaunchDarklyChangelogTransformWorkflow**
-    - `NormalizeChangelog` (LD-specific)
-    - `SaveChangelog` (shared)
-  - For each unique flag → fire-and-forget **LaunchDarklyFeatureFlagTransformWorkflow** (ack start only)
-    - `NormalizeFlagDetail` (LD-specific)
-    - `SaveFeatureFlag` (shared)
+- **FeatureFlagETLWorkflow** — one per integration, started by that integration's schedule. Loads the integration, exits quietly if it is paused or deleted, otherwise routes by `integration.source` to a child extract workflow.
+  - **LaunchDarklyExtractWorkflow** — child, waits for completion.
+    - `ScrollAuditLogs` — pages through the audit log since `last_synced_at`, saving each entry to `source_records`
+    - `GetFlagDetail` — parallel GET per unique flag (workflow.Go), saving each response to `source_records`
+    - `NormalizeChangelog` → `SaveChangelog` and `NormalizeFlagDetail` → `SaveFeatureFlag` — run as parallel activities inside the same workflow (no child transform workflows)
+    - `UpdateLastSyncedAt` — only after the run completes
+  - **GitHubExtractWorkflow** — child, `ParentClosePolicy: ABANDON`; the parent only confirms it started.
+    - Searches merged PRs in a window starting at `last_synced_at` (minus a 5-minute overlap; 30 days back on first sync), splitting the window when search results exceed GitHub's limits
+    - Fetches PR details in parallel batches, saves raw responses, normalizes, upserts `pull_requests` and queues a `pull_request_enrichments` row in the same transaction
+    - Advances `last_synced_at`; processes at most 24 hours per run and continues via Continue-As-New
+- **GitHubEnrichmentWorkflow** — one schedule per org. Claims pending `pull_request_enrichments` rows, fetches each PR diff, and records which known flag keys the PR added or removed. Long-term retry (30 min doubling to 24 h, 10 attempts) lives in the table, not in Temporal.
 
-**Tables written to:** `organizations` · `integrations` · `source_records` · `feature_flags` · `feature_flag_changelog`
+**Tables written to:** `organizations` · `integrations` · `source_records` · `feature_flags` · `feature_flag_changelog` · `pull_requests` · `pull_request_enrichments`
 
 ### Temporal Schedule (per integration)
 
 | Property | Value |
 |----------|-------|
-| Frequency | Every 5–60 min (configurable per integration) |
+| Frequency | Every 30 min, fixed (`etlInterval` in `services/search/scheduler.go`); not configurable per integration yet |
 | Overlap | ScheduleOverlapPolicy.SKIP — in-progress runs are not interrupted |
-| Jitter | Up to 30s at startup to spread load |
+| Offset | 30s for ETL schedules; per-org hashed offset for enrichment schedules |
 | Cursor | `integrations.last_synced_at`: how far the last successful run got. Each run resumes from it (with a small overlap) and updates it only after succeeding, so failed runs leave no gap. Needed because each scheduled run is a separate workflow with no state carried between runs. Within a run, paging state (e.g. LD's `before` timestamp) stays in workflow state. |
-| History | Continue-As-New every 100 pages |
+| History | GitHub: Continue-As-New after each 24h window. LaunchDarkly: one workflow run per sync |
 | Lifecycle | Created on integration connect (idempotent, so a reconnect fills in a missing schedule). Not paused or deleted with the integration: each run reads the integration state and stops without calling the provider when it is paused or deleted. |
 
 ### Pagination (LaunchDarkly)
 
-LD audit log returns max 20 entries per page. No cursor token — walk pages by passing the earliest date in the current page as `before` on the next request. Pagination is sequential; transform workflows are dispatched fire-and-forget per event/flag as Extract completes. Flag detail fetches run in parallel using `workflow.Go` goroutines.
+LD audit log returns max 20 entries per page. `ScrollAuditLogs` follows LD's `_links.next` URLs sequentially, bounded by `after = last_synced_at`, inside a single activity. Flag detail fetches run in parallel using `workflow.Go` goroutines.
 
-### Fire-and-Forget with Ack
+### Child workflows
 
-Child workflows use `ParentClosePolicy: ABANDON` so they survive if the parent finishes first. Extract calls `GetChildWorkflowExecution().Get()` to confirm each child started — guarantees delivery without waiting for completion. If a child fails to start, Extract surfaces the error.
+`FeatureFlagETLWorkflow` waits for `LaunchDarklyExtractWorkflow` to complete. For GitHub it starts `GitHubExtractWorkflow` with `ParentClosePolicy: ABANDON` and calls `GetChildWorkflowExecution().Get()` only to confirm it started; an already-running extract is treated as success.
 
 ---
 
@@ -165,34 +166,32 @@ Child workflows use `ParentClosePolicy: ABANDON` so they survive if the parent f
 
 `FeatureFlagETLWorkflow` fires on a Temporal schedule (5–60 min) per integration. Routes to the correct provider-specific extract workflow based on `integration.source`. One workflow instance per integration row.
 
-### Step 2 — Extract (LaunchDarklyExtractWorkflow)
+### Step 2 — Extract
 
-Provider-specific. Owns all API calls, pagination logic, and raw data persistence.
+Provider-specific. Owns all API calls, pagination logic, and raw data persistence. See the workflow hierarchy in §3 for the LaunchDarkly and GitHub specifics.
 
-- **Fetch audit logs** — `ListAuditLogs` activity calls `GET /auditlog?before=<cursor>&limit=20` sequentially, concatenating all pages until an empty page is returned. The poll cursor (a `before` timestamp) is stored in Temporal's durable workflow state — no DB column needed. Calls Continue-As-New after 100 pages to keep workflow history lean.
-- **Fetch flag details** — `GetFlagDetail` activity calls `GET /flags/<project_key>/<flag_key>` for each unique flag key found in the audit logs. Runs in parallel using `workflow.Go` goroutines.
-- **Save raw data** — `SaveSourceRecord` activity (shared) persists each raw API response to the `source_records` table before any transformation. This is the permanent, SQL-queryable copy of raw provider data. Each record gets a deterministic key (UUID v5) for cross-table correlation. `source_records` is append-only — data goes in, never changes.
-- **Fan out** — For each audit event, spawns a `LaunchDarklyChangelogTransformWorkflow` fire-and-forget. For each unique flag, spawns a `LaunchDarklyFeatureFlagTransformWorkflow` fire-and-forget. Both use `GetChildWorkflowExecution().Get()` to confirm the child started without waiting for completion.
+- **Save raw data first** — every raw API response is persisted to the append-only `source_records` table before any transformation. Each record gets a deterministic key (UUID v5) for cross-table correlation.
+- **Resume from the cursor** — each run starts from `integrations.last_synced_at` and updates it only after the whole window is saved.
 
-### Step 3 — Transform Changelog (LaunchDarklyChangelogTransformWorkflow)
+### Step 3 — Transform
 
-One per audit event. Two activities:
+Normalize activities (provider-specific) map raw payloads to canonical structs; shared save activities upsert them:
 
-- `NormalizeChangelog` (provider-specific) — deserializes raw JSON into `LDAuditEntry`, maps to canonical normalized data structure. Handles `titleVerb` → `event_type` mapping, actor extraction, environment inference, rollback detection (flag toggled back within short window), and automated change detection (`token.serviceToken`).
-- `SaveChangelog` (shared) — upserts to `feature_flag_changelog`, deduped on `UNIQUE(integration_id, source_key)`.
+- `NormalizeChangelog` → `SaveChangelog` — upserts `feature_flag_changelog`, deduped on its deterministic `key`. Maps LD actions to `event_type`, extracts the actor and affected environments.
+- `NormalizeFlagDetail` → `SaveFeatureFlag` — upserts `feature_flags`, deduped on its deterministic `key`.
+- GitHub PRs are normalized and upserted into `pull_requests` the same way.
 
-### Step 4 — Transform Flag (LaunchDarklyFeatureFlagTransformWorkflow)
+Not implemented yet (data model allows it): rollback detection, automated-vs-human detection (`token.serviceToken` is parsed but not stored).
 
-One per unique flag. Two activities:
+### Step 4 — Enrich (GitHubEnrichmentWorkflow)
 
-- `NormalizeFlagDetail` (provider-specific) — deserializes raw JSON into `LDFlagDetail`, maps to canonical normalized data structure. Extracts flag name, description, environment states, maintainer, lifecycle signals.
-- `SaveFeatureFlag` (shared) — upserts to `feature_flags`, deduped on `UNIQUE(key)`. Derives state from the primary environment's enabled status.
+Per-org schedule. Scans each merged PR's diff for known flag keys (same approach as LaunchDarkly's `find-code-references-in-pull-request`) and stores `feature_flags.added` / `removed` in `pull_request_enrichments.enrichment`.
 
 ### Step 5 — Serve (Search Service)
 
-Read-only. All queries scoped by `org_id`.
+Read-only for analytics. All queries scoped by `org_id` from the verified JWT.
 
-- **Structured search** — apply filters (environment, actor, date range) via parameterized SQL and JSONB containment queries (`@>`) over `feature_flag_changelog` and `feature_flags`.
+- **Analytics** — `GET /v1/analytics?metric=...` routes to a registered plugin (`launched_wins`, `top_teams`, `velocity`, `audit_log`, `pull_requests`), each a parameterized SQL query over the canonical tables.
 - **Semantic search (post-MVP)** — embed query → ANN search over embeddings → re-rank by recency → return top 20.
 
 ### Post-MVP — Enrich
@@ -203,11 +202,11 @@ Read-only. All queries scoped by `org_id`.
 ### Invariants
 
 - **All writes are idempotent.** Upsert on stable keys throughout; reprocessing any event is always safe.
-- **Dedup at the DB layer.** `UNIQUE(key)` on `feature_flags`. `UNIQUE(integration_id, source_key)` on `feature_flag_changelog`.
+- **Dedup at the DB layer.** `UNIQUE(key)` on every canonical table; keys are deterministic, so re-ingesting the same entity hits the same row.
 - **Every query filters by `org_id` first.** No cross-tenant leakage. Ever.
 - **Activities are the unit of retry.** Never retry in application code — let Temporal handle it.
 - **Extract is rerunnable.** Stateless API calls plus append-only writes to `source_records`.
-- **Transform is rerunnable without API calls.** Raw payload lives in Temporal's event history and in `source_records`. Fix a normalization bug, re-trigger transform, zero API calls.
+- **Transform is replayable without API calls.** Raw payloads live in `source_records`. Fix a normalization bug and re-run normalization over them — no provider calls. (No replay tooling exists yet.)
 - **Raw data is permanent.** `source_records` is append-only. Canonical tables carry a `source_record_key` reference back to the raw data.
 - **Deterministic keys.** Cross-table references use UUID v5. Flag keys are scoped to `org_id|source|project|source_key` — environment is **not** part of the key because all environments are stored in the same flag row (`data.environments`). Changelog keys are scoped to `org_id|source|project|source_key` where `source_key` is the provider's audit event ID. `org_id` is included in all keys to prevent collisions across tenants that share the same source, project, and flag/event identifiers (e.g. two orgs both using LaunchDarkly with the same project name). Both Extract and Transform workflows can independently compute the same key — no coordination required.
 
@@ -219,26 +218,29 @@ Read-only. All queries scoped by `org_id`.
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /search` | Semantic (with q) or structured search |
-| `GET /flags` | List all flags. Filter by source, environment |
-| `GET /flags/:flag_key` | Flag detail + paginated event history |
-| `GET /flags/:flag_key/history` | Event history with date range filters |
-| `GET /timeline` | Unified event timeline for an org |
-| `GET /healthz` | Liveness |
-| `GET /metrics` | Prometheus scrape |
+| `GET /healthz` | Liveness (no auth) |
+| `GET /metrics` | Prometheus scrape (no auth) |
+| `GET /v1/auth/github` | GitHub App install callback (signed state, no JWT) |
+| `POST /v1/auth/github` | Start GitHub App install |
+| `GET /v1/integrations/providers` | Connectable providers (`launchdarkly`, `github`) |
+| `POST /v1/integrations` · `GET /v1/integrations` | Connect / list integrations |
+| `PUT /v1/integrations/{key}` · `DELETE /v1/integrations/{key}` | Update (API key, pause/resume) / soft delete |
+| `GET /v1/analytics?metric=...` | `launched_wins`, `top_teams`, `velocity`, `audit_log`, `pull_requests` |
+
+The earlier `/search`, `/flags`, `/flags/:flag_key[/history]` and `/timeline` endpoints were removed; `audit_log` replaced `/timeline`.
 
 ### Constraints
 
-- Read-only. Never writes to any table.
+- Analytics endpoints never write. Integration endpoints write only `organizations` and `integrations` and create Temporal schedules.
 - All queries scoped by `org_id`.
 - Latency targets: p99 < 500ms structured search.
 - Post-MVP: p99 < 2s semantic search; query embedding must use the same model as stored embeddings.
 
 ### Security model
 
-The search service is an **internal service** — it is never exposed directly to the public internet. All traffic is routed through an API gateway (Clerk-backed) that verifies the JWT and injects `X-Org-Id` after confirming the org belongs to the authenticated user. The search service **trusts this header** and does not perform its own JWT validation.
+The search service validates JWTs itself. On startup it fetches the JWKS from BetterAuth (`AUTH_URL/.well-known/jwks.json`, served by the separate `datagill-ui` repo) and exits if it cannot. Each request must carry `Authorization: Bearer <JWT>`; the middleware verifies the RSA signature (other algorithms are rejected) and requires an expiry and reads `organizationId` and `userId` from the claims. The org ID is never taken from request parameters or headers. Only `/healthz`, `/metrics` and the GitHub install callback are unauthenticated.
 
-**Consequence:** if the API gateway is bypassed (e.g. in local dev or a misconfigured deployment), any caller can impersonate any org. This is an accepted risk for internal services. When the API gateway is wired up, the search service requires no auth changes.
+**Privacy (not built):** analytics currently return actor-level data (e.g. actor email on `launched_wins` and `audit_log`) to any member of the org. The intended model — team-level aggregates for leaders, self-only individual data, opt-in sharing, minimum team size — is described in `README.md` under Vision / Roadmap.
 
 ---
 
@@ -246,7 +248,7 @@ The search service is an **internal service** — it is never exposed directly t
 
 Two PostgreSQL 16 instances: `temporal-postgres` (Temporal internals — do not touch) and `app-postgres` (all tables below).
 
-Five tables: `organizations`, `integrations`, `source_records`, `feature_flags`, `feature_flag_changelog`. No FK constraints between tables — cross-table references use deterministic UUID keys that both Extract and Transform workflows can compute independently.
+Seven tables: `organizations`, `integrations`, `source_records`, `feature_flags`, `feature_flag_changelog`, `pull_requests`, `pull_request_enrichments` (the last two are not detailed below; see `db/migrations/006_*` and `007_*`). Data tables have FKs to `organizations(key)` and `integrations(key)` with `ON DELETE CASCADE`, and `pull_request_enrichments` references `pull_requests(key)`. References between data tables (`source_record_key`, `feature_flag_key`) are deterministic UUID keys with no FK, so Extract and Transform can compute them independently.
 
 ### Key Conventions
 
@@ -463,7 +465,7 @@ CREATE INDEX idx_changelog_actor ON feature_flag_changelog USING GIN ((data->'ac
 
 ### Migration
 
-Single file: `001_initialize.sql` — creates `uuid-ossp` extension and all tables above in dependency order. pgvector extension deferred to post-MVP migration.
+Forward-only migrations in `db/migrations/` (`001`–`009` today), applied with golang-migrate (`make migrate`). No down migrations. The pgvector extension is available in the `app-postgres` image but not yet enabled by any migration.
 
 ---
 
@@ -473,7 +475,7 @@ Do not make implementation decisions that depend on unresolved questions.
 
 | Question | Options / Direction | Needed by |
 |----------|---------------------|-----------|
-| Statsig / PostHog support | Add to source enum? | Before second provider |
+| Statsig / PostHog support | Add to source enum? (roadmap, not implemented) | Before next flag provider |
 | Backfill concurrency cap | Max concurrent transform workflows during initial 30-day backfill — value TBD | Before backfill impl |
 | Weekly digest | Scheduled Temporal workflow vs. separate service | Phase 2 |
 | Go DB access layer | sqlc, pgx raw, GORM | LLD session |
@@ -490,9 +492,10 @@ Do not build these yet. Do not design the MVP in a way that makes them hard to a
 
 ### Future Data Sources
 
+GitHub (merged PRs + flag references in diffs) is implemented; see §3.
+
 | Source | Category | Questions Unlocked |
 |--------|----------|-------------------|
-| GitHub | Code | Which PR introduced this flag? Time from commit → prod? |
 | PagerDuty | Incidents | Was there an incident open when this flag was rolled back? |
 | Datadog | Metrics | Did error rate spike when this flag was enabled? |
 | Snowflake | Warehouse | What was conversion rate during this flag's rollout? |
@@ -506,52 +509,50 @@ Future capabilities: natural language querying, Slack/email alerting, public API
 
 ```
 datagill-core/
-├── go.work
-├── go.mod
+├── go.work                      # one Go module per directory below
 ├── Makefile
 ├── cmd/
-│   └── worker/
-│       └── main.go              # Temporal worker entry point
-├── models/
-│   ├── integration.go           # Integration, Source
-│   ├── canonical.go             # FeatureFlag, FeatureFlagChangelog, FeatureFlagData, ChangelogData
-│   ├── source_record.go         # SourceRecord
-│   └── launchdarkly.go          # LDAuditEntry, LDFlagDetail (provider-specific raw types)
-├── repository/
-│   ├── repository.go            # Repository interface
-│   ├── postgres.go              # PostgresRepository struct, constructor, Close
-│   ├── postgres_source_records.go   # SaveSourceRecord
-│   ├── postgres_feature_flags.go    # SaveFeatureFlag
-│   ├── postgres_changelog.go        # SaveChangelog
-│   └── postgres_integrations.go     # GetIntegration, ListIntegrations
+│   ├── worker/                  # Temporal worker entry point
+│   └── seed/                    # demo data seeder
+├── models/                      # canonical models, provider raw types, deterministic keys
+├── repository/                  # PostgresRepository, one file per entity, AES-256-GCM crypto
+├── shared/                      # cross-module error types
 ├── activities/
-│   ├── shared.go                # SaveSourceRecord, SaveChangelog, SaveFeatureFlag
-│   └── launchdarkly.go          # LD extract + normalize activities
+│   ├── shared.go                # GetIntegration, SaveSourceRecord, SaveChangelog, SaveFeatureFlag, ...
+│   ├── error_classification.go  # worker interceptor: retryable vs non-retryable errors
+│   ├── launchdarkly/            # LD client, audit log scroll, flag detail, normalize
+│   └── github/                  # GitHub App client, PR search/detail, diff fetch + scan
 ├── workflows/
 │   ├── etl.go                   # FeatureFlagETLWorkflow (routes by source)
-│   ├── launchdarkly_extract.go  # Pagination, raw data persistence, parallel fetches, fan-out
-│   └── launchdarkly_transform.go # Normalize + save (two workflows)
+│   ├── launchdarkly/            # LaunchDarklyExtractWorkflow
+│   └── github/                  # GitHubExtractWorkflow, GitHubEnrichmentWorkflow
 ├── services/
-│   └── search/                  # Search Service (port: 8082)
-└── frontend/                    # Next.js (not yet started)
+│   └── search/                  # Search Service (port 8082): auth, integrations, scheduler, analytics/
+├── db/migrations/               # forward-only SQL migrations
+└── infra/                       # Prometheus, Loki, Alloy, Grafana config
 ```
+
+The frontend is a separate repository (`datagill-ui`).
 
 **Adding a new provider (e.g. PostHog):**
 
 - `models/posthog.go` — provider-specific raw types
-- `activities/posthog.go` — extract + normalize activities
-- `workflows/posthog_extract.go` — pagination, raw data persistence, fan-out
-- `workflows/posthog_transform.go` — normalize + save
+- `activities/posthog/` — client, extract + normalize activities
+- `workflows/posthog/` — extract workflow (pagination, raw data persistence, normalize + save)
 - One routing case in `workflows/etl.go`
 - Register in `cmd/worker/main.go`
 
 Zero changes to existing LaunchDarkly code.
 
-Docker Compose services: `temporal-postgres`, `temporal`, `temporal-ui` (:8080), `app-postgres`, `worker`, `search` (:8082).
+Docker Compose services: `temporal-postgres`, `temporal`, `temporal-ui` (:8080), `app-postgres` (:5432), `prometheus` (:9090), `loki` (:3100), `alloy`, `grafana` (:3000), `worker`, `search` (:8082).
 
 ---
 
 ## 10. Changelog
+
+### v1.2 — 2026-11-13
+
+- Docs synced with the code ahead of open-sourcing: GitHub ingestion + PR enrichment marked as implemented; workflow hierarchy, schedule settings, endpoints, security model (JWT/JWKS, not `X-Org-Id`), table list, FK statement, migrations and repo structure updated. No architecture decisions changed.
 
 ### v1.1 — 2026-11-01
 
@@ -939,5 +940,5 @@ Temporal's durable execution model handles the reliability guarantees for ETL: e
 
 ---
 
-*Last updated: 2026-03-23*
-*Status: v1.0 — architecture finalized*
+*Last updated: 2026-11-13*
+*Status: v1.2*

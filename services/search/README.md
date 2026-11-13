@@ -1,53 +1,46 @@
 # Search Service
 
-Minimal bootstrap for the DataGill Search Service.
+HTTP API for the DataGill UI. Go + Chi, listens on `:8082` by default (`PORT`).
 
-## Current shape
-
-- Go + Chi HTTP service
-- Read-only bootstrap endpoints
-- In-memory `SearchRepository` for local UI work
-- No Temporal dependency
+It verifies JWTs, manages integrations, creates Temporal schedules when one is connected,
+and serves analytics. It contains no sync logic; that runs in the worker (`cmd/worker`).
 
 ## Endpoints
 
-- `GET /healthz`
-- `GET /readyz`
-- `POST /ping`
-- `GET /api/v1/search`
-- `GET /api/v1/flags`
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/healthz` | none | Liveness |
+| `GET` | `/metrics` | none | Prometheus scrape |
+| `GET` | `/v1/auth/github` | signed state | GitHub App install callback |
+| `POST` | `/v1/auth/github` | JWT | Start GitHub App install, returns the install URL |
+| `GET` | `/v1/integrations/providers` | JWT | Providers that can be connected (`launchdarkly`, `github`) |
+| `POST` | `/v1/integrations` | JWT | Connect an API-key integration (LaunchDarkly) |
+| `GET` | `/v1/integrations` | JWT | List the org's integrations |
+| `PUT` | `/v1/integrations/{key}` | JWT | Update API key or state (pause / resume) |
+| `DELETE` | `/v1/integrations/{key}` | JWT | Soft-delete an integration |
+| `GET` | `/v1/analytics?metric=...` | JWT | `launched_wins`, `top_teams`, `velocity`, `audit_log`, `pull_requests` |
 
-## Local run
+The org comes only from the verified JWT's `organizationId` claim (signing keys are fetched
+from `AUTH_URL/.well-known/jwks.json` at startup). See `docs/backend/analytics-api.md` and
+`docs/backend/integration-management-api.md` for request and response shapes.
 
-The search service now requires `APP_DATABASE_URL`, so `go run` will fail unless
-Postgres is available and the env var is set.
+## Run locally
 
-Recommended path:
+Required env vars: `APP_DATABASE_URL`, `AUTH_URL`, `TEMPORAL_ADDRESS`, `ENCRYPTION_KEY`.
+The service exits on startup if `AUTH_URL` is unreachable, so start `datagill-ui` (separate
+repo) first.
 
-1. From `datagill-core`, copy `.env.example` to `.env`.
-2. Start local dependencies with `make docker-up`.
-3. Run `docker compose up search --build`.
-4. Open `http://localhost:8082/healthz`.
+With Docker, from the repo root:
 
-Direct Go path:
+```bash
+cp .env.example .env   # then set ENCRYPTION_KEY
+make docker-up
+```
 
-1. Install Go 1.26.
-2. From `datagill-core`, copy `.env.example` to `.env`.
-3. Start Postgres with `make docker-up`.
-4. Load env vars into your shell:
+With `go run`, after starting the infrastructure containers (see `LOCALSETUP.md`):
 
-   ```bash
-   set -a
-   source .env
-   set +a
-   ```
-
-5. Run `go run ./services/search/...`.
-6. Open `http://localhost:8082/healthz`.
-
-## Docker run
-
-1. Install Docker Desktop.
-2. From `datagill-core`, copy `.env.example` to `.env`.
-3. Run `docker compose up search --build`.
-4. Open `http://localhost:8082/healthz`.
+```bash
+set -a && source .env && set +a
+TEMPORAL_ADDRESS=localhost:7233 go run ./services/search
+curl http://localhost:8082/healthz
+```

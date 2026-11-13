@@ -4,9 +4,12 @@ This guide gets `datagill-core` running locally and notes the one cross-repo dep
 
 ## Dependency note
 
-Run `datagill-ui` first, then start `datagill-core`. The backend fetches JWKS from BetterAuth on startup.
+The web UI and auth server live in a **separate repository**, `datagill-ui`. This guide
+assumes it is checked out next to this repo as `../datagill-ui`; follow its own `LOCALSETUP.md`.
 
-For UI setup, see [datagill-ui/LOCALSETUP.md](../datagill-ui/LOCALSETUP.md).
+Run `datagill-ui` first, then start `datagill-core`. The search service fetches JWKS from
+BetterAuth (served by `datagill-ui`) on startup and exits if it cannot reach it. The worker,
+databases, and Temporal do not depend on `datagill-ui`.
 
 ---
 
@@ -15,7 +18,7 @@ For UI setup, see [datagill-ui/LOCALSETUP.md](../datagill-ui/LOCALSETUP.md).
 | Tool | Version | Install |
 |------|---------|---------|
 | Go | 1.26+ | https://go.dev/dl |
-| Node.js | 20+ | https://nodejs.org or `nvm` |
+| Node.js | 20+ (only for `datagill-ui`) | https://nodejs.org or `nvm` |
 | Docker Desktop | Any recent | https://www.docker.com/products/docker-desktop |
 | golang-migrate | 4.x | `brew install golang-migrate` |
 
@@ -42,16 +45,12 @@ Make sure `datagill-ui` is already running before starting the backend.
 cp .env.example .env
 ```
 
-Fill in the required local secrets:
+Fill in the required local secret (the worker and search service refuse to start without it):
 
 ```bash
 # Generate a 64-char hex encryption key:
 openssl rand -hex 32
 # Paste as ENCRYPTION_KEY in .env
-
-# Generate a GitHub state signing secret:
-openssl rand -hex 32
-# Paste as GITHUB_APP_STATE_SECRET in .env
 ```
 
 Set `AUTH_URL` to the BetterAuth base path served by the frontend:
@@ -60,7 +59,8 @@ Set `AUTH_URL` to the BetterAuth base path served by the frontend:
 AUTH_URL=http://localhost:3001/api/auth
 ```
 
-For GitHub onboarding in Search, also set:
+GitHub is optional. Without the `GITHUB_APP_*` variables everything else works, but GitHub
+integrations cannot be connected or synced. To enable GitHub, create your own GitHub App and set:
 
 ```
 GITHUB_APP_ID=<your GitHub App ID>
@@ -74,6 +74,7 @@ FRONTEND_URL=http://localhost:3001
 ```
 
 `GITHUB_APP_CALLBACK_URL` must exactly match the callback URL configured in your GitHub App settings.
+Generate `GITHUB_APP_STATE_SECRET` with `openssl rand -hex 32`.
 
 To produce `GITHUB_APP_PRIVATE_KEY_B64` from a downloaded PEM file:
 

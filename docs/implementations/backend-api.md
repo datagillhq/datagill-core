@@ -1,5 +1,8 @@
 # Backend API Implementation Plan
 
+> Status: Implemented. The design review this plan refers to (`/tmp/datagill-design-review.md`) was a local file and was never committed.
+> **Historical design doc.** Written while building; parts are out of date. The code and [`AGENTS.md`](../../AGENTS.md) are the source of truth where they disagree.
+
 This plan covers all backend changes required to support the frontend design reviewed in
 `/tmp/datagill-design-review.md`. It lives alongside the original `IMPLEMENTATION_PLAN.md`,
 which covers the ETL worker and infrastructure phases — this plan is focused solely on the

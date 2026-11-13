@@ -1,6 +1,7 @@
 # GitHub PR Enrichment — Implementation Plan
 
-> Status: Ready for implementation.
+> Status: Implemented. Kept as a design record.
+> **Historical design doc.** Written while building; parts are out of date. The code and [`AGENTS.md`](../../AGENTS.md) are the source of truth where they disagree.
 > Companion to [github-pr-enrichment.md](./github-pr-enrichment.md).
 
 This document breaks the enrichment design into concrete, ordered tasks. Each task is independently landable and keeps `main` releasable.
