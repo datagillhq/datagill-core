@@ -27,7 +27,8 @@ func TestSaveFeatureFlag(t *testing.T) {
 	orgKey := setupTestOrg(ctx, t, pool)
 	integrationKey := setupTestIntegration(ctx, t, pool, orgKey)
 
-	now := time.Now().UTC()
+	// timestamptz stores microseconds; truncate so values read back compare equal.
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	flag := models.FeatureFlag{
 		Key:             models.ComputeFlagKey(orgKey, models.SourceLaunchDarkly, "test-project", "my-flag"),
 		SourceRecordKey: uuid.New(),
