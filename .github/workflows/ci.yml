@@ -27,7 +27,8 @@ jobs:
         with:
           version: v1.64.8
           install-mode: goinstall
-          args: ./models/... ./repository/... ./cmd/worker/... ./services/search/...
+          # Keep in sync with MODULE_DIRS in the Makefile.
+          args: ./models/... ./repository/... ./shared/... ./activities/... ./workflows/... ./cmd/worker/... ./cmd/seed/... ./services/search/...
 
   test:
     name: Test
@@ -72,9 +73,5 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Scan for vulnerabilities
-        # govulncheck doesn't support go.work — run it per module.
-        run: |
-          for dir in models repository cmd/worker services/search; do
-            echo "==> govulncheck $dir"
-            (cd "$dir" && govulncheck ./...)
-          done
+        # govulncheck doesn't support go.work; `make vuln` runs it per module.
+        run: make vuln
