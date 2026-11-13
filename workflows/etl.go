@@ -52,13 +52,21 @@ func FeatureFlagETLWorkflow(ctx workflow.Context, input ETLWorkflowInput) error 
 		return runLaunchDarklyExtract(ctx, integration)
 	case models.SourceGitHub:
 		return runGitHubExtract(ctx, integration)
+	case models.SourceUnleash, models.SourceFlagsmith:
+		// Declared in models but no extract workflow exists yet.
+		return unsupportedSourceError(integration.Source)
 	default:
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("unsupported source: %s", integration.Source),
-			"UnsupportedSource",
-			nil,
-		)
+		return unsupportedSourceError(integration.Source)
 	}
+}
+
+// unsupportedSourceError is non-retryable: retrying cannot add a missing provider.
+func unsupportedSourceError(source models.Source) error {
+	return temporal.NewNonRetryableApplicationError(
+		fmt.Sprintf("unsupported source: %s", source),
+		"UnsupportedSource",
+		nil,
+	)
 }
 
 func runLaunchDarklyExtract(ctx workflow.Context, integration models.Integration) error {

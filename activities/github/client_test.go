@@ -169,6 +169,7 @@ func TestRateLimitFromResponse(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("expected a rate limit")
+				return // unreachable; tells staticcheck got is non-nil below
 			}
 			if got.RetryAfter != tt.wantWait {
 				t.Errorf("RetryAfter = %d, want %d", got.RetryAfter, tt.wantWait)
