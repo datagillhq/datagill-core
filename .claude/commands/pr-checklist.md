@@ -91,7 +91,6 @@ For every workflow or activity added or modified:
 ## 9. PR description
 
 The PR description must include:
-- Which phase and task from `IMPLEMENTATION_PLAN.md` this covers (e.g., "Phase 2A.4 — normalize activities")
 - What was changed and why (not just what — the commit messages say what)
 - Any decisions made that are not obvious from the code
 
