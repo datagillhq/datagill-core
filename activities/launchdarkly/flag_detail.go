@@ -40,9 +40,8 @@ func (a *Activities) GetFlagDetail(ctx context.Context, input GetFlagDetailInput
 		return GetFlagDetailOutput{}, fmt.Errorf("marshal flag %s: %w", input.FlagKey, err)
 	}
 
-	// Source record key is based on flag key (not version) so we upsert the same row.
+	recordKey := flagDetailRecordKey(input.OrgID, input.ProjectKey, input.FlagKey, flag.Version)
 	sourceKey := fmt.Sprintf("%s/%s", input.ProjectKey, input.FlagKey)
-	recordKey := models.ComputeSourceRecordKey(input.OrgID, models.SourceLaunchDarkly, models.SourceTypeFlagDetail, sourceKey)
 
 	record := models.SourceRecord{
 		Key:           recordKey,
@@ -57,4 +56,16 @@ func (a *Activities) GetFlagDetail(ctx context.Context, input GetFlagDetailInput
 	}
 
 	return GetFlagDetailOutput{Flag: flag, SourceRecordKey: recordKey}, nil
+}
+
+// flagDetailRecordKey returns the source record key for one version of a flag.
+//
+// source_records is append-only (a key that already exists is not overwritten), so the
+// key must change whenever the flag does. Keying by flag alone kept only the first fetch:
+// later versions were never stored raw, and replaying source_records rebuilt the flag as
+// it was on day one. LaunchDarkly bumps _version on every change, and a re-fetch of an
+// unchanged flag maps to the existing row.
+func flagDetailRecordKey(orgID uuid.UUID, projectKey, flagKey string, version int) uuid.UUID {
+	sourceKey := fmt.Sprintf("%s/%s@v%d", projectKey, flagKey, version)
+	return models.ComputeSourceRecordKey(orgID, models.SourceLaunchDarkly, models.SourceTypeFlagDetail, sourceKey)
 }
