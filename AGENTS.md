@@ -27,7 +27,8 @@ Two binaries, sharing only Postgres and Temporal:
 ```
 cmd/worker/           Worker entry point: registers workflows, activities, error interceptor
 cmd/seed/             Demo data seeder
-services/api/         HTTP API; analytics/ holds one plugin per metric
+services/api/         HTTP API: internal/httpapi (handlers), internal/integrations (rules),
+                      internal/githubapp, internal/schedules; analytics/ holds one plugin per metric
 workflows/            etl.go routes by integration.source; launchdarkly/, github/
 activities/           shared.go (save/get), launchdarkly/, github/, error_classification.go
 models/               Canonical structs, provider raw types, deterministic keys (keys.go)
@@ -100,8 +101,9 @@ Details and rationale: [`docs/engineering-standards.md`](docs/engineering-standa
 
 **Add a flag or code provider** (e.g. PostHog): `models/<provider>.go` (raw types),
 `activities/<provider>/` (client, extract, normalize), `workflows/<provider>/` (extract
-workflow), one `case` in `workflows/etl.go`, registration in `cmd/worker/main.go`, and the
-provider in `providersHandler`. No changes to existing providers. The `/add-provider` command
+workflow), one `case` in `workflows/etl.go`, registration in `cmd/worker/main.go`, and an API-key
+`KeyValidator` in `services/api/internal/integrations/` registered in `services/api/main.go` (that
+also lists it under `/v1/integrations/providers`). No changes to existing providers. The `/add-provider` command
 walks through it.
 
 **Add an analytics metric:** one file in `services/api/analytics/` implementing `Plugin`,

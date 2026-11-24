@@ -1,22 +1,35 @@
 {
   "uid": "datagill-api",
   "title": "API Service",
-  "tags": ["datagill", "api"],
+  "tags": [
+    "datagill",
+    "api"
+  ],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
       "title": "Request Rate (req/s)",
-      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
-      "datasource": { "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "rate(http_requests_total{job=\"api\"}[1m])",
-          "legendFormat": "{{method}} {{path}} {{status}}"
+          "expr": "sum by (method, handler, status_code) (rate(datagill_api_http_requests_total{job=\"api\"}[1m]))",
+          "legendFormat": "{{method}} {{handler}} {{status_code}}"
         }
       ]
     },
@@ -24,11 +37,18 @@
       "id": 2,
       "type": "timeseries",
       "title": "p99 Latency (s)",
-      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
-      "datasource": { "uid": "prometheus" },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"api\"}[5m]))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(datagill_api_http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
           "legendFormat": "p99"
         }
       ]
@@ -37,25 +57,39 @@
       "id": 3,
       "type": "timeseries",
       "title": "Error Rate (5xx req/s)",
-      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
-      "datasource": { "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "rate(http_requests_total{job=\"api\", status=~\"5..\"}[1m])",
-          "legendFormat": "{{path}}"
+          "expr": "sum by (handler) (rate(datagill_api_http_requests_total{job=\"api\", status_code=~\"5..\"}[1m]))",
+          "legendFormat": "{{handler}}"
         }
       ]
     },
     {
       "id": 4,
-      "type": "stat",
-      "title": "In-Flight Requests",
-      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
-      "datasource": { "uid": "prometheus" },
+      "type": "timeseries",
+      "title": "Client Error Rate (4xx req/s)",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "http_requests_in_flight{job=\"api\"}",
-          "legendFormat": "in-flight"
+          "expr": "sum by (handler, status_code) (rate(datagill_api_http_requests_total{job=\"api\", status_code=~\"4..\"}[1m]))",
+          "legendFormat": "{{handler}} {{status_code}}"
         }
       ]
     }
