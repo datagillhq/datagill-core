@@ -33,14 +33,15 @@ func (a *Activities) EnrichPullRequest(ctx context.Context, input EnrichPRInput)
 		return models.PullRequestEnrichmentData{}, fmt.Errorf("EnrichPullRequest get token: %w", err)
 	}
 
+	compareBase, compareHead := CompareRange(pr.Data.Details.Diff)
 	rawDiff, err := a.client.FetchRawDiff(
 		ctx,
 		token.Token,
 		pr.Data.Details.Repository.Owner,
 		pr.Data.Details.Repository.Name,
 		pr.Data.Details.Number,
-		pr.Data.Details.Diff.Branches.Target,
-		pr.Data.Details.Diff.SHA,
+		compareBase,
+		compareHead,
 	)
 	if err != nil {
 		return models.PullRequestEnrichmentData{}, toServiceError(fmt.Errorf("EnrichPullRequest fetch diff: %w", err))
@@ -82,4 +83,23 @@ func resolveToUUIDs(ctx context.Context, repo githubRepository, orgID uuid.UUID,
 		uuids = append(uuids, f.Key.String())
 	}
 	return uuids, nil
+}
+
+// CompareRange returns the commits whose compare (base...head) reproduces a merged PR's
+// diff, for when the diff endpoint refuses a diff as too large.
+//
+// The PR's own target and source commits give exactly the PR diff. Rows saved before
+// those were recorded fall back to the merge commit against its first parent, which is
+// the target branch just before the merge. That is exact for merge and squash merges;
+// for a rebase merge it covers only the last rebased commit, which still beats comparing
+// the target branch by name: the branch already contains the merge, so that compare is
+// always empty.
+func CompareRange(diff models.PullRequestDiff) (base, head string) {
+	if diff.Branches.TargetSHA != "" && diff.Branches.SourceSHA != "" {
+		return diff.Branches.TargetSHA, diff.Branches.SourceSHA
+	}
+	if diff.SHA != "" {
+		return diff.SHA + "^", diff.SHA
+	}
+	return "", ""
 }

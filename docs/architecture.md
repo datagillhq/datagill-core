@@ -180,7 +180,9 @@ action (`activities/github/scan_diff.go`):
 - **Flag keys** are the org's current keys from `feature_flags` (`data.source.key`), loaded
   when the PR is enriched.
 - **Diff fetch:** the PR's unified diff. If GitHub answers 406 (diff too large), the worker
-  rebuilds it from the compare API, since it has no local git checkout.
+  rebuilds it from the compare API, since it has no local git checkout. It compares the PR's
+  own base and head commits (`data.details.diff.branches.target_sha...source_sha`), not the
+  target branch, which already contains the merged PR.
 - **Files skipped:** dotfiles, and files whose path changed (renames).
 - **Matching:** plain substring match of each flag key on `+` and `-` lines. A key on any `+`
   line counts as **added**; a key only on `-` lines counts as **removed**.

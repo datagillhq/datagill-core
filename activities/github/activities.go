@@ -303,8 +303,10 @@ func (a *Activities) NormalizePullRequest(_ context.Context, input NormalizePull
 					URL: input.Detail.DiffURL,
 					SHA: input.Detail.MergeCommitSHA,
 					Branches: models.PullRequestDiffBranches{
-						Source: input.Detail.Head.Ref,
-						Target: input.Detail.Base.Ref,
+						Source:    input.Detail.Head.Ref,
+						Target:    input.Detail.Base.Ref,
+						SourceSHA: input.Detail.Head.SHA,
+						TargetSHA: input.Detail.Base.SHA,
 					},
 					Stats: models.PullRequestDiffStats{
 						Additions:    input.Detail.Additions,

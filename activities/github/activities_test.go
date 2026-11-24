@@ -528,17 +528,21 @@ func TestNormalizePullRequest(t *testing.T) {
 			User:           models.GitHubUserSummary{Login: "ariel", ID: 1001},
 			Base: models.GitHubPullRequestBranch{
 				Ref: "main",
+				SHA: "base111",
 				Repo: models.GitHubRepositorySummary{
 					ID:    9001,
 					Name:  "backend",
 					Owner: models.GitHubUserSummary{Login: "acme"},
 				},
 			},
-			Head: models.GitHubPullRequestBranch{Ref: "checkout-v2"},
+			Head: models.GitHubPullRequestBranch{Ref: "checkout-v2", SHA: "head222"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("NormalizePullRequest failed: %v", err)
+	}
+	if pr.Data.Details.Diff.Branches.TargetSHA != "base111" || pr.Data.Details.Diff.Branches.SourceSHA != "head222" {
+		t.Fatalf("unexpected branch commits: %+v", pr.Data.Details.Diff.Branches)
 	}
 	if pr.Key != models.ComputePullRequestKey(orgID, "123456789") {
 		t.Fatalf("unexpected pull request key %s", pr.Key)
