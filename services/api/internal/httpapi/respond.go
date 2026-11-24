@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -49,5 +50,8 @@ func decodeBody(r *http.Request, dst any, optional bool) error {
 	if optional && errors.Is(err, io.EOF) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("decode request body: %w", err)
+	}
+	return nil
 }

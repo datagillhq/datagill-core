@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,7 +34,7 @@ func newHTTPMetrics(reg prometheus.Registerer) (*httpMetrics, error) {
 	}
 	for _, c := range []prometheus.Collector{m.requests, m.duration} {
 		if err := reg.Register(c); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("register collector: %w", err)
 		}
 	}
 	return m, nil
