@@ -63,6 +63,7 @@ type stubIntegrationsRepo struct {
 	upsertOrgID   *uuid.UUID
 	updateResult  models.Integration
 	updateErr     error
+	updateCalls   int
 	deleteResult  models.Integration
 	deleteErr     error
 }
@@ -88,6 +89,7 @@ func (s *stubIntegrationsRepo) UpsertGitHubIntegration(_ context.Context, orgID 
 	return s.upsertResult, s.upsertCreated, s.upsertErr
 }
 func (s *stubIntegrationsRepo) UpdateIntegration(_ context.Context, _, _ uuid.UUID, _ models.IntegrationPatch) (models.Integration, error) {
+	s.updateCalls++
 	return s.updateResult, s.updateErr
 }
 func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, _ uuid.UUID) (models.Integration, error) {
