@@ -23,7 +23,7 @@ type sharedRepository interface {
 	SaveFeatureFlag(ctx context.Context, f models.FeatureFlag) error
 	SaveChangelog(ctx context.Context, c models.FeatureFlagChangelog) error
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
-	UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error
+	UpdateIntegrationLastSyncedAt(ctx context.Context, orgID, key uuid.UUID, syncedAt time.Time) error
 }
 
 // SharedActivities wraps the repository for Temporal activity registration.
@@ -82,8 +82,12 @@ func (a *SharedActivities) GetIntegration(ctx context.Context, orgID, key uuid.U
 // UpdateIntegrationLastSyncedAt records how far an integration's sync has searched, so the
 // next run continues from there. Call it only after a run succeeds.
 // Safe to retry: it always overwrites with the given timestamp.
-func (a *SharedActivities) UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error {
-	if err := a.repo.UpdateIntegrationLastSyncedAt(ctx, key, syncedAt); err != nil {
+//
+// orgID is last, not first, so a call scheduled by a worker from before it was added still
+// decodes: Temporal leaves missing trailing arguments at their zero value. Such a call
+// matches no row and leaves the cursor where it was, and the next run repeats the window.
+func (a *SharedActivities) UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time, orgID uuid.UUID) error {
+	if err := a.repo.UpdateIntegrationLastSyncedAt(ctx, orgID, key, syncedAt); err != nil {
 		return fmt.Errorf("update integration last synced at: %w", err)
 	}
 	return nil

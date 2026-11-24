@@ -77,7 +77,7 @@ func TestGitHubExtractWorkflow_IngestsDiscoveredPullRequests(t *testing.T) {
 	})).Return(pr, nil).Once()
 	env.OnActivity(ghActs.SavePullRequest, mock.Anything, pr).Return(nil).Once()
 
-	expectSyncedThrough(env, integrationKey, now)
+	expectSyncedThrough(env, orgID, integrationKey, now)
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
@@ -115,7 +115,7 @@ func TestGitHubExtractWorkflow_SplitsLargeSearchWindow(t *testing.T) {
 		return input.From.Equal(now.Add(-17*time.Minute-30*time.Second)) && input.To.Equal(now)
 	})).Return(ghactivities.SearchPullRequestsOutput{}, nil).Once()
 
-	expectSyncedThrough(env, integrationKey, now)
+	expectSyncedThrough(env, orgID, integrationKey, now)
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
@@ -176,7 +176,7 @@ func TestGitHubExtractWorkflow_UsesLastSearchedThroughWithOverlap(t *testing.T) 
 		return input.From.Equal(lastSearchedThrough.Add(-5*time.Minute)) && input.To.Equal(now)
 	})).Return(ghactivities.SearchPullRequestsOutput{}, nil).Once()
 
-	expectSyncedThrough(env, integrationKey, now)
+	expectSyncedThrough(env, orgID, integrationKey, now)
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{
 		Integration:         integration,
@@ -288,7 +288,7 @@ func TestGitHubExtractWorkflow_SkipsNotFoundPullRequest(t *testing.T) {
 	env.OnActivity(ghActs.SavePullRequest, mock.Anything, pr).Return(nil).Once()
 
 	env.SetStartTime(now)
-	expectSyncedThrough(env, integration.Key, now)
+	expectSyncedThrough(env, integration.OrgID, integration.Key, now)
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
@@ -323,10 +323,10 @@ func TestGitHubExtractWorkflow_FailsOnNonSkippableDetailError(t *testing.T) {
 func timePtr(t time.Time) *time.Time { return &t }
 
 // expectSyncedThrough expects the run to record at as its new sync position.
-func expectSyncedThrough(env *testsuite.TestWorkflowEnvironment, integrationKey uuid.UUID, at time.Time) {
+func expectSyncedThrough(env *testsuite.TestWorkflowEnvironment, orgID, integrationKey uuid.UUID, at time.Time) {
 	env.OnActivity(sharedActs.UpdateIntegrationLastSyncedAt, mock.Anything, integrationKey, mock.MatchedBy(func(got time.Time) bool {
 		return got.Equal(at)
-	})).Return(nil).Once()
+	}), orgID).Return(nil).Once()
 }
 
 // A first sync has no saved position: it searches the backfill window in 24-hour chunks,
@@ -345,7 +345,7 @@ func TestGitHubExtractWorkflow_FirstSyncBackfillsInChunks(t *testing.T) {
 	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.MatchedBy(func(in ghactivities.SearchPullRequestsInput) bool {
 		return in.From.Equal(backfillStart) && in.To.Equal(firstChunkEnd)
 	})).Return(ghactivities.SearchPullRequestsOutput{}, nil).Once()
-	expectSyncedThrough(env, integration.Key, firstChunkEnd)
+	expectSyncedThrough(env, integration.OrgID, integration.Key, firstChunkEnd)
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
@@ -370,7 +370,7 @@ func TestGitHubExtractWorkflow_ResumesFromLastSuccessfulSync(t *testing.T) {
 	env.OnActivity(ghActs.SearchPullRequests, mock.Anything, mock.MatchedBy(func(in ghactivities.SearchPullRequestsInput) bool {
 		return in.From.Equal(lastSynced.Add(-5*time.Minute)) && in.To.Equal(now)
 	})).Return(ghactivities.SearchPullRequestsOutput{}, nil).Once()
-	expectSyncedThrough(env, integration.Key, now)
+	expectSyncedThrough(env, integration.OrgID, integration.Key, now)
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 
@@ -396,8 +396,8 @@ func TestGitHubExtractWorkflow_FailedRunKeepsSyncPosition(t *testing.T) {
 	env.OnActivity(ghActs.GetPullRequestDetail, mock.Anything, mock.Anything).
 		Return(ghactivities.GetPullRequestDetailOutput{}, temporal.NewNonRetryableApplicationError("unauthorized (401)", "NonRetryableServiceError", nil)).Once()
 	saved := false
-	env.OnActivity(sharedActs.UpdateIntegrationLastSyncedAt, mock.Anything, mock.Anything, mock.Anything).
-		Return(func(context.Context, uuid.UUID, time.Time) error { saved = true; return nil }).Maybe()
+	env.OnActivity(sharedActs.UpdateIntegrationLastSyncedAt, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(context.Context, uuid.UUID, time.Time, uuid.UUID) error { saved = true; return nil }).Maybe()
 
 	env.ExecuteWorkflow(ghworkflows.GitHubExtractWorkflow, ghworkflows.ExtractInput{Integration: integration, RunOnce: true})
 

@@ -126,6 +126,7 @@ func LaunchDarklyExtractWorkflow(ctx workflow.Context, input ExtractInput) error
 		StartToCloseTimeout: updateLastSyncedTimeout,
 	})
 	if err := workflow.ExecuteActivity(syncCtx, (*ldactivities.Activities).UpdateLastSyncedAt, ldactivities.UpdateLastSyncedAtInput{
+		OrgID:          integration.OrgID,
 		IntegrationKey: integration.Key,
 		SyncedAt:       syncedAt,
 	}).Get(ctx, nil); err != nil {

@@ -210,10 +210,14 @@ func TestSharedActivities_UpdateIntegrationLastSyncedAt(t *testing.T) {
 	repo := newMockRepository()
 	acts := NewSharedActivities(repo)
 	key := uuid.New()
+	orgID := uuid.New()
 	syncedAt := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 
-	if err := acts.UpdateIntegrationLastSyncedAt(context.Background(), key, syncedAt); err != nil {
+	if err := acts.UpdateIntegrationLastSyncedAt(context.Background(), key, syncedAt, orgID); err != nil {
 		t.Fatalf("UpdateIntegrationLastSyncedAt: %v", err)
+	}
+	if repo.lastSyncedOrg != orgID {
+		t.Errorf("org passed to repository = %s, want %s", repo.lastSyncedOrg, orgID)
 	}
 	if got := repo.lastSyncedAt[key]; !got.Equal(syncedAt) {
 		t.Errorf("last synced at = %v, want %v", got, syncedAt)

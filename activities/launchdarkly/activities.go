@@ -23,7 +23,7 @@ type Activities struct {
 type launchDarklyRepository interface {
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)
 	SaveSourceRecord(ctx context.Context, r models.SourceRecord) error
-	UpdateIntegrationLastSyncedAt(ctx context.Context, key uuid.UUID, syncedAt time.Time) error
+	UpdateIntegrationLastSyncedAt(ctx context.Context, orgID, key uuid.UUID, syncedAt time.Time) error
 }
 
 // New creates a new Activities instance.
