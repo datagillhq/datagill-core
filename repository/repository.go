@@ -13,7 +13,7 @@ import (
 )
 
 // Repository is the persistence interface used by ETL activities and the
-// Search Service. Defined here (in the consuming package) so implementations
+// API service. Defined here (in the consuming package) so implementations
 // can be swapped without changing call sites.
 type Repository interface {
 	// SaveSourceRecord persists a raw provider API response.

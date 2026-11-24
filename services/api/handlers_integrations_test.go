@@ -19,7 +19,7 @@ import (
 
 	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/repository"
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
 // decodeCode reads the error code from a {"code": ...} response body.

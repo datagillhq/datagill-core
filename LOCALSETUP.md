@@ -7,7 +7,7 @@ This guide gets `datagill-core` running locally and notes the one cross-repo dep
 The web UI and auth server live in a **separate repository**, `datagill-ui`. This guide
 assumes it is checked out next to this repo as `../datagill-ui`; follow its own `LOCALSETUP.md`.
 
-Run `datagill-ui` first, then start `datagill-core`. The search service fetches JWKS from
+Run `datagill-ui` first, then start `datagill-core`. The API service fetches JWKS from
 BetterAuth (served by `datagill-ui`) on startup and exits if it cannot reach it. The worker,
 databases, and Temporal do not depend on `datagill-ui`.
 
@@ -45,7 +45,7 @@ Make sure `datagill-ui` is already running before starting the backend.
 cp .env.example .env
 ```
 
-Fill in the required local secret (the worker and search service refuse to start without it):
+Fill in the required local secret (the worker and API service refuse to start without it):
 
 ```bash
 # Generate a 64-char hex encryption key:
@@ -93,7 +93,7 @@ This brings up:
 - `temporal` + `temporal-postgres` on port **7233**
 - `temporal-ui` on port **8080**
 - Prometheus / Loki / Grafana (observability stack)
-- `search` on port **8082**
+- `api` on port **8082**
 - `worker` for the `etl` task queue
 
 Auth is handled by BetterAuth in `datagill-ui` — there is no auth service in this repo.
@@ -117,7 +117,7 @@ make migrate
 
 ```bash
 curl http://localhost:8082/healthz
-# {"service":"search","status":"ok"}
+# {"service":"api","status":"ok"}
 ```
 
 ---
@@ -162,7 +162,7 @@ docker compose up -d app-postgres temporal-postgres temporal temporal-ui prometh
 
 ```bash
 set -a && source .env && set +a
-TEMPORAL_ADDRESS=localhost:7233 go run ./services/search/...
+TEMPORAL_ADDRESS=localhost:7233 go run ./services/api/...
 ```
 
 ### Start the worker locally
@@ -186,7 +186,7 @@ The backend cannot reach BetterAuth. Make sure:
 - `AUTH_URL` in `.env` is `http://localhost:3001/api/auth` (include the path)
 
 ### `TEMPORAL_ADDRESS is required`
-Set it inline: `TEMPORAL_ADDRESS=localhost:7233 go run ./services/search/...`
+Set it inline: `TEMPORAL_ADDRESS=localhost:7233 go run ./services/api/...`
 
 ### `ENCRYPTION_KEY must be a 64-character hex string`
 Generate one: `openssl rand -hex 32`
@@ -195,4 +195,4 @@ Generate one: `openssl rand -hex 32`
 Run the infrastructure containers and wait a few seconds for the healthchecks to pass before retrying.
 
 ### `listen tcp :8082: bind: address already in use`
-If you are using local Go dev mode, do not run `make docker-up`. That target also starts the containerized `search` service on port `8082`.
+If you are using local Go dev mode, do not run `make docker-up`. That target also starts the containerized `api` service on port `8082`.

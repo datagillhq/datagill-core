@@ -2,7 +2,7 @@
 
 `GET /v1/analytics?metric=<name>&from=<RFC3339>&to=<RFC3339>`
 
-One endpoint serves every metric. Each metric is a plugin in `services/search/analytics/`;
+One endpoint serves every metric. Each metric is a plugin in `services/api/analytics/`;
 adding one needs no routing changes. Requires `Authorization: Bearer <JWT>`; the org comes
 from the token's `organizationId` claim, so a caller can only read its own org.
 

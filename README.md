@@ -55,14 +55,14 @@ Two Go binaries share one Postgres database and one Temporal cluster:
 
 | Component | Path | Role |
 |-----------|------|------|
-| **Search service** | `services/search` | HTTP API (Chi) on `:8082`. Verifies JWTs, manages integrations, creates Temporal schedules, serves analytics. Holds no sync logic. |
+| **API service** | `services/api` | HTTP API (Chi) on `:8082`. Verifies JWTs, manages integrations, creates Temporal schedules, serves analytics. Holds no sync logic. |
 | **Worker** | `cmd/worker` | Runs every Temporal workflow and activity: extract, normalize, save, enrich. |
 | **App Postgres** | `db/migrations` | Raw `source_records` plus the canonical tables. |
 | **Temporal** | `docker-compose.yml` | Schedules, durable execution, retries. Has its own Postgres. |
 
 ```mermaid
 flowchart LR
-    UI[datagill-ui<br/>separate repo] -->|JWT| API[Search service]
+    UI[datagill-ui<br/>separate repo] -->|JWT| API[API service]
     API -->|create schedules| T[(Temporal)]
     API -->|org-scoped reads| PG[(Postgres)]
     T --> W[Worker]
@@ -73,7 +73,7 @@ flowchart LR
 
 **How data flows: ingestion → enrichment → timeline**
 
-1. **Schedule.** When an integration is connected, the search service creates a Temporal
+1. **Schedule.** When an integration is connected, the API service creates a Temporal
    schedule (`etl-<integration>`, every 30 min) that starts `FeatureFlagETLWorkflow`.
    The workflow exits without doing anything if the integration is paused or deleted.
    Otherwise it routes to the provider's extract workflow.
@@ -124,7 +124,7 @@ member of the org. The plan:
 | [golangci-lint](https://golangci-lint.run/) | v1.64.8, only needed for `make lint` |
 
 The web UI and auth server live in a separate repo,
-[datagill-ui](https://github.com/datagillhq/datagill-ui). The search service fetches signing keys
+[datagill-ui](https://github.com/datagillhq/datagill-ui). The API service fetches signing keys
 (JWKS) from it on startup and exits if it can't reach them, so start `datagill-ui` first (see its
 README). The worker, databases, and Temporal run without it.
 
@@ -135,16 +135,16 @@ cp .env.example .env
 # Set ENCRYPTION_KEY in .env (required):
 openssl rand -hex 32
 
-make docker-up                        # Postgres, Temporal, observability, search, worker
+make docker-up                        # Postgres, Temporal, observability, api, worker
 set -a && source .env && set +a
 make migrate                          # apply db/migrations to app-postgres
 
-curl http://localhost:8082/healthz    # {"service":"search","status":"ok"} once datagill-ui is up
+curl http://localhost:8082/healthz    # {"service":"api","status":"ok"} once datagill-ui is up
 ```
 
 | Service | URL |
 |---------|-----|
-| Search API | http://localhost:8082 |
+| API | http://localhost:8082 |
 | Temporal UI | http://localhost:8080 |
 | Grafana | http://localhost:3000 (admin / admin) |
 | Prometheus | http://localhost:9090 |
@@ -160,7 +160,7 @@ troubleshooting.
 make test-unit   # unit tests, no external dependencies
 make test-int    # integration tests; needs Docker (testcontainers)
 make lint        # golangci-lint across all modules
-make build       # builds bin/worker and bin/search
+make build       # builds bin/worker and bin/api
 make vuln        # govulncheck, per module
 ```
 
@@ -187,7 +187,7 @@ The seed script is idempotent, so it's safe to run more than once.
 ```
 cmd/worker/         Worker binary: registers workflows, activities, error interceptor
 cmd/seed/           Demo data seeder
-services/search/    HTTP API: auth, integrations, scheduler, analytics plugins
+services/api/       HTTP API: auth, integrations, scheduler, analytics plugins
 workflows/          Temporal workflows (ETL router, launchdarkly/, github/)
 activities/         Temporal activities: provider clients, normalization, diff scanning
 models/             Canonical models and deterministic key functions

@@ -3,14 +3,14 @@ WORKDIR /app
 
 COPY models/ ./models/
 COPY repository/ ./repository/
-COPY services/search/ ./services/search/
+COPY services/api/ ./services/api/
 ENV GOWORK=off
-WORKDIR /app/services/search
+WORKDIR /app/services/api
 
-RUN go build -o /search .
+RUN go build -o /api .
 
 FROM alpine:3.21
 RUN apk --no-cache add ca-certificates
-COPY --from=builder /search /search
+COPY --from=builder /api /api
 EXPOSE 8082
-ENTRYPOINT ["/search"]
+ENTRYPOINT ["/api"]

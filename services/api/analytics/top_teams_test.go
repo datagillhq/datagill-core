@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/datagill/datagill-core/repository"
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
 func TestTopTeamsPlugin(t *testing.T) {

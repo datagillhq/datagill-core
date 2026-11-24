@@ -1,4 +1,4 @@
-module github.com/datagill/datagill-core/services/search
+module github.com/datagill/datagill-core/services/api
 
 go 1.26.0
 

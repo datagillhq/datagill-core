@@ -16,7 +16,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/models"
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
 // testRSAKey is generated once per test binary run and used to sign all test JWTs.

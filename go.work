@@ -6,7 +6,7 @@ use (
 	./cmd/worker
 	./models
 	./repository
-	./services/search
+	./services/api
 	./shared
 	./workflows
 )

@@ -26,7 +26,7 @@ const (
 )
 
 // etlWorkflowInput mirrors workflows.ETLWorkflowInput for JSON serialization.
-// Defined locally to avoid importing the workflows module into the search service.
+// Defined locally to avoid importing the workflows module into the API service.
 type etlWorkflowInput struct {
 	OrgID          uuid.UUID
 	IntegrationKey uuid.UUID

@@ -2,9 +2,9 @@
 /bin/
 /ingestion
 /processing
-/search
+/api
 /worker
-services/search/search
+services/api/api
 cmd/worker/worker
 
 # Go build output

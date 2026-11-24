@@ -28,7 +28,7 @@ jobs:
           version: v1.64.8
           install-mode: goinstall
           # Keep in sync with MODULE_DIRS in the Makefile.
-          args: ./models/... ./repository/... ./shared/... ./activities/... ./workflows/... ./cmd/worker/... ./cmd/seed/... ./services/search/...
+          args: ./models/... ./repository/... ./shared/... ./activities/... ./workflows/... ./cmd/worker/... ./cmd/seed/... ./services/api/...
 
   test:
     name: Test

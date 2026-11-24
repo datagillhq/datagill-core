@@ -19,7 +19,7 @@ Plus two small edits to existing files:
 - One routing case in `workflows/etl.go`
 - One registration block in `cmd/worker/main.go`
 
-Zero changes to any other existing file. If you find yourself editing `services/search/` or `repository/`, stop — something is wrong.
+Zero changes to any other existing file. If you find yourself editing `services/api/` or `repository/`, stop — something is wrong.
 
 ---
 
