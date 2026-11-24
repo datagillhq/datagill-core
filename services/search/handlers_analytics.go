@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -40,6 +41,11 @@ func parseAnalyticsQuery(orgID uuid.UUID, q url.Values) (analyticsRequest, strin
 	if err != nil {
 		return analyticsRequest{}, "ANALYTICS_INVALID_DATE_FORMAT"
 	}
+	// An inverted range matches nothing; say so instead of returning an empty result
+	// that looks like "no activity".
+	if from.After(to) {
+		return analyticsRequest{}, "ANALYTICS_INVALID_DATE_RANGE"
+	}
 
 	page := 1
 	if s := q.Get("page"); s != "" {
@@ -56,6 +62,12 @@ func parseAnalyticsQuery(orgID uuid.UUID, q url.Values) (analyticsRequest, strin
 		if limit > analytics.MaxLimit {
 			limit = analytics.MaxLimit
 		}
+	}
+
+	// Repositories compute OFFSET as (page-1)*limit. A page so large that this overflows
+	// would wrap to a negative OFFSET, which Postgres rejects, turning bad input into a 500.
+	if page-1 > math.MaxInt/limit {
+		return analyticsRequest{}, "ANALYTICS_INVALID_PAGE"
 	}
 
 	return analyticsRequest{

@@ -31,7 +31,8 @@ from the token's `organizationId` claim, so a caller can only read its own org.
 ## Errors
 
 `400` with `{"code": "..."}`: `ANALYTICS_MISSING_METRIC`, `ANALYTICS_MISSING_DATE_RANGE`,
-`ANALYTICS_INVALID_DATE_FORMAT`, `ANALYTICS_INVALID_PAGE`, `ANALYTICS_INVALID_LIMIT`,
+`ANALYTICS_INVALID_DATE_FORMAT`, `ANALYTICS_INVALID_DATE_RANGE` (`from` after `to`),
+`ANALYTICS_INVALID_PAGE`, `ANALYTICS_INVALID_LIMIT`,
 `ANALYTICS_UNKNOWN_METRIC`, `INVALID_ORG_ID`. `500` with `INTERNAL_ERROR`. `401` for a
 missing or invalid token.
 
