@@ -15,11 +15,13 @@ workflows/{provider}_extract.go
 workflows/{provider}_transform.go
 ```
 
-Plus two small edits to existing files:
+Plus small edits to existing files:
 - One routing case in `workflows/etl.go`
 - One registration block in `cmd/worker/main.go`
+- So users can connect it: a `KeyValidator` in `services/api/internal/integrations/<provider>.go`
+  (see `launchdarkly.go`) and one entry in the validators map in `services/api/main.go`
 
-Zero changes to any other existing file. If you find yourself editing `services/api/` or `repository/`, stop — something is wrong.
+Zero changes to any other existing file. If you find yourself editing handlers in `services/api/internal/httpapi/` or `repository/`, stop — something is wrong.
 
 ---
 

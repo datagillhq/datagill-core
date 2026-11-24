@@ -1,91 +1,106 @@
+// Command api is DataGill's HTTP API: auth, integrations, schedules and analytics for the
+// UI. It holds no sync logic; that runs in the worker.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/rs/zerolog"
 
+	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/repository"
 	"github.com/datagill/datagill-core/services/api/analytics"
+	"github.com/datagill/datagill-core/services/api/internal/config"
+	"github.com/datagill/datagill-core/services/api/internal/githubapp"
+	"github.com/datagill/datagill-core/services/api/internal/httpapi"
+	"github.com/datagill/datagill-core/services/api/internal/integrations"
+	"github.com/datagill/datagill-core/services/api/internal/jwks"
+	"github.com/datagill/datagill-core/services/api/internal/schedules"
 )
 
-const serviceName = "api"
+const (
+	outboundTimeout = 10 * time.Second
+	shutdownTimeout = 10 * time.Second
+)
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	logger := zerolog.New(os.Stdout).With().
-		Timestamp().
-		Str("service", serviceName).
-		Logger()
+	logger := zerolog.New(os.Stdout).With().Timestamp().Str("service", httpapi.ServiceName).Logger()
 
-	cfg := loadConfig()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	if cfg.DatabaseURL == "" {
-		logger.Fatal().Msg("APP_DATABASE_URL is required")
+	if err := run(ctx, logger); err != nil {
+		logger.Fatal().Err(err).Msg("api service stopped")
 	}
-	if cfg.AuthURL == "" {
-		logger.Fatal().Msg("AUTH_URL is required")
-	}
-	if cfg.TemporalAddress == "" {
-		logger.Fatal().Msg("TEMPORAL_ADDRESS is required")
-	}
-	// EncryptionKey is nil when ENCRYPTION_KEY is unset or not valid hex;
-	// either way the length check catches it with a clear error.
-	if len(cfg.EncryptionKey) != 32 {
-		logger.Fatal().Msg("ENCRYPTION_KEY must be a 64-character hex string (32 bytes) — generate with: openssl rand -hex 32")
-	}
+}
 
-	ctx := context.Background()
-
-	jwtKeyfunc, err := fetchJWKSKeyfunc(cfg.AuthURL + "/.well-known/jwks.json")
+func run(ctx context.Context, logger zerolog.Logger) error {
+	cfg, err := config.Load()
 	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to fetch JWKS")
+		return err
 	}
 
-	integrationsRepo, err := repository.NewPostgresRepository(ctx, cfg.DatabaseURL, cfg.EncryptionKey)
+	outbound := &http.Client{Timeout: outboundTimeout}
+
+	keyfunc, err := jwks.FetchKeyfunc(ctx, outbound, cfg.AuthURL+"/.well-known/jwks.json")
 	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to connect integrations repository")
-	}
-	defer integrationsRepo.Close()
-
-	analyticsRegistry := analytics.NewRegistry()
-	if err := analytics.RegisterAll(analyticsRegistry, integrationsRepo); err != nil {
-		logger.Fatal().Err(err).Msg("failed to register analytics plugins")
+		return err
 	}
 
-	tc, err := newTemporalClient(cfg.TemporalAddress)
+	repo, err := repository.NewPostgresRepository(ctx, cfg.DatabaseURL, cfg.EncryptionKey)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to dial Temporal")
+		return fmt.Errorf("connect to postgres: %w", err)
 	}
-	defer tc.Close()
+	defer repo.Close()
 
-	srv := newHTTPServer(":"+cfg.Port, newApp(cfg, logger, integrationsRepo, integrationsRepo, newValidatorRegistry(), newTemporalScheduler(tc), jwtKeyfunc, analyticsRegistry).router())
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		logger.Info().Str("port", cfg.Port).Msg("server started")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatal().Err(err).Msg("server error")
-		}
-	}()
-
-	<-quit
-	logger.Info().Msg("shutting down")
-
-	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error().Err(err).Msg("shutdown error")
+	temporal, err := schedules.Dial(cfg.Temporal)
+	if err != nil {
+		return err
 	}
+	defer temporal.Close()
+
+	integrationService := integrations.NewService(repo, repo, schedules.NewTemporal(temporal), map[models.Source]integrations.KeyValidator{
+		models.SourceLaunchDarkly: integrations.NewLaunchDarklyValidator(outbound),
+	})
+
+	githubFlow, err := githubapp.New(cfg.GitHubApp, integrationService, outbound)
+	if err != nil {
+		return err
+	}
+
+	metricPlugins, err := analyticsRegistry(repo)
+	if err != nil {
+		return err
+	}
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+
+	handler, err := httpapi.New(httpapi.Deps{
+		Logger:        logger,
+		AllowedOrigin: cfg.AllowedOrigin,
+		FrontendURL:   cfg.FrontendURL,
+		Keyfunc:       keyfunc,
+		Integrations:  integrationService,
+		GitHub:        githubFlow,
+		Analytics:     metricPlugins,
+		Metrics:       registry,
+	})
+	if err != nil {
+		return err
+	}
+
+	return serve(ctx, logger, newHTTPServer(":"+cfg.Port, handler))
 }
 
 // Server timeouts, per docs/engineering-standards.md. Without ReadTimeout and IdleTimeout a
@@ -93,7 +108,7 @@ func main() {
 const (
 	serverReadHeaderTimeout = 5 * time.Second
 	serverReadTimeout       = 30 * time.Second
-	// serverWriteTimeout is a little longer than the router's 30s middleware.Timeout, so a
+	// serverWriteTimeout is a little longer than the router's 30s request timeout, so a
 	// handler that runs out of time can still write its 504 before the connection closes.
 	serverWriteTimeout = 35 * time.Second
 	serverIdleTimeout  = 120 * time.Second
@@ -109,4 +124,38 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       serverIdleTimeout,
 	}
+}
+
+func analyticsRegistry(repo analytics.AnalyticsRepository) (*analytics.Registry, error) {
+	reg := analytics.NewRegistry()
+	if err := analytics.RegisterAll(reg, repo); err != nil {
+		return nil, fmt.Errorf("register analytics plugins: %w", err)
+	}
+	return reg, nil
+}
+
+// serve runs srv until ctx is canceled, then drains in-flight requests.
+func serve(ctx context.Context, logger zerolog.Logger, srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info().Str("addr", srv.Addr).Msg("server started")
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		return fmt.Errorf("listen: %w", err)
+	case <-ctx.Done():
+	}
+
+	logger.Info().Msg("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("listen: %w", err)
+	}
+	return nil
 }

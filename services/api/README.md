@@ -24,6 +24,24 @@ The org comes only from the verified JWT's `organizationId` claim (signing keys 
 from `AUTH_URL/.well-known/jwks.json` at startup). See [`docs/api/analytics.md`](../../docs/api/analytics.md) and
 [`docs/api/integrations.md`](../../docs/api/integrations.md) for request and response shapes.
 
+## Code layout
+
+```
+main.go                  Wiring only: load config, build dependencies, serve
+internal/config/         Load() reads and validates every env var; reports all problems at once
+internal/httpapi/        Router, middleware, metrics, handlers. Handlers decode, call a service,
+                         and map its error to a status + code (writeIntegrationError)
+internal/integrations/   The rules: one integration per provider, key validation, lazy org
+                         creation, scheduling. Also the GitHub connect step. KeyValidators live here
+internal/githubapp/      GitHub App install flow: signed state, GitHub API client, callback checks
+internal/schedules/      Temporal schedules (ETL per integration, PR enrichment per org)
+internal/jwks/           Fetches the auth server's signing keys
+analytics/               One plugin per metric; see AGENTS.md
+```
+
+Dependencies point one way: `httpapi` → `integrations` / `githubapp` → repository and
+`schedules`. Each package declares the small interfaces it needs, and tests stub those.
+
 ## Run locally
 
 Required env vars: `APP_DATABASE_URL`, `AUTH_URL`, `TEMPORAL_ADDRESS`, `ENCRYPTION_KEY`.

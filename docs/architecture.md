@@ -488,6 +488,7 @@ Architecture changes recorded in AGENTS.md before it was split (2026-11). Newer 
 ### v1.3 — 2026-11-23
 
 - Renamed the search service to the API service (`services/search` → `services/api`, binary, Docker service and Prometheus job). It never did search; it is the HTTP API for the UI.
+- Split the API service into `internal/` packages: `httpapi` (transport only), `integrations` (all integration rules, including the GitHub connect step), `githubapp` (install flow), `schedules`, `config`, `jwks`. Handlers no longer hold business logic, metrics are registered on an injected registry instead of globals, HTTP metrics are renamed to `datagill_api_http_*` per the engineering standards, and unmatched routes share one `unmatched` metric label.
 
 ### v1.2 — 2026-11-13
 
