@@ -71,3 +71,42 @@ func TestGetFlagDetailActivity_NotFound(t *testing.T) {
 		t.Fatal("expected error for not found flag")
 	}
 }
+
+// A changed flag must get a new raw record: source_records never overwrites an existing
+// key, so reusing one would keep only the first version ever fetched.
+func TestGetFlagDetailActivity_NewVersionGetsNewSourceRecord(t *testing.T) {
+	version := 1
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(models.LDFlagDetail{Key: "my-flag", Version: version})
+	}))
+	defer server.Close()
+
+	acts := New(mustNewClient(t, "test-key", WithBaseURL(server.URL)), newMockRepository())
+	input := GetFlagDetailInput{
+		IntegrationKey: uuid.New(),
+		OrgID:          uuid.New(),
+		ProjectKey:     "my-project",
+		FlagKey:        "my-flag",
+	}
+
+	first, err := acts.GetFlagDetail(context.Background(), input)
+	if err != nil {
+		t.Fatalf("GetFlagDetail v1 failed: %v", err)
+	}
+	again, err := acts.GetFlagDetail(context.Background(), input)
+	if err != nil {
+		t.Fatalf("GetFlagDetail v1 again failed: %v", err)
+	}
+	version = 2
+	second, err := acts.GetFlagDetail(context.Background(), input)
+	if err != nil {
+		t.Fatalf("GetFlagDetail v2 failed: %v", err)
+	}
+
+	if first.SourceRecordKey != again.SourceRecordKey {
+		t.Error("re-fetching an unchanged flag should reuse its source record key")
+	}
+	if first.SourceRecordKey == second.SourceRecordKey {
+		t.Error("a new flag version should get a new source record key")
+	}
+}
