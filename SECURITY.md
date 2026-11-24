@@ -1,7 +1,7 @@
 # Security Policy
 
-DataGill is an early-stage side project with no production deployment. We still take
-security reports seriously, especially anything that could affect people who self-host it.
+DataGill is in active development. We take security reports seriously, especially anything
+that could affect people who self-host it.
 
 ## Reporting a vulnerability
 
