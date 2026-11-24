@@ -2,8 +2,13 @@ package launchdarkly
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
+	"go.temporal.io/sdk/temporal"
+
+	"github.com/datagill/datagill-core/activities"
 	"github.com/datagill/datagill-core/shared"
 )
 
@@ -13,11 +18,6 @@ func TestToServiceError(t *testing.T) {
 		input        error
 		nonRetryable bool
 	}{
-		{
-			name:         "TooManyRequestsError is retryable",
-			input:        &TooManyRequestsError{RetryAfter: 30},
-			nonRetryable: false,
-		},
 		{
 			name:         "UnexpectedStatusError is retryable",
 			input:        &UnexpectedStatusError{StatusCode: 500, Message: "internal error"},
@@ -49,5 +49,49 @@ func TestToServiceError(t *testing.T) {
 				t.Errorf("expected ServiceError (retryable), got NonRetryableServiceError")
 			}
 		})
+	}
+}
+
+func TestToServiceError_RateLimitedWaitsForRetryAfter(t *testing.T) {
+	tests := []struct {
+		name       string
+		retryAfter int
+		want       time.Duration
+	}{
+		{"uses Retry-After", 30, 30 * time.Second},
+		{"falls back to default", 0, defaultRetryWait * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := toServiceError(&TooManyRequestsError{RetryAfter: tt.retryAfter})
+
+			var appErr *temporal.ApplicationError
+			if !errors.As(err, &appErr) {
+				t.Fatalf("expected *temporal.ApplicationError, got %T", err)
+			}
+			if appErr.NonRetryable() {
+				t.Error("rate limit must stay retryable")
+			}
+			if appErr.Type() != RateLimitedErrorType {
+				t.Errorf("Type = %q, want %q", appErr.Type(), RateLimitedErrorType)
+			}
+			if appErr.NextRetryDelay() != tt.want {
+				t.Errorf("NextRetryDelay = %s, want %s", appErr.NextRetryDelay(), tt.want)
+			}
+		})
+	}
+}
+
+// ScrollAuditLogs wraps page errors, so the delay must survive the worker's error
+// classification interceptor.
+func TestToServiceError_RateLimitedSurvivesWrapping(t *testing.T) {
+	wrapped := fmt.Errorf("scroll audit logs: %w", toServiceError(&TooManyRequestsError{RetryAfter: 45}))
+
+	var appErr *temporal.ApplicationError
+	if !errors.As(activities.ClassifyActivityError(wrapped), &appErr) {
+		t.Fatal("expected an ApplicationError after classification")
+	}
+	if appErr.NextRetryDelay() != 45*time.Second {
+		t.Errorf("NextRetryDelay = %s, want 45s", appErr.NextRetryDelay())
 	}
 }
