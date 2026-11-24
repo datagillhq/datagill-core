@@ -62,7 +62,7 @@ func (r *PostgresRepository) SavePullRequest(ctx context.Context, pr models.Pull
 			state             = EXCLUDED.state,
 			data              = EXCLUDED.data,
 			updated_at        = EXCLUDED.updated_at
-	`, pr.Key, pr.SourceRecordKey, pr.IntegrationID, pr.OrgID, pr.State, dataJSON, pr.CreatedAt, pr.UpdatedAt)
+	`, pr.Key, pr.SourceRecordKey, pr.IntegrationID, pr.OrgID, pr.State, dataJSON, orNow(pr.CreatedAt), orNow(pr.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("SavePullRequest insert pr: %w", err)
 	}

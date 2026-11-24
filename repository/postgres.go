@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -51,6 +52,18 @@ func NewPostgresRepository(ctx context.Context, connString string, encryptionKey
 // Close closes the connection pool.
 func (r *PostgresRepository) Close() {
 	r.pool.Close()
+}
+
+// orNow returns t, or the current UTC time when t is zero.
+//
+// Save methods pass created_at and updated_at as explicit parameters, which bypasses the
+// columns' DEFAULT NOW(). A caller that leaves them unset would otherwise store
+// 0001-01-01 instead of when the row was written.
+func orNow(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Now().UTC()
+	}
+	return t
 }
 
 // Compile-time check that PostgresRepository implements Repository.

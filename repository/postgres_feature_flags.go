@@ -34,8 +34,8 @@ func (r *PostgresRepository) SaveFeatureFlag(ctx context.Context, f models.Featu
 		f.OrgID,
 		f.State,
 		dataJSON,
-		f.CreatedAt,
-		f.UpdatedAt,
+		orNow(f.CreatedAt),
+		orNow(f.UpdatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("SaveFeatureFlag: %w", err)
