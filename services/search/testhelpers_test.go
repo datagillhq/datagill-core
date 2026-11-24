@@ -66,6 +66,7 @@ type stubIntegrationsRepo struct {
 	updateCalls   int
 	deleteResult  models.Integration
 	deleteErr     error
+	deletedKeys   []uuid.UUID
 }
 
 func (s *stubIntegrationsRepo) CreateIntegration(_ context.Context, i models.Integration) (models.Integration, error) {
@@ -92,7 +93,8 @@ func (s *stubIntegrationsRepo) UpdateIntegration(_ context.Context, _, _ uuid.UU
 	s.updateCalls++
 	return s.updateResult, s.updateErr
 }
-func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, _ uuid.UUID) (models.Integration, error) {
+func (s *stubIntegrationsRepo) SoftDeleteIntegration(_ context.Context, _, key uuid.UUID) (models.Integration, error) {
+	s.deletedKeys = append(s.deletedKeys, key)
 	return s.deleteResult, s.deleteErr
 }
 
