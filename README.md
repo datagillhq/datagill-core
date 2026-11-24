@@ -11,8 +11,7 @@
 
 **Measure engineering impact by what ships, not by PR counts.**
 
-> **Status:** early-stage side project. No production users yet. APIs, schema, and docs
-> may change without notice.
+> **Status:** in active development. APIs, schema, and docs may change without notice.
 
 ---
 
