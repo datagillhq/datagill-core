@@ -19,7 +19,7 @@ serves analytics. The web UI and auth server are a separate repo, `datagill-ui`.
 Two binaries, sharing only Postgres and Temporal:
 
 - **Worker** (`cmd/worker`): runs every Temporal workflow and activity.
-- **Search service** (`services/search`): HTTP API on `:8082`. Auth, integrations, schedules,
+- **API service** (`services/api`): HTTP API on `:8082`. Auth, integrations, schedules,
   analytics. No sync logic.
 
 ## Repo map
@@ -27,7 +27,7 @@ Two binaries, sharing only Postgres and Temporal:
 ```
 cmd/worker/           Worker entry point: registers workflows, activities, error interceptor
 cmd/seed/             Demo data seeder
-services/search/      HTTP API; analytics/ holds one plugin per metric
+services/api/         HTTP API; analytics/ holds one plugin per metric
 workflows/            etl.go routes by integration.source; launchdarkly/, github/
 activities/           shared.go (save/get), launchdarkly/, github/, error_classification.go
 models/               Canonical structs, provider raw types, deterministic keys (keys.go)
@@ -46,7 +46,7 @@ from the root; use the make targets.
 ```bash
 make test-unit   # unit tests, no dependencies (CI)
 make lint        # golangci-lint v1.64.8, all modules (CI)
-make build       # bin/worker, bin/search (CI)
+make build       # bin/worker, bin/api (CI)
 make vuln        # govulncheck per module (CI)
 make test-int    # repository integration tests; needs Docker
 make docker-up   # full local stack; see LOCALSETUP.md
@@ -104,7 +104,7 @@ workflow), one `case` in `workflows/etl.go`, registration in `cmd/worker/main.go
 provider in `providersHandler`. No changes to existing providers. The `/add-provider` command
 walks through it.
 
-**Add an analytics metric:** one file in `services/search/analytics/` implementing `Plugin`,
+**Add an analytics metric:** one file in `services/api/analytics/` implementing `Plugin`,
 registered in `register.go`, plus its repository query (org-scoped) and tests. No handler or
 router changes.
 

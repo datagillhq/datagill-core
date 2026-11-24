@@ -10,16 +10,16 @@ MODULE_PATHS := \
 	github.com/datagill/datagill-core/workflows/... \
 	github.com/datagill/datagill-core/worker/... \
 	github.com/datagill/datagill-core/seed/... \
-	github.com/datagill/datagill-core/services/search/...
+	github.com/datagill/datagill-core/services/api/...
 
 # Module directories, for tools that do not understand go.work (golangci-lint
 # patterns, govulncheck).
-MODULE_DIRS := models repository shared activities workflows cmd/worker cmd/seed services/search
+MODULE_DIRS := models repository shared activities workflows cmd/worker cmd/seed services/api
 
-# Build the two binaries (worker, search) into ./bin.
+# Build the two binaries (worker, api) into ./bin.
 build:
 	go build -o bin/worker github.com/datagill/datagill-core/worker
-	go build -o bin/search github.com/datagill/datagill-core/services/search
+	go build -o bin/api github.com/datagill/datagill-core/services/api
 
 # Run golangci-lint across all modules.
 # Install: https://golangci-lint.run/usage/install/ (CI pins v1.64.8)

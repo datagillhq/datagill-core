@@ -29,7 +29,7 @@ decision lists the trade-off it accepts.
 flowchart LR
     UI[Web UI] -->|JWT| API
 
-    subgraph search [Search service · Go/chi]
+    subgraph api [API service · Go/chi]
         API[HTTP API] --> Sched[Scheduler]
         API --> Analytics[Analytics plugins]
     end
@@ -51,7 +51,7 @@ There are two binaries:
 
 | Component | Role |
 |-----------|------|
-| **Search service** (`services/search`) | HTTP API for the UI. Manages integrations, creates Temporal schedules when one connects, and serves analytics. Holds no sync logic. |
+| **API service** (`services/api`) | HTTP API for the UI. Manages integrations, creates Temporal schedules when one connects, and serves analytics. Holds no sync logic. |
 | **Worker** (`cmd/worker`) | Runs every Temporal workflow and activity: extracting from providers, normalizing, saving, and enriching. |
 
 They share only Postgres and Temporal. The API stays fast and stateless, and the worker can
@@ -69,7 +69,7 @@ be scaled, restarted, or redeployed mid-sync without losing work.
 | Go DB access | pgx (`pgxpool`) with hand-written SQL | In use |
 | Backend | Go + Chi | Goroutines fit ETL concurrency; Chi is lightweight and stdlib-compatible |
 | Database | PostgreSQL 16 + pgvector | ACID, JSONB, vector search. Two instances: one for Temporal state, one for app data |
-| Auth | BetterAuth (in `datagill-ui`) | In use. The search service verifies BetterAuth-issued JWTs against its JWKS |
+| Auth | BetterAuth (in `datagill-ui`) | In use. The API service verifies BetterAuth-issued JWTs against its JWKS |
 | Embeddings | OpenAI text-embedding-3-small / Ollama nomic-embed-text | Post-MVP. Swappable via EmbedProvider interface |
 | Orchestration | Self-hosted Temporal | Replaces queues. Durable state, retry, scheduling in one primitive |
 | Migrations | golang-migrate | Run as a separate step (`make migrate`) |
@@ -96,7 +96,7 @@ Every pipeline follows the same three steps: **extract → save raw → normaliz
 
 ### Scheduling
 
-When an integration connects, the search service creates a Temporal schedule with a fixed
+When an integration connects, the API service creates a Temporal schedule with a fixed
 ID (`etl-<integration key>`). It runs every 30 minutes, with `SKIP` overlap so a slow sync is
 never doubled up. Creating it is idempotent, so retrying a failed connect is safe.
 
@@ -359,10 +359,10 @@ repository layer are shared. The top-level workflow routes on `integration.sourc
 
 The local stack (`docker-compose.yml`) runs the full monitoring setup:
 
-- **Metrics:** Prometheus scrapes the search service (request rate, latency, status codes),
+- **Metrics:** Prometheus scrapes the API service (request rate, latency, status codes),
   with provisioned Grafana dashboards. A `worker` scrape target and dashboard are configured,
   but the worker does not expose a metrics endpoint yet.
-- **Logs:** the search service writes structured JSON logs (zerolog) with `request_id`,
+- **Logs:** the API service writes structured JSON logs (zerolog) with `request_id`,
   `org_id` and `user_id` attached per request. The worker still logs plain text (Go's `log`
   and Temporal's default logger). Logs are shipped to Loki through Grafana Alloy.
 - **Workflows:** the Temporal UI shows every sync run, activity, retry, and failure.
@@ -465,7 +465,7 @@ migration yet.
 ```
 cmd/worker/         Worker binary: registers workflows, activities, interceptor
 cmd/seed/           Demo data seeder
-services/search/    HTTP API, auth, scheduler, analytics plugins
+services/api/       HTTP API, auth, scheduler, analytics plugins
 workflows/          Temporal workflows (ETL router, launchdarkly/, github/)
 activities/         Temporal activities: provider clients, normalization, error classification
 models/             Canonical models and deterministic key functions
@@ -476,7 +476,7 @@ infra/              Prometheus, Loki, Alloy, Grafana config
 docs/               Architecture, product, engineering standards, design notes
 ```
 
-Each directory is its own Go module in one `go.work` workspace. The search service doesn't
+Each directory is its own Go module in one `go.work` workspace. The API service doesn't
 depend on the worker's workflow code; it starts workflows by name through Temporal.
 
 ---
@@ -484,6 +484,10 @@ depend on the worker's workflow code; it starts workflows by name through Tempor
 ## Decision history
 
 Architecture changes recorded in AGENTS.md before it was split (2026-11). Newer decisions go here.
+
+### v1.3 — 2026-11-23
+
+- Renamed the search service to the API service (`services/search` → `services/api`, binary, Docker service and Prometheus job). It never did search; it is the HTTP API for the UI.
 
 ### v1.2 — 2026-11-13
 

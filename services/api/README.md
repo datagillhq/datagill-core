@@ -1,4 +1,4 @@
-# Search Service
+# API service
 
 HTTP API for the DataGill UI. Go + Chi, listens on `:8082` by default (`PORT`).
 
@@ -41,6 +41,6 @@ With `go run`, after starting the infrastructure containers (see `LOCALSETUP.md`
 
 ```bash
 set -a && source .env && set +a
-TEMPORAL_ADDRESS=localhost:7233 go run ./services/search
+TEMPORAL_ADDRESS=localhost:7233 go run ./services/api
 curl http://localhost:8082/healthz
 ```

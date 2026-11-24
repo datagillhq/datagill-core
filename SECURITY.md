@@ -24,7 +24,7 @@ effort. We'll keep you updated and credit you in the fix unless you'd rather we 
 
 ## Scope
 
-In scope: code in this repository, including the search service, worker, workflows,
+In scope: code in this repository, including the API service, worker, workflows,
 migrations, and the Docker Compose setup.
 
 Areas we especially care about:

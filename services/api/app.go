@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
 type GitHubAuthService interface {

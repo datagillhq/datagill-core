@@ -12,10 +12,10 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/datagill/datagill-core/repository"
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
-const serviceName = "search"
+const serviceName = "api"
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
@@ -99,7 +99,7 @@ const (
 	serverIdleTimeout  = 120 * time.Second
 )
 
-// newHTTPServer returns the search service's HTTP server with every timeout set.
+// newHTTPServer returns the API service's HTTP server with every timeout set.
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,

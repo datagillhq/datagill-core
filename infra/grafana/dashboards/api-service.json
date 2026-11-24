@@ -1,7 +1,7 @@
 {
-  "uid": "datagill-search",
-  "title": "Search Service",
-  "tags": ["datagill", "search"],
+  "uid": "datagill-api",
+  "title": "API Service",
+  "tags": ["datagill", "api"],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
@@ -15,7 +15,7 @@
       "datasource": { "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(http_requests_total{job=\"search\"}[1m])",
+          "expr": "rate(http_requests_total{job=\"api\"}[1m])",
           "legendFormat": "{{method}} {{path}} {{status}}"
         }
       ]
@@ -28,7 +28,7 @@
       "datasource": { "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"search\"}[5m]))",
+          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"api\"}[5m]))",
           "legendFormat": "p99"
         }
       ]
@@ -41,7 +41,7 @@
       "datasource": { "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(http_requests_total{job=\"search\", status=~\"5..\"}[1m])",
+          "expr": "rate(http_requests_total{job=\"api\", status=~\"5..\"}[1m])",
           "legendFormat": "{{path}}"
         }
       ]
@@ -54,7 +54,7 @@
       "datasource": { "uid": "prometheus" },
       "targets": [
         {
-          "expr": "http_requests_in_flight{job=\"search\"}",
+          "expr": "http_requests_in_flight{job=\"api\"}",
           "legendFormat": "in-flight"
         }
       ]

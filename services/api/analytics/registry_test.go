@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
 type stubPlugin struct{ name string }

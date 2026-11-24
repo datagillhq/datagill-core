@@ -124,7 +124,7 @@ Rule: extend `data` JSONB first; promote a field to a typed column only when que
 - Use named arguments (`pgx` `NamedArgs`) for queries with more than 3 parameters
 
 **Read replicas (future-ready)**
-The Search Service is read-only today. When a read replica is added, routing all Search Service queries to it requires only a connection string env var change — no code changes — because the repository layer is already cleanly separated from the handler layer.
+The API service is read-only today. When a read replica is added, routing all API service queries to it requires only a connection string env var change — no code changes — because the repository layer is already cleanly separated from the handler layer.
 
 ## Monitoring
 
@@ -148,9 +148,9 @@ Follow the **RED method** for services and the **USE method** for infrastructure
 ```
 datagill_{service}_{noun}_{unit}_{type}
 
-datagill_search_http_request_duration_seconds   histogram  (labels: method, handler)
-datagill_search_http_requests_total             counter    (labels: method, handler, status_code)
-datagill_search_db_query_duration_seconds       histogram  (label: query_name)
+datagill_api_http_request_duration_seconds   histogram  (labels: method, handler)
+datagill_api_http_requests_total             counter    (labels: method, handler, status_code)
+datagill_api_db_query_duration_seconds       histogram  (label: query_name)
 datagill_worker_workflow_executions_total       counter    (labels: workflow, status)
 datagill_worker_activity_duration_seconds       histogram  (label: activity)
 ```
@@ -162,7 +162,7 @@ Label values must be bounded. Unbounded label values destroy Prometheus performa
 
 **Histogram buckets — define for your SLO, not Prometheus defaults**
 ```go
-// Search HTTP latency (SLO: p99 < 500ms)
+// API HTTP latency (SLO: p99 < 500ms)
 Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1.0, 2.5, 5.0}
 
 // DB query latency
@@ -173,7 +173,7 @@ Buckets: []float64{.1, .5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0}
 ```
 
 **Alerting philosophy: alert on symptoms, not causes**
-- Alert: search service error rate > 1% for 5 minutes → user-visible failure
+- Alert: API service error rate > 1% for 5 minutes → user-visible failure
 - Alert: p99 latency > 500ms for 5 minutes → SLO breach
 - Do not alert: CPU > 80% → not a user-visible symptom by itself
 - Do not alert: Temporal queue depth > N → only alert if correlated with latency or errors
@@ -290,7 +290,7 @@ Any component can fail: LD API, Postgres, Temporal, the network. Every operation
 - *Observable*: failures are visible in logs and metrics before a user reports them.
 
 **Scalability — stateless services (DDIA Ch. 1)**
-Worker and Search Service are stateless — all durable state lives in Temporal (workflow state) and Postgres (data). Horizontal scaling requires no coordination and no distributed locking at the application layer.
+Worker and API service are stateless — all durable state lives in Temporal (workflow state) and Postgres (data). Horizontal scaling requires no coordination and no distributed locking at the application layer.
 
 **Maintainability — three dimensions (DDIA Ch. 1)**
 - *Operability*: health endpoints, structured logs, Prometheus metrics, and runbooks for every operational task

@@ -10,7 +10,7 @@ import (
 
 	"github.com/datagill/datagill-core/models"
 	"github.com/datagill/datagill-core/repository"
-	"github.com/datagill/datagill-core/services/search/analytics"
+	"github.com/datagill/datagill-core/services/api/analytics"
 )
 
 func TestPullRequestsPlugin(t *testing.T) {

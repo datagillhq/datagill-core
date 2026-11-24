@@ -23,7 +23,7 @@ Run these before opening a PR. CI runs the same targets on every pull request.
 ```bash
 make test-unit   # unit tests, no external dependencies
 make lint        # golangci-lint, all modules
-make build       # worker + search binaries
+make build       # worker + api binaries
 make vuln        # govulncheck, per module (go install golang.org/x/vuln/cmd/govulncheck@latest)
 make test-int    # integration tests against real Postgres; needs Docker
 ```

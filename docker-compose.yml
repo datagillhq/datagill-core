@@ -146,10 +146,10 @@ services:
   # Application services
   # ---------------------------------------------------------------------------
 
-  search:
+  api:
     build:
       context: .
-      dockerfile: services/search/Dockerfile
+      dockerfile: services/api/Dockerfile
     environment:
       PORT: "8082"
       APP_DATABASE_URL: postgres://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@app-postgres:5432/${APP_POSTGRES_DB}?sslmode=disable
