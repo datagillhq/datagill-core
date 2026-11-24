@@ -33,8 +33,8 @@ type Repository interface {
 	// On re-ingest of an existing PR the enrichment row is left untouched.
 	SavePullRequest(ctx context.Context, pr models.PullRequest) error
 
-	// GetPullRequestByKey returns a single pull request by its key.
-	GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error)
+	// GetPullRequestByKey returns a single pull request by its key, scoped to the org.
+	GetPullRequestByKey(ctx context.Context, orgID, key uuid.UUID) (models.PullRequest, error)
 
 	// GetFeatureFlagsBySourceKeys returns non-deleted flags for an org matching any of the given provider key strings.
 	GetFeatureFlagsBySourceKeys(ctx context.Context, orgID uuid.UUID, sourceKeys []string) ([]models.FeatureFlag, error)
@@ -46,13 +46,13 @@ type Repository interface {
 	ListPendingEnrichments(ctx context.Context, orgID uuid.UUID, limit int) ([]models.PullRequestEnrichment, error)
 
 	// ClaimEnrichment sets status = 'in_progress' and increments attempts; false if the row was not claimable.
-	ClaimEnrichment(ctx context.Context, pullRequestKey uuid.UUID) (bool, error)
+	ClaimEnrichment(ctx context.Context, orgID, pullRequestKey uuid.UUID) (bool, error)
 
 	// SaveEnrichmentResult writes enrichment output and sets status = 'completed'.
-	SaveEnrichmentResult(ctx context.Context, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
+	SaveEnrichmentResult(ctx context.Context, orgID, pullRequestKey uuid.UUID, data models.PullRequestEnrichmentData) error
 
 	// MarkEnrichmentFailed resets to 'pending' for retry or sets 'failed' if the attempt cap is reached.
-	MarkEnrichmentFailed(ctx context.Context, pullRequestKey uuid.UUID) error
+	MarkEnrichmentFailed(ctx context.Context, orgID, pullRequestKey uuid.UUID) error
 
 	// GetIntegration returns a single non-deleted integration by key, scoped to the org.
 	GetIntegration(ctx context.Context, orgID, key uuid.UUID) (models.Integration, error)

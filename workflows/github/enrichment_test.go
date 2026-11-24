@@ -59,6 +59,11 @@ func runEnrichment(t *testing.T, env *testsuite.TestWorkflowEnvironment, orgID u
 	env.AssertActivityNumberOfCalls(t, "MarkEnrichmentFailed", want.markFailed)
 }
 
+// rowInput is the org-scoped activity input the workflow sends for one enrichment row.
+func rowInput(row models.PullRequestEnrichment) ghactivities.EnrichmentRowInput {
+	return ghactivities.EnrichmentRowInput{OrgID: row.OrgID, PullRequestKey: row.PullRequestKey}
+}
+
 func TestGitHubEnrichmentWorkflow_EmptyBatchIsNoOp(t *testing.T) {
 	env := (&testsuite.WorkflowTestSuite{}).NewTestWorkflowEnvironment()
 	orgID := uuid.New()
@@ -80,13 +85,14 @@ func TestGitHubEnrichmentWorkflow_SavesSuccessfulEnrichment(t *testing.T) {
 
 	env.OnActivity(ghActs.ListPendingEnrichments, mock.Anything, mock.Anything).Return([]models.PullRequestEnrichment{row}, nil).Once()
 	env.OnActivity(ghActs.ListFlagSourceKeys, mock.Anything, ghactivities.ListFlagSourceKeysInput{OrgID: orgID}).Return(flagKeys, nil).Once()
-	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, row.PullRequestKey).Return(true, nil).Once()
+	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, rowInput(row)).Return(true, nil).Once()
 	env.OnActivity(ghActs.EnrichPullRequest, mock.Anything, ghactivities.EnrichPRInput{
 		PullRequestKey: row.PullRequestKey,
 		OrgID:          orgID,
 		FlagKeys:       flagKeys,
 	}).Return(data, nil).Once()
 	env.OnActivity(ghActs.SaveEnrichmentResult, mock.Anything, ghactivities.SaveEnrichmentResultInput{
+		OrgID:          orgID,
 		PullRequestKey: row.PullRequestKey,
 		Data:           data,
 	}).Return(nil).Once()
@@ -101,7 +107,7 @@ func TestGitHubEnrichmentWorkflow_SkipsUnclaimedRow(t *testing.T) {
 
 	env.OnActivity(ghActs.ListPendingEnrichments, mock.Anything, mock.Anything).Return([]models.PullRequestEnrichment{row}, nil).Once()
 	env.OnActivity(ghActs.ListFlagSourceKeys, mock.Anything, mock.Anything).Return([]string{"price_test"}, nil).Once()
-	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, row.PullRequestKey).Return(false, nil).Once()
+	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, rowInput(row)).Return(false, nil).Once()
 
 	runEnrichment(t, env, orgID, enrichmentActivityCalls{list: 1, flagKeys: 1, claim: 1})
 }
@@ -113,10 +119,10 @@ func TestGitHubEnrichmentWorkflow_MarksFailedWhenEnrichFails(t *testing.T) {
 
 	env.OnActivity(ghActs.ListPendingEnrichments, mock.Anything, mock.Anything).Return([]models.PullRequestEnrichment{row}, nil).Once()
 	env.OnActivity(ghActs.ListFlagSourceKeys, mock.Anything, mock.Anything).Return([]string{"price_test"}, nil).Once()
-	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, row.PullRequestKey).Return(true, nil).Once()
+	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, rowInput(row)).Return(true, nil).Once()
 	env.OnActivity(ghActs.EnrichPullRequest, mock.Anything, mock.Anything).
 		Return(models.PullRequestEnrichmentData{}, errors.New("github unavailable"))
-	env.OnActivity(ghActs.MarkEnrichmentFailed, mock.Anything, row.PullRequestKey).Return(nil).Once()
+	env.OnActivity(ghActs.MarkEnrichmentFailed, mock.Anything, rowInput(row)).Return(nil).Once()
 
 	// A persistent error must stop after the bounded retry policy's 3 attempts, not retry
 	// forever, so the row is handed back to the attempts cap via MarkEnrichmentFailed.
@@ -130,10 +136,10 @@ func TestGitHubEnrichmentWorkflow_MarksFailedWhenSaveFails(t *testing.T) {
 
 	env.OnActivity(ghActs.ListPendingEnrichments, mock.Anything, mock.Anything).Return([]models.PullRequestEnrichment{row}, nil).Once()
 	env.OnActivity(ghActs.ListFlagSourceKeys, mock.Anything, mock.Anything).Return([]string{"price_test"}, nil).Once()
-	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, row.PullRequestKey).Return(true, nil).Once()
+	env.OnActivity(ghActs.ClaimEnrichment, mock.Anything, rowInput(row)).Return(true, nil).Once()
 	env.OnActivity(ghActs.EnrichPullRequest, mock.Anything, mock.Anything).Return(models.PullRequestEnrichmentData{}, nil).Once()
 	env.OnActivity(ghActs.SaveEnrichmentResult, mock.Anything, mock.Anything).Return(errors.New("db unavailable"))
-	env.OnActivity(ghActs.MarkEnrichmentFailed, mock.Anything, row.PullRequestKey).Return(nil).Once()
+	env.OnActivity(ghActs.MarkEnrichmentFailed, mock.Anything, rowInput(row)).Return(nil).Once()
 
 	runEnrichment(t, env, orgID, enrichmentActivityCalls{list: 1, flagKeys: 1, claim: 1, enrich: 1, save: 3, markFailed: 1})
 }
@@ -154,7 +160,7 @@ func TestGitHubEnrichmentWorkflow_OneFailureDoesNotBlockOtherRows(t *testing.T) 
 	env.OnActivity(ghActs.EnrichPullRequest, mock.Anything, mock.MatchedBy(func(input ghactivities.EnrichPRInput) bool {
 		return input.PullRequestKey == healthy.PullRequestKey
 	})).Return(models.PullRequestEnrichmentData{}, nil).Once()
-	env.OnActivity(ghActs.MarkEnrichmentFailed, mock.Anything, failing.PullRequestKey).Return(nil).Once()
+	env.OnActivity(ghActs.MarkEnrichmentFailed, mock.Anything, rowInput(failing)).Return(nil).Once()
 	env.OnActivity(ghActs.SaveEnrichmentResult, mock.Anything, mock.MatchedBy(func(input ghactivities.SaveEnrichmentResultInput) bool {
 		return input.PullRequestKey == healthy.PullRequestKey
 	})).Return(nil).Once()

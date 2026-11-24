@@ -10,13 +10,13 @@ import (
 	"github.com/datagill/datagill-core/models"
 )
 
-// GetPullRequestByKey returns a single pull request by its key.
-func (r *PostgresRepository) GetPullRequestByKey(ctx context.Context, key uuid.UUID) (models.PullRequest, error) {
+// GetPullRequestByKey returns a single pull request by its key, scoped to the org.
+func (r *PostgresRepository) GetPullRequestByKey(ctx context.Context, orgID, key uuid.UUID) (models.PullRequest, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT key, source_record_key, integration_id, org_id, state, data, created_at, updated_at
 		FROM pull_requests
-		WHERE key = $1
-	`, key)
+		WHERE org_id = $1 AND key = $2
+	`, orgID, key)
 
 	var pr models.PullRequest
 	var dataJSON []byte
